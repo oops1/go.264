@@ -23,6 +23,8 @@ type Config struct {
 	FPSDen  int
 	GOPSize int
 	QP      int
+
+	BitrateKbps int
 }
 
 func (c *Config) validate() error {
@@ -62,6 +64,7 @@ type Encoder struct {
 
 	grid []mbInfo
 
+	rc         *rateControl
 	frameNum   uint32
 	frameIndex int
 	headers    []byte
@@ -79,6 +82,7 @@ func New(cfg Config) (*Encoder, error) {
 	e.rec = frame.NewPicture(e.widthMBs, e.heightMBs)
 	e.ref = frame.NewPicture(e.widthMBs, e.heightMBs)
 	e.grid = make([]mbInfo, e.widthMBs*e.heightMBs)
+	e.rc = newRateControl(cfg)
 	return e, nil
 }
 
@@ -210,6 +214,7 @@ func (e *Encoder) Encode(yuv []byte) ([]byte, error) {
 		nalType = nal.TypeSliceNonIDR
 	}
 
+	qp := e.rc.frameQP(idr)
 	hdr := &syntax.SliceHeader{
 		FirstMBInSlice:             0,
 		SliceType:                  sliceType + 5,
@@ -217,6 +222,7 @@ func (e *Encoder) Encode(yuv []byte) ([]byte, error) {
 		FrameNum:                   e.frameNum,
 		IDR:                        idr,
 		NalRefIDC:                  1,
+		SliceQPDelta:               int32(qp - e.cfg.QP),
 		DisableDeblockingFilterIDC: 0,
 	}
 
@@ -224,7 +230,7 @@ func (e *Encoder) Encode(yuv []byte) ([]byte, error) {
 	if err := syntax.WriteSliceHeader(w, hdr, e.sps, e.pps); err != nil {
 		return nil, err
 	}
-	if err := e.encodeSlice(w, hdr); err != nil {
+	if err := e.encodeSlice(w, hdr, qp); err != nil {
 		return nil, err
 	}
 	w.WriteRBSPTrailingBits()
@@ -246,6 +252,7 @@ func (e *Encoder) Encode(yuv []byte) ([]byte, error) {
 	})
 	e.rec.ExtendBorders()
 	e.rec, e.ref = e.ref, e.rec
+	e.rc.update(len(out)*8, qp, idr)
 	e.frameIndex++
 	e.frameNum = (e.frameNum + 1) % e.sps.MaxFrameNum()
 	return out, nil

@@ -62,6 +62,8 @@ type EncoderConfig struct {
 	GOPSize int
 	QP      int
 
+	BitrateKbps int
+
 	ForceSoftware bool
 }
 
@@ -89,12 +91,13 @@ func NewEncoder(cfg EncoderConfig) (*Encoder, error) {
 		}
 	}
 	cpu, err := encoder.New(encoder.Config{
-		Width:   cfg.Width,
-		Height:  cfg.Height,
-		FPSNum:  cfg.FPSNum,
-		FPSDen:  cfg.FPSDen,
-		GOPSize: cfg.GOPSize,
-		QP:      cfg.QP,
+		Width:       cfg.Width,
+		Height:      cfg.Height,
+		FPSNum:      cfg.FPSNum,
+		FPSDen:      cfg.FPSDen,
+		GOPSize:     cfg.GOPSize,
+		QP:          cfg.QP,
+		BitrateKbps: cfg.BitrateKbps,
 	})
 	if err != nil {
 		return nil, err

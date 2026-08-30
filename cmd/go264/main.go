@@ -74,6 +74,7 @@ func runEncode(args []string) error {
 	fs := flag.NewFlagSet("encode", flag.ContinueOnError)
 	size := fs.String("s", "", "frame size, for example 1280x720")
 	qp := fs.Int("qp", 26, "constant quantiser, 0 to 51")
+	bitrate := fs.Int("b", 0, "target bitrate in kbit/s, zero for constant quantiser")
 	gop := fs.Int("gop", 30, "distance between IDR pictures")
 	fps := fs.Int("fps", 25, "frame rate")
 	in := fs.String("i", "-", "raw I420 input, - for standard input")
@@ -92,7 +93,7 @@ func runEncode(args []string) error {
 
 	enc, err := go264.NewEncoder(go264.EncoderConfig{
 		Width: w, Height: h, FPSNum: *fps, FPSDen: 1,
-		GOPSize: *gop, QP: *qp, ForceSoftware: *software,
+		GOPSize: *gop, QP: *qp, BitrateKbps: *bitrate, ForceSoftware: *software,
 	})
 	if err != nil {
 		return err

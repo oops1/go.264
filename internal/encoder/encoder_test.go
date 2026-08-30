@@ -286,3 +286,70 @@ func TestInterFramesAreSmallerThanIntra(t *testing.T) {
 		}
 	}
 }
+
+func TestRateControlHitsTheTargetBitrate(t *testing.T) {
+	for _, kbps := range []int{200, 500, 1500} {
+		cfg := Config{
+			Width: 176, Height: 144, FPSNum: 25, FPSDen: 1,
+			GOPSize: 25, QP: 30, BitrateKbps: kbps,
+		}
+		enc, err := New(cfg)
+		if err != nil {
+			t.Fatal(err)
+		}
+		total := 0
+		const frames = 50
+		for i := 0; i < frames; i++ {
+			pkt, err := enc.Encode(syntheticFrame(cfg.Width, cfg.Height, i))
+			if err != nil {
+				t.Fatal(err)
+			}
+			total += len(pkt)
+		}
+		fps := float64(cfg.FPSNum) / float64(cfg.FPSDen)
+		got := float64(total) * 8 / float64(frames) * fps / 1000
+		t.Logf("target %d kbps, achieved %.0f kbps", kbps, got)
+		if got < float64(kbps)*0.75 || got > float64(kbps)*1.35 {
+			t.Errorf("target %d kbps but produced %.0f kbps", kbps, got)
+		}
+	}
+}
+
+func TestRateControlDisabledKeepsConstantQP(t *testing.T) {
+	cfg := Config{Width: 96, Height: 64, FPSNum: 25, FPSDen: 1, GOPSize: 4, QP: 33}
+	enc, err := New(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 8; i++ {
+		if _, err := enc.Encode(syntheticFrame(cfg.Width, cfg.Height, i)); err != nil {
+			t.Fatal(err)
+		}
+		if q := enc.rc.frameQP(false); q != 33 {
+			t.Fatalf("frame %d: quantiser drifted to %d with rate control off", i, q)
+		}
+	}
+}
+
+func TestRateControlStreamsStayDecodable(t *testing.T) {
+	cfg := Config{Width: 176, Height: 144, FPSNum: 25, FPSDen: 1, GOPSize: 10, QP: 30, BitrateKbps: 400}
+	var frames [][]byte
+	for i := 0; i < 20; i++ {
+		frames = append(frames, syntheticFrame(cfg.Width, cfg.Height, i))
+	}
+	pics, _, recons := encodeAndDecode(t, cfg, frames)
+	if len(pics) != len(frames) {
+		t.Fatalf("decoded %d frames, want %d", len(pics), len(frames))
+	}
+	for i := range pics {
+		got := make([]byte, pics[i].Size())
+		pics[i].CopyOut(got)
+		want := make([]byte, recons[i].Size())
+		recons[i].CopyOut(want)
+		for j := range got {
+			if got[j] != want[j] {
+				t.Fatalf("frame %d differs at sample %d under rate control", i, j)
+			}
+		}
+	}
+}

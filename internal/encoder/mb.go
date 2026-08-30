@@ -65,11 +65,11 @@ func (s *mbEncoder) reset() {
 	s.chromaScan = [2][4][16]int32{}
 }
 
-func (e *Encoder) encodeSlice(w *bits.Writer, hdr *syntax.SliceHeader) error {
+func (e *Encoder) encodeSlice(w *bits.Writer, hdr *syntax.SliceHeader, qp int) error {
 	for i := range e.grid {
 		e.grid[i] = mbInfo{}
 	}
-	s := &mbEncoder{e: e, w: w, qpY: e.cfg.QP, isP: hdr.SliceType.IsP()}
+	s := &mbEncoder{e: e, w: w, qpY: qp, isP: hdr.SliceType.IsP()}
 	for mby := 0; mby < e.heightMBs; mby++ {
 		for mbx := 0; mbx < e.widthMBs; mbx++ {
 			s.mbx = mbx
