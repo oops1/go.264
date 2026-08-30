@@ -1,126 +1,101 @@
 # go264 — Work Plan
 
-Target: encoder + decoder ready for winline 1.3.0. Order is strict:
-each phase ends with green tests, coverage held at the gate, and a
-commit series in English with no trailers.
+Target: encoder + decoder ready for winline 1.3.0.
 
-## Phase 0 — Bootstrap
+Every phase ends with green tests and a commit series in English with no
+trailers. Status below reflects what is actually merged and measured.
 
-- Init repo, `go.mod` (module github.com/oops1/go264), BSD-2-Clause
-  LICENSE, README skeleton, .gitignore.
-- GitHub Actions: build with `CGO_ENABLED=0`, gofmt check, go vet,
-  staticcheck, `go test -race -coverprofile`, coverage gate.
-- Create GitHub repository, push initial commit.
+## Done
 
-Exit: CI green on empty-but-wired module.
+### Phase 0 — Bootstrap
+Module `github.com/oops1/go264`, BSD-2-Clause, GitHub Actions running
+gofmt, vet, staticcheck, race tests, coverage, a cgo-import rejection
+check and cross-target `CGO_ENABLED=0` builds.
 
-## Phase 1 — Bitstream foundation
+### Phase 1 — Bitstream foundation
+`internal/bits` (99% covered) and `internal/nal` (100%): bit reader and
+writer, Exp-Golomb, RBSP trailing bits, emulation prevention, Annex B
+splitting for whole buffers and for streamed chunks, AVCC framing.
 
-- `internal/bits`: bit reader/writer, ue(v)/se(v)/te(v) Exp-Golomb,
-  byte alignment, more-RBSP-data, trailing bits.
-- `internal/nal`: Annex-B start-code scanning, RBSP unescape/escape
-  (emulation prevention), NAL header parse/write.
-- Fuzz targets for reader and unescape; 100% coverage on both packages.
+### Phase 2 — Syntax
+`internal/syntax` (87%): SPS, VUI, HRD, PPS and slice header, parse and
+write, with byte-identical round trips and fuzz targets.
 
-Exit: symmetric read/write property tests pass (write->read identity).
+### Reference corpus
+Five Constrained Baseline streams produced by libx264 plus the frames
+ffmpeg decodes from them, checked in under `testdata/conformance`. This is
+the ground truth every decoding stage is measured against.
 
-## Phase 2 — Syntax layer
+### Phase 3 — Decoder, intra
+`internal/transform` (100%), `internal/pred` (100%), `internal/cavlc`
+(92%), `internal/deblock` (100%) and the macroblock layer. All ten frames
+of both intra reference clips decode to exactly the bytes ffmpeg produces,
+with and without the loop filter.
 
-- `internal/syntax`: SPS, PPS parse + write; slice header parse + write
-  for I/P slices (Baseline fields; ref reordering + MMCO syntax).
-- Golden tests against hex dumps of known-good SPS/PPS (from reference
-  encoders); fuzz the parsers.
+### Phase 4 — Decoder, inter
+Decoded picture buffer with picture order count, reference lists, sliding
+window and MMCO; six tap luma and bilinear chroma interpolation
+(`internal/mc`, 100%); motion vector prediction; P_Skip; every P partition
+including 8x8 sub-macroblocks. The whole corpus decodes bit-exactly.
 
-Exit: our written SPS/PPS re-parse to identical structs and match
-reference hex dumps.
+### Phase 5 and 6 — Encoder
+`internal/encoder` (96%): parameter set construction, Intra_4x4,
+Intra_16x16 and chroma mode search, motion estimation with sub-sample
+refinement, skip decision, run length coding of skipped macroblocks.
+ffmpeg decodes our streams to exactly what our own decoder produces.
 
-## Phase 3 — Decoder: intra path
+### Public interface
+Root package `go264` with `Encoder`, `Decoder`, `Frame` and backend
+reporting, plus the `go264` command line tool for encoding and decoding
+raw I420.
 
-- `internal/transform`: dequant, inverse 4x4 transform, DC Hadamard.
-- `internal/pred`: intra 4x4 (9 modes), 16x16 (4 modes), chroma
-  (4 modes), availability rules.
-- `internal/cavlc`: coeff_token tables, residual decoding, nC context.
-- Macroblock layer for I slices, reconstruction, `internal/deblock`.
-- Decode I-only conformance streams; per-tool unit tests from spec
-  worked examples.
+## Remaining
 
-Exit: bit-exact YUV vs reference decoder on I-only Baseline streams.
+### Phase 7 — Rate control
+Average bitrate on top of the constant quantiser path: frame level
+quantiser adaptation, a buffer model, scene cut detection for IDR
+placement. Today only `QP` is honoured; `BitrateKbps` is not yet
+implemented.
 
-## Phase 4 — Decoder: inter path + DPB
+### Phase 8 — SIMD
+`internal/simd` with a runtime dispatch table and pure Go fallbacks, and
+avo generator programs under `internal/simd/asmgen`. Kernels to cover: SAD
+and SATD, the six tap interpolation, forward and inverse transforms,
+quantisation, the deblocking edge filters and plane copies. Every kernel
+gets a randomised equivalence test against its generic twin, and CI checks
+the generated assembly is in sync.
 
-- `internal/dpb`: POC, reference list init/reorder, sliding window,
-  MMCO, output reordering.
-- `internal/mc`: 6-tap luma half-pel, quarter-pel, chroma bilinear;
-  P-skip, P_16x16..P_8x8 partitions, MV prediction.
-- Decode full Baseline conformance suite.
+### Phase 9 — Encoder partitions and quality
+16x8, 8x16 and 8x8 inter partitions in the encoder, multiple reference
+frames, and a rate-distortion mode decision to replace the current
+transformed-difference heuristic.
 
-Exit: bit-exact YUV on Baseline conformance set; fuzz corpus extended.
+### Phase 10 — Decoder, Main profile
+CABAC, B slices and weighted prediction as decoder side tools, measured
+against a Main profile corpus generated the same way as the current one.
 
-## Phase 5 — Encoder: intra
+### Phase 11 — Hardware acceleration
+The probe, backend registry and transparent fallback are in place in
+`internal/hwaccel`; no backend is implemented yet. Next: Windows Media
+Foundation through `golang.org/x/sys/windows` syscalls into the COM
+interfaces, then Linux VA-API through `purego` dlopen. Both stay CGO-free.
+Cross-validation: any stream a hardware encoder emits must decode with the
+CPU decoder, and hardware decoder output is compared against CPU decoder
+output on the same stream. CI has no GPU, so the registry and fallback get
+mock-based tests and a `go264 selftest` command covers real hardware.
 
-- Forward transform + quant; intra mode decision (SATD-based); CAVLC
-  writing; MB encoding for I slices; CQP; reconstruction loop shared
-  with decoder code.
-- Round-trip tests: encode -> our decoder -> PSNR floor per QP;
-  streams validated against an external reference decoder in CI.
+### Phase 12 — Release
+API review and freeze, godoc pass, benchmarks in the README, coverage
+audit, fuzz soak, tag v0.1.0 and integration notes for winline 1.3.0.
 
-Exit: valid I-frame streams at all QPs, monotonic rate/QP behavior.
-
-## Phase 6 — Encoder: inter
-
-- `internal/me`: SAD/SATD, integer search (diamond/hexagon), sub-pel
-  refinement, MV cost; P slices, skip detection, mode decision I-vs-P.
-- GOP structure (IDR interval), single reference to start.
-
-Exit: P-frame streams decode bit-exact in our decoder and reference
-decoder; compression vs I-only measured and recorded in benchmarks.
-
-## Phase 7 — Rate control
-
-- `internal/rc`: ABR over CQP base (frame-level QP adaptation, VBV-ish
-  buffer model), scene-cut IDR insertion.
-
-Exit: achieved bitrate within tolerance on test sequences.
-
-## Phase 8 — SIMD
-
-- `internal/simd`: dispatch table, generic kernels extracted from
-  hot paths; avo generator programs; AVX2 + SSE4 kernels for SAD/SATD,
-  interpolation, transforms, quant, deblock.
-- Randomized equivalence tests generic-vs-asm; benchmarks; CI check
-  that `go generate` output is committed.
-
-Exit: measurable speedup, zero behavior change (bit-exact outputs).
-
-## Phase 9 — Decoder: Main profile extras
-
-- CABAC decoding, B-slices, weighted prediction as decoder-only tools.
-- Extend conformance set to Main profile streams.
-
-Exit: Main conformance streams pass.
-
-## Phase 10 — Hardware acceleration
-
-- `internal/hwaccel` interface + probe + fallback plumbing, CGO-free.
-- Windows Media Foundation encoder+decoder backend (syscall COM).
-- Linux VA-API decoder backend via purego; encoder if stable.
-- `go264 selftest` CLI for on-hardware verification; mock-based tests
-  for probe/fallback in CI; cross-validation hardware-vs-CPU output.
-
-Exit: on machines with hardware codecs the facade selects them and
-falls back cleanly; `Backend()` reporting correct.
-
-## Phase 11 — Release
-
-- API review and freeze, godoc pass, README with usage + benchmarks.
-- Coverage audit to the gate (>=90% total), fuzz soak.
-- Tag v0.1.0; integration notes for winline 1.3.0.
-
-## Standing rules (every phase)
+## Standing rules
 
 - `CGO_ENABLED=0` everywhere, including tests and CI.
 - No comments in code.
-- Commits: author is the repository owner, English imperative messages,
-  no trailers of any kind (no Co-Authored-By etc.), one logical change
-  per commit.
+- Commits authored by the repository owner, English imperative messages,
+  no trailers of any kind, one logical change per commit.
 - New code lands with its tests in the same commit.
+- Numeric tables from the specification are transcribed from an
+  authoritative source and validated structurally, never written from
+  memory. That practice caught seven wrong entries in one CAVLC table and
+  a chroma table whose Kraft sum exceeded one.

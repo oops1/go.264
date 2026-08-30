@@ -13,6 +13,9 @@ type Picture struct {
 	Width   int
 	Height  int
 
+	CropWidth  int
+	CropHeight int
+
 	POC      int
 	FrameNum uint32
 	IDR      bool
@@ -24,10 +27,12 @@ func NewPicture(widthMBs, heightMBs int) *Picture {
 	strideY := w + 2*LumaMargin
 	strideC := w/2 + 2*ChromaMargin
 	p := &Picture{
-		StrideY: strideY,
-		StrideC: strideC,
-		Width:   w,
-		Height:  h,
+		StrideY:    strideY,
+		StrideC:    strideC,
+		Width:      w,
+		Height:     h,
+		CropWidth:  w,
+		CropHeight: h,
 	}
 	p.Y = make([]byte, strideY*(h+2*LumaMargin))
 	p.Cb = make([]byte, strideC*(h/2+2*ChromaMargin))
