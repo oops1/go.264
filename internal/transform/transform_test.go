@@ -276,6 +276,121 @@ func TestHadamard2x2Involution(t *testing.T) {
 	}
 }
 
+func refHadamardForwardDC4x4Butterfly(x [4][4]int32) [4][4]int32 {
+	var temp [4][4]int32
+	for row := 0; row < 4; row++ {
+		s0, s1, s2, s3 := x[row][0], x[row][1], x[row][2], x[row][3]
+		t0 := s0 + s3
+		t1 := s1 + s2
+		t2 := s1 - s2
+		t3 := s0 - s3
+		temp[row][0] = t0 + t1
+		temp[row][1] = t3 + t2
+		temp[row][2] = t0 - t1
+		temp[row][3] = t3 - t2
+	}
+	var out [4][4]int32
+	for col := 0; col < 4; col++ {
+		s0, s1, s2, s3 := temp[0][col], temp[1][col], temp[2][col], temp[3][col]
+		t0 := s0 + s3
+		t1 := s1 + s2
+		t2 := s1 - s2
+		t3 := s0 - s3
+		out[0][col] = (t0 + t1 + 1) >> 1
+		out[1][col] = (t3 + t2 + 1) >> 1
+		out[2][col] = (t0 - t1 + 1) >> 1
+		out[3][col] = (t3 - t2 + 1) >> 1
+	}
+	return out
+}
+
+func TestHadamardForwardDC4x4(t *testing.T) {
+	rng := newRNG(19)
+	differed := 0
+	for trial := 0; trial < 2000; trial++ {
+		var orig Block
+		for i := range orig {
+			orig[i] = int32(rng.Intn(4001) - 2000)
+		}
+
+		got := orig
+		HadamardForwardDC4x4(&got)
+
+		ref := mat32ToBlock(refHadamardForwardDC4x4Butterfly(blockToMat32(orig)))
+		for i := 0; i < 16; i++ {
+			if got[i] != ref[i] {
+				t.Fatalf("trial %d pos %d: HadamardForwardDC4x4 = %d, independent reference = %d", trial, i, got[i], ref[i])
+			}
+		}
+
+		plain := orig
+		Hadamard4x4(&plain)
+		for i := 0; i < 16; i++ {
+			want := (plain[i] + 1) >> 1
+			if got[i] != want {
+				t.Fatalf("trial %d pos %d: HadamardForwardDC4x4 = %d, want (Hadamard4x4+1)>>1 = %d", trial, i, got[i], want)
+			}
+		}
+
+		for i := 0; i < 16; i++ {
+			if got[i] != plain[i] {
+				differed++
+				break
+			}
+		}
+	}
+	if differed == 0 {
+		t.Fatalf("HadamardForwardDC4x4 never differed from Hadamard4x4 over %d trials; halving appears to be missing", 2000)
+	}
+}
+
+func TestDCPathsAgreeWithACPath(t *testing.T) {
+	const k = int32(2047)
+	const maxPairDiff = 1664
+	var observedMaxDiff int32
+
+	for qp := 0; qp < 52; qp++ {
+		var ac Block
+		ac[0] = k
+		Quant4x4(&ac, qp, true)
+		Dequant4x4(&ac, qp, false)
+		acOut := ac[0]
+
+		var luma Block
+		for i := range luma {
+			luma[i] = k
+		}
+		QuantLumaDC(&luma, qp, true)
+		DequantLumaDC(&luma, qp)
+		lumaOut := luma[0]
+
+		var chroma ChromaDC
+		for i := range chroma {
+			chroma[i] = k
+		}
+		QuantChromaDC(&chroma, qp, true)
+		DequantChromaDC(&chroma, qp)
+		chromaOut := chroma[0]
+
+		diffs := []int32{
+			absI32(acOut - lumaOut),
+			absI32(acOut - chromaOut),
+			absI32(lumaOut - chromaOut),
+		}
+		for _, d := range diffs {
+			if d > observedMaxDiff {
+				observedMaxDiff = d
+			}
+			if d > maxPairDiff {
+				t.Errorf("qp=%d: path outputs diverge by %d (acOut=%d lumaOut=%d chromaOut=%d), want <= %d", qp, d, acOut, lumaOut, chromaOut, maxPairDiff)
+			}
+		}
+	}
+	if observedMaxDiff > maxPairDiff {
+		t.Fatalf("observed max pairwise diff %d exceeds locked bound %d", observedMaxDiff, maxPairDiff)
+	}
+}
+
 var acMaxErrIntra = [52]int32{
 	1, 1, 1, 1, 1, 2, 2, 2, 2, 2, 3, 3, 3, 4, 4, 5,
 	5, 7, 7, 8, 9, 10, 12, 13, 14, 17, 17, 19, 22, 26, 27, 31,
@@ -369,10 +484,10 @@ func TestQuant4x4NonzeroCountNonIncreasingWithQP(t *testing.T) {
 }
 
 var lumaDCMaxErr = [52]int64{
-	19, 19, 23, 23, 28, 32, 38, 36, 45, 56, 56, 62, 68, 71, 100, 98,
-	120, 120, 140, 156, 184, 200, 232, 244, 272, 296, 396, 384, 440, 480, 536, 648,
-	840, 800, 896, 1072, 1112, 1192, 1592, 1560, 1784, 1920, 2336, 2520, 2744, 3032, 3608, 3856,
-	4416, 4840, 7176, 6288,
+	19, 20, 28, 22, 24, 31, 41, 42, 43, 46, 52, 60, 66, 77, 83, 98,
+	116, 128, 136, 152, 168, 196, 224, 256, 292, 304, 336, 364, 468, 480, 524, 580,
+	708, 784, 840, 1036, 1068, 1288, 1428, 1548, 1932, 2148, 2204, 2420, 2688, 2968, 3596, 3652,
+	4588, 4840, 5380, 6224,
 }
 
 func TestQuantDequantLumaDCRoundTrip(t *testing.T) {
@@ -386,7 +501,7 @@ func TestQuantDequantLumaDCRoundTrip(t *testing.T) {
 			QuantLumaDC(&bi, qp, true)
 			DequantLumaDC(&bi, qp)
 			for i := 0; i < 16; i++ {
-				target := int64(orig[i]) * 8
+				target := int64(orig[i]) * 4
 				e := absI64(target - int64(bi[i]))
 				if e > maxErr {
 					maxErr = e
@@ -397,7 +512,7 @@ func TestQuantDequantLumaDCRoundTrip(t *testing.T) {
 			QuantLumaDC(&be, qp, false)
 			DequantLumaDC(&be, qp)
 			for i := 0; i < 16; i++ {
-				target := int64(orig[i]) * 8
+				target := int64(orig[i]) * 4
 				e := absI64(target - int64(be[i]))
 				if e > maxErr {
 					maxErr = e
@@ -405,7 +520,7 @@ func TestQuantDequantLumaDCRoundTrip(t *testing.T) {
 			}
 		}
 		if maxErr > lumaDCMaxErr[qp] {
-			t.Errorf("qp=%d: max abs error vs 8x = %d, want <= %d", qp, maxErr, lumaDCMaxErr[qp])
+			t.Errorf("qp=%d: max abs error vs 4x = %d, want <= %d", qp, maxErr, lumaDCMaxErr[qp])
 		}
 	}
 }

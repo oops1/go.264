@@ -117,6 +117,31 @@ func Hadamard4x4(b *Block) {
 	}
 }
 
+func HadamardForwardDC4x4(b *Block) {
+	for i := 0; i < 16; i += 4 {
+		s0, s1, s2, s3 := b[i], b[i+1], b[i+2], b[i+3]
+		t0 := s0 + s3
+		t1 := s1 + s2
+		t2 := s1 - s2
+		t3 := s0 - s3
+		b[i] = t0 + t1
+		b[i+1] = t3 + t2
+		b[i+2] = t0 - t1
+		b[i+3] = t3 - t2
+	}
+	for i := 0; i < 4; i++ {
+		s0, s1, s2, s3 := b[i], b[i+4], b[i+8], b[i+12]
+		t0 := s0 + s3
+		t1 := s1 + s2
+		t2 := s1 - s2
+		t3 := s0 - s3
+		b[i] = (t0 + t1 + 1) >> 1
+		b[i+4] = (t3 + t2 + 1) >> 1
+		b[i+8] = (t0 - t1 + 1) >> 1
+		b[i+12] = (t3 - t2 + 1) >> 1
+	}
+}
+
 func Hadamard2x2(b *ChromaDC) {
 	a0, a1, a2, a3 := b[0], b[1], b[2], b[3]
 	b[0] = a0 + a1 + a2 + a3
@@ -195,7 +220,7 @@ func Quant4x4(b *Block, qp int, intra bool) {
 }
 
 func QuantLumaDC(b *Block, qp int, intra bool) {
-	Hadamard4x4(b)
+	HadamardForwardDC4x4(b)
 	mf := quantCoef[qp%6][0]
 	qbits := uint(16 + qp/6)
 	var f int32
