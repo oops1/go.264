@@ -72,3 +72,8 @@ func TestIntraNoDeblockAllFrames(t *testing.T) {
 	clip := testutil.Corpus[1]
 	runClip(t, clip, clip.Frames)
 }
+
+func TestIntraDeblockedAllFrames(t *testing.T) {
+	clip := testutil.Corpus[0]
+	runClip(t, clip, clip.Frames)
+}

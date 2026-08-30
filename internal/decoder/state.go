@@ -28,6 +28,11 @@ type mbState struct {
 	cbpLuma      int
 	cbpChroma    int
 	transform8x8 bool
+
+	chromaQPOffset [2]int
+	disableDeblock uint32
+	alphaOffset    int
+	betaOffset     int
 }
 
 var blkIdxGrid = [4][4]int{

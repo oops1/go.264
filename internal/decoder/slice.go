@@ -41,7 +41,14 @@ func (d *sliceDecoder) run() error {
 		d.mbx = mbAddr % d.grid.widthMBs
 		d.mby = mbAddr / d.grid.widthMBs
 		d.cur = d.grid.at(d.mbx, d.mby)
-		*d.cur = mbState{sliceID: d.sliceID, qpY: d.qpY}
+		*d.cur = mbState{
+			sliceID:        d.sliceID,
+			qpY:            d.qpY,
+			chromaQPOffset: [2]int{int(d.pps.ChromaQPIndexOffset), int(d.pps.SecondChromaQPIndexOffset)},
+			disableDeblock: d.hdr.DisableDeblockingFilterIDC,
+			alphaOffset:    int(d.hdr.SliceAlphaC0OffsetDiv2) * 2,
+			betaOffset:     int(d.hdr.SliceBetaOffsetDiv2) * 2,
+		}
 		d.nb = d.grid.around(d.mbx, d.mby, d.sliceID)
 		res.reset()
 

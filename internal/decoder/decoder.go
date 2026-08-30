@@ -60,6 +60,7 @@ func (d *Decoder) Flush() ([]*Picture, error) {
 		}
 	}
 	if d.cur != nil {
+		d.filterPicture()
 		out = append(out, d.cur)
 		d.cur = nil
 	}
@@ -129,6 +130,7 @@ func (d *Decoder) decodeSlice(u nal.Unit) ([]*Picture, error) {
 	var out []*Picture
 	if hdr.FirstMBInSlice == 0 {
 		if d.cur != nil {
+			d.filterPicture()
 			out = append(out, d.cur)
 		}
 		d.sps = sps
