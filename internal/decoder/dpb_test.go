@@ -138,16 +138,6 @@ func TestComputePOCType2(t *testing.T) {
 	})
 }
 
-// pocType1 hand derivation (see report): sps.OffsetForRefFrame = {4, 2, 1} (cycle
-// sum 7), sps.OffsetForNonRefPic = -1.
-//
-//	frameNum=0 IDR ref: offset=0, absFrameNum=0            -> expected=0            -> POC=0
-//	frameNum=1     ref: offset=0, absFrameNum=1            -> expected=4            -> POC=4
-//	frameNum=2     ref: offset=0, absFrameNum=2            -> expected=4+2=6        -> POC=6
-//	frameNum=3     ref: offset=0, absFrameNum=3            -> expected=4+2+1=7      -> POC=7
-//	frameNum=4     ref: offset=0, absFrameNum=4            -> expected=7+4=11       -> POC=11
-//	frameNum=5 non-ref: offset=0, absFrameNum=5-1(non-ref)=4 -> expected=7+4-1(nonref)=10 -> POC=10
-//	frameNum=6     ref, delta0=5: offset=0, absFrameNum=6  -> expected=7+7=14       -> POC=14+5=19
 func TestPocType1AcrossMultipleCycles(t *testing.T) {
 	sps := &syntax.SPS{
 		PicOrderCntType:    1,
@@ -181,12 +171,6 @@ func TestPocType1AcrossMultipleCycles(t *testing.T) {
 	}
 }
 
-// Wrap derivation (see report): same SPS as above.
-//
-//	frameNum=0 IDR ref:  offset=0, absFrameNum=0  -> expected=0                       -> POC=0
-//	frameNum=15    ref:  offset=0, absFrameNum=15 -> cycleCnt=4, inCycle=2, expected=4*7+(4+2+1)=35 -> POC=35
-//	frameNum=0     ref:  frameNum(0) < prevFrameNum(15) -> offset=0+16=16, absFrameNum=16
-//	                     -> cycleCnt=5, inCycle=0, expected=5*7+4=39               -> POC=39
 func TestPocType1FrameNumWrap(t *testing.T) {
 	sps := &syntax.SPS{
 		PicOrderCntType:    1,
@@ -340,8 +324,6 @@ func TestBuildListPAppliesModifications(t *testing.T) {
 		},
 	}
 
-	// Without the modification, buildListP would sort by descending picNum
-	// (rB=2 before rA=1). The modification must move rA to the front.
 	out := b.buildListP(hdr, 2)
 	if len(out) != 2 || out[0] != rA.pic || out[1] != rB.pic {
 		t.Fatalf("out = %v, want [rA, rB] (modification moves rA to front)", out)
@@ -364,8 +346,6 @@ func TestApplyModificationsStopsAtActiveCount(t *testing.T) {
 	}
 
 	out := b.applyModifications(list, mods, 5, 1)
-	// Only the first modification's effect (rA moved to the front) must be
-	// visible; the loop must have broken before consuming the second mod.
 	assertRefOrder(t, out, []*refFrame{rA, rOther, rB})
 }
 
@@ -411,17 +391,6 @@ func TestMoveToIndex(t *testing.T) {
 	})
 }
 
-// applyModifications derivation (see report): CurrPicNum = frameNum = 5, MaxFrameNum = 16.
-//
-//	m1 IDC=0 Value=0:   diff=1, predPicNum=5-1=4            -> pn=4  -> rA
-//	m2 IDC=0 Value=5:   diff=6, predPicNum=4-6=-2+16=14      -> pn=14-16=-2 -> rB
-//	m3 IDC=1 Value=2:   diff=3, predPicNum=14+3=17-16=1      -> pn=1  -> rC
-//	m4 IDC=1 Value=100: diff=101, predPicNum=1+101=102-16=86 -> pn=86-16=70 -> no ref: skipped
-//	m5 IDC=2 Value=3:   longTermByPicNum(3)                  -> rLT
-//	m6 IDC=2 Value=999: longTermByPicNum(999)                -> no ref: skipped
-//
-// moveToIndex is applied in order for the 4 hits (rA, rB, rC, rLT), producing
-// [rA, rB, rC, rLT, rOther] regardless of the initial ordering.
 func TestApplyModifications(t *testing.T) {
 	rOther := newRef(0, false, 0)
 	rOther.picNum = 0

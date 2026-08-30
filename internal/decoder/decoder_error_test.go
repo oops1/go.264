@@ -74,10 +74,6 @@ func annexBUnit(typ nal.Type, refIDC uint8, rbsp []byte) []byte {
 	return nal.AppendAnnexB(nil, nal.Unit{Header: nal.Header{RefIDC: refIDC, Type: typ}, RBSP: rbsp}, true)
 }
 
-// decodeWithFlush decodes data and, if that alone reports no error, flushes
-// the decoder so a trailing NAL unit still buffered by the Annex B scanner
-// (it only emits a unit once it has seen the *next* start code) gets a
-// chance to surface its error too.
 func decodeWithFlush(d *Decoder, data []byte) ([]*frame.Picture, error) {
 	pics, err := d.Decode(data)
 	if err != nil {
@@ -154,7 +150,6 @@ func TestDecodeSliceReferencingAbsentPPS(t *testing.T) {
 
 	var data []byte
 	data = append(data, annexBUnit(nal.TypeSPS, 3, spsBytes)...)
-	// The PPS itself is deliberately never sent.
 	data = append(data, annexBUnit(nal.TypeSliceIDR, 1, sliceRBSP)...)
 
 	d := New()
@@ -186,8 +181,6 @@ func TestDecodeFirstSliceIsPWithNoReference(t *testing.T) {
 }
 
 func TestDecodeMalformedNALHeaderPropagatesError(t *testing.T) {
-	// forbidden_zero_bit (top bit of the NAL header byte) set: nal.Parse must
-	// reject it, and handleUnit must propagate that error out of Decode.
 	data := []byte{0, 0, 1, 0x80, 0x00, 0, 0, 1}
 
 	d := New()
@@ -211,7 +204,6 @@ func TestDecodeUnsupportedSPSPropagatesError(t *testing.T) {
 
 func TestDecodeMalformedPPSPropagatesParseError(t *testing.T) {
 	var data []byte
-	// An empty PPS RBSP has nothing for pic_parameter_set_id's ue(v) to read.
 	data = append(data, annexBUnit(nal.TypePPS, 3, nil)...)
 	data = append(data, annexBUnit(nal.TypeAccessUnitDelim, 3, []byte{0xF0})...)
 
@@ -253,8 +245,6 @@ func TestDecodeSliceWeightedPredIsUnsupported(t *testing.T) {
 	ppsBytes := mustWritePPSBytes(t, pps, lookupOne(sps))
 
 	hdr := &syntax.SliceHeader{SliceType: syntax.SliceP, PPSID: pps.ID, NalRefIDC: 1}
-	// NumRefIdxL0ActiveMinus1 defaults to pps.NumRefIdxL0DefaultActiveMinus1
-	// (0), so the weight table needs exactly one L0 entry to round-trip.
 	hdr.PredWeight.L0 = make([]syntax.WeightEntry, 1)
 	sliceRBSP := mustSliceBytes(t, hdr, sps, pps)
 
@@ -276,9 +266,6 @@ func TestDecodeContinuationSliceWithNoCurrentPictureErrors(t *testing.T) {
 	spsBytes := mustWriteSPSBytes(t, sps)
 	ppsBytes := mustWritePPSBytes(t, pps, lookupOne(sps))
 
-	// A non-zero first_mb_in_slice as the very first VCL NAL: no picture has
-	// been started yet, so decodeSlice must report ErrNoParameters instead
-	// of dereferencing a nil current picture.
 	hdr := &syntax.SliceHeader{FirstMBInSlice: 5, SliceType: syntax.SliceI, PPSID: pps.ID, IDR: true, NalRefIDC: 1}
 	sliceRBSP := mustSliceBytes(t, hdr, sps, pps)
 
