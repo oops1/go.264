@@ -47,10 +47,15 @@ type mbEncoder struct {
 	mby int
 	qpY int
 
-	lumaScan   [16][16]int32
-	lumaDCScan [16]int32
-	chromaDC   [2]transform.ChromaDC
-	chromaScan [2][4][16]int32
+	isP            bool
+	pendingSkipRun uint32
+	scratch        [256]byte
+	mv             [2]int16
+	mvd            [2]int16
+	lumaScan       [16][16]int32
+	lumaDCScan     [16]int32
+	chromaDC       [2]transform.ChromaDC
+	chromaScan     [2][4][16]int32
 }
 
 func (s *mbEncoder) reset() {
@@ -64,23 +69,41 @@ func (e *Encoder) encodeSlice(w *bits.Writer, hdr *syntax.SliceHeader) error {
 	for i := range e.grid {
 		e.grid[i] = mbInfo{}
 	}
-	s := &mbEncoder{e: e, w: w, qpY: e.cfg.QP}
+	s := &mbEncoder{e: e, w: w, qpY: e.cfg.QP, isP: hdr.SliceType.IsP()}
 	for mby := 0; mby < e.heightMBs; mby++ {
 		for mbx := 0; mbx < e.widthMBs; mbx++ {
 			s.mbx = mbx
 			s.mby = mby
 			s.cur = e.at(mbx, mby)
-			*s.cur = mbInfo{MB: loopfilter.MB{QPY: s.qpY, ChromaQPOffset: [2]int{int(e.pps.ChromaQPIndexOffset), int(e.pps.SecondChromaQPIndexOffset)}}}
+			*s.cur = mbInfo{MB: loopfilter.MB{
+				QPY:            s.qpY,
+				ChromaQPOffset: [2]int{int(e.pps.ChromaQPIndexOffset), int(e.pps.SecondChromaQPIndexOffset)},
+			}}
 			for i := range s.cur.refIdx {
 				s.cur.refIdx[i] = -1
 			}
 			s.nb = e.around(mbx, mby)
 			s.reset()
-			if err := s.encodeIntraMB(); err != nil {
+
+			if !s.isP {
+				if err := s.encodeIntraMB(0); err != nil {
+					return err
+				}
+				s.cur.Decoded = true
+				continue
+			}
+			skipped, err := s.encodeInterMB()
+			if err != nil {
 				return err
+			}
+			if skipped {
+				s.pendingSkipRun++
 			}
 			s.cur.Decoded = true
 		}
+	}
+	if s.isP && s.pendingSkipRun > 0 {
+		w.WriteUE(s.pendingSkipRun)
 	}
 	return w.Err()
 }
@@ -93,7 +116,7 @@ func (s *mbEncoder) chromaOffset(blk int) int {
 	return s.e.rec.ChromaOffset(s.mbx*8+chromaBlockX[blk], s.mby*8+chromaBlockY[blk])
 }
 
-func (s *mbEncoder) encodeIntraMB() error {
+func (s *mbEncoder) encodeIntraMB(typeOffset uint32) error {
 	cost16, mode16 := s.searchIntra16x16()
 	cost4 := s.encodeIntra4x4()
 	lambda := lambdaTable[s.qpY]
@@ -112,7 +135,7 @@ func (s *mbEncoder) encodeIntraMB() error {
 	s.cur.chromaMode = int8(chromaMode)
 	s.encodeChroma(chromaMode)
 
-	return s.writeIntraMB()
+	return s.writeIntraMB(typeOffset)
 }
 
 func (s *mbEncoder) searchIntra16x16() (int, int) {
@@ -365,9 +388,9 @@ func countNonZero(v []int32) int {
 	return n
 }
 
-func (s *mbEncoder) writeIntraMB() error {
+func (s *mbEncoder) writeIntraMB(typeOffset uint32) error {
 	if s.cur.kind == mbTypeINxN {
-		s.w.WriteUE(0)
+		s.w.WriteUE(typeOffset)
 		for blk := 0; blk < 16; blk++ {
 			mode := int(s.cur.intra4Modes[blk])
 			predMode := s.predIntra4x4Mode(blk)
@@ -399,7 +422,7 @@ func (s *mbEncoder) writeIntraMB() error {
 		cbpLumaBit = 1
 	}
 	mbType := 1 + int(s.cur.intra16Mode) + 4*s.cur.cbpChroma + 12*cbpLumaBit
-	s.w.WriteUE(uint32(mbType))
+	s.w.WriteUE(uint32(mbType) + typeOffset)
 	s.w.WriteUE(uint32(s.cur.chromaMode))
 	s.w.WriteSE(0)
 	if err := s.writeResidual(true); err != nil {

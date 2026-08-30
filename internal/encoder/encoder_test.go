@@ -237,3 +237,52 @@ func BenchmarkEncodeIntraQCIF(b *testing.B) {
 		}
 	}
 }
+
+func TestEncodeInterReconstructionMatches(t *testing.T) {
+	for _, qp := range []int{10, 26, 40} {
+		cfg := Config{Width: 176, Height: 144, FPSNum: 25, FPSDen: 1, GOPSize: 8, QP: qp}
+		var frames [][]byte
+		for i := 0; i < 8; i++ {
+			frames = append(frames, syntheticFrame(cfg.Width, cfg.Height, i))
+		}
+		pics, _, recons := encodeAndDecode(t, cfg, frames)
+		if len(pics) != len(frames) {
+			t.Fatalf("qp %d: decoded %d frames, want %d", qp, len(pics), len(frames))
+		}
+		for i := range pics {
+			got := make([]byte, pics[i].Size())
+			pics[i].CopyOut(got)
+			want := make([]byte, recons[i].Size())
+			recons[i].CopyOut(want)
+			for j := range got {
+				if got[j] != want[j] {
+					t.Fatalf("qp %d frame %d: reconstructions differ at sample %d, got %d want %d",
+						qp, i, j, got[j], want[j])
+				}
+			}
+		}
+	}
+}
+
+func TestInterFramesAreSmallerThanIntra(t *testing.T) {
+	cfg := Config{Width: 176, Height: 144, FPSNum: 25, FPSDen: 1, GOPSize: 6, QP: 26}
+	enc, err := New(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	src := syntheticFrame(cfg.Width, cfg.Height, 0)
+	var sizes []int
+	for i := 0; i < 6; i++ {
+		pkt, err := enc.Encode(src)
+		if err != nil {
+			t.Fatal(err)
+		}
+		sizes = append(sizes, len(pkt))
+	}
+	t.Logf("access unit sizes: %v", sizes)
+	for i := 1; i < len(sizes); i++ {
+		if sizes[i] >= sizes[0] {
+			t.Errorf("frame %d is %d bytes, not smaller than the intra frame at %d", i, sizes[i], sizes[0])
+		}
+	}
+}

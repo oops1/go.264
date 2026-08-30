@@ -127,3 +127,50 @@ func containsLine(s, want string) bool {
 	}
 	return false
 }
+
+func TestFFmpegDecodesInterFramesIdentically(t *testing.T) {
+	for _, qp := range []int{14, 26, 36} {
+		cfg := Config{Width: 176, Height: 144, FPSNum: 25, FPSDen: 1, GOPSize: 10, QP: qp}
+		var frames [][]byte
+		for i := 0; i < 10; i++ {
+			frames = append(frames, syntheticFrame(cfg.Width, cfg.Height, i))
+		}
+		enc, err := New(cfg)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var stream []byte
+		intraSize, interTotal := 0, 0
+		for i, f := range frames {
+			pkt, err := enc.Encode(f)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if i == 0 {
+				intraSize = len(pkt)
+			} else {
+				interTotal += len(pkt)
+			}
+			stream = append(stream, pkt...)
+		}
+
+		ref := decodeWithFFmpeg(t, stream)
+		frameSize := cfg.Width * cfg.Height * 3 / 2
+		if len(ref) != frameSize*len(frames) {
+			t.Fatalf("qp %d: ffmpeg produced %d bytes, want %d", qp, len(ref), frameSize*len(frames))
+		}
+		pics, _, _ := encodeAndDecode(t, cfg, frames)
+		for i := range pics {
+			got := make([]byte, pics[i].Size())
+			pics[i].CopyOut(got)
+			want := ref[i*frameSize : (i+1)*frameSize]
+			for j := range got {
+				if got[j] != want[j] {
+					t.Fatalf("qp %d frame %d: ffmpeg and our decoder disagree at sample %d, ffmpeg %d ours %d",
+						qp, i, j, want[j], got[j])
+				}
+			}
+		}
+		t.Logf("qp %d: intra %d bytes, nine inter frames %d bytes total", qp, intraSize, interTotal)
+	}
+}
