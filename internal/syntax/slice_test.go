@@ -2,6 +2,7 @@ package syntax
 
 import (
 	"errors"
+	"fmt"
 	"reflect"
 	"testing"
 
@@ -63,6 +64,53 @@ func TestSliceTypeHelpers(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestSliceHeaderMbaffFrame(t *testing.T) {
+	tests := []struct {
+		name     string
+		mbaff    bool
+		fieldPic bool
+		want     bool
+	}{
+		{"mbaff_and_frame", true, false, true},
+		{"mbaff_but_field", true, true, false},
+		{"no_mbaff_frame", false, false, false},
+		{"no_mbaff_field", false, true, false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			sps := &SPS{MBAdaptiveFrameField: tc.mbaff}
+			h := &SliceHeader{FieldPic: tc.fieldPic}
+			if got := h.MbaffFrame(sps); got != tc.want {
+				t.Errorf("MbaffFrame() = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestSliceHeaderNumRefIdxActive(t *testing.T) {
+	pps := &PPS{NumRefIdxL0DefaultActiveMinus1: 2, NumRefIdxL1DefaultActiveMinus1: 1}
+
+	noOverride := &SliceHeader{NumRefIdxActiveOverride: false}
+	if got := noOverride.NumRefIdxL0Active(pps); got != 3 {
+		t.Errorf("NumRefIdxL0Active() = %d, want 3", got)
+	}
+	if got := noOverride.NumRefIdxL1Active(pps); got != 2 {
+		t.Errorf("NumRefIdxL1Active() = %d, want 2", got)
+	}
+
+	override := &SliceHeader{
+		NumRefIdxActiveOverride: true,
+		NumRefIdxL0ActiveMinus1: 5,
+		NumRefIdxL1ActiveMinus1: 4,
+	}
+	if got := override.NumRefIdxL0Active(pps); got != 6 {
+		t.Errorf("NumRefIdxL0Active() = %d, want 6", got)
+	}
+	if got := override.NumRefIdxL1Active(pps); got != 5 {
+		t.Errorf("NumRefIdxL1Active() = %d, want 5", got)
 	}
 }
 
@@ -395,7 +443,7 @@ func buildSliceScenarios() []sliceScenario {
 				LumaLog2WeightDenom: 5,
 				L0: []WeightEntry{
 					{LumaWeightFlag: true, LumaWeight: 10, LumaOffset: -2},
-					{LumaWeightFlag: false, LumaWeight: 1},
+					{LumaWeightFlag: false, LumaWeight: 1 << 5},
 				},
 			},
 			SliceQPDelta: 0,
@@ -427,9 +475,9 @@ func buildSliceScenarios() []sliceScenario {
 					},
 					{
 						LumaWeightFlag:   false,
-						LumaWeight:       1,
+						LumaWeight:       1 << 3,
 						ChromaWeightFlag: false,
-						ChromaWeight:     [2]int32{1, 1},
+						ChromaWeight:     [2]int32{1 << 3, 1 << 3},
 					},
 				},
 			},
@@ -455,9 +503,9 @@ func buildSliceScenarios() []sliceScenario {
 				L0: []WeightEntry{
 					{
 						LumaWeightFlag:   false,
-						LumaWeight:       1,
+						LumaWeight:       1 << 2,
 						ChromaWeightFlag: false,
-						ChromaWeight:     [2]int32{1, 1},
+						ChromaWeight:     [2]int32{1 << 2, 1 << 2},
 					},
 				},
 				L1: []WeightEntry{
@@ -539,6 +587,56 @@ func TestSliceHeaderRoundTripMatrix(t *testing.T) {
 			}
 			b2 := sliceHeaderBytes(t, parsed, sc.sps, sc.pps)
 			bytesEqual(t, sc.name, b1, b2)
+		})
+	}
+}
+
+func TestPredWeightTableDefaults(t *testing.T) {
+	for d := uint32(0); d <= 7; d++ {
+		lumaDenom := d
+		chromaDenom := 7 - d
+		t.Run(fmt.Sprintf("luma_denom_%d_chroma_denom_%d", lumaDenom, chromaDenom), func(t *testing.T) {
+			sps := baseSPS()
+			sps.ChromaFormatIDC = Chroma420
+			pps := basePPS(sps.ID)
+			pps.WeightedPred = true
+			h := &SliceHeader{
+				SliceType:               SliceP,
+				PPSID:                   pps.ID,
+				FrameNum:                1,
+				NumRefIdxActiveOverride: true,
+				NumRefIdxL0ActiveMinus1: 0,
+				PredWeight: PredWeightTable{
+					LumaLog2WeightDenom:   lumaDenom,
+					ChromaLog2WeightDenom: chromaDenom,
+					L0:                    []WeightEntry{{}},
+				},
+				SliceQPDelta: 0,
+			}
+
+			parsed, err := roundtripSliceHeader(t, h, sps, pps)
+			if err != nil {
+				t.Fatalf("roundtrip: %v", err)
+			}
+			if len(parsed.PredWeight.L0) != 1 {
+				t.Fatalf("L0 length = %d, want 1", len(parsed.PredWeight.L0))
+			}
+
+			wantLuma := int32(1) << lumaDenom
+			wantChroma := int32(1) << chromaDenom
+			e := parsed.PredWeight.L0[0]
+			if e.LumaWeightFlag {
+				t.Fatalf("LumaWeightFlag = true, want false")
+			}
+			if e.LumaWeight != wantLuma {
+				t.Fatalf("LumaWeight = %d, want %d (1<<%d)", e.LumaWeight, wantLuma, lumaDenom)
+			}
+			if e.ChromaWeightFlag {
+				t.Fatalf("ChromaWeightFlag = true, want false")
+			}
+			if e.ChromaWeight != [2]int32{wantChroma, wantChroma} {
+				t.Fatalf("ChromaWeight = %v, want [%d %d] (1<<%d)", e.ChromaWeight, wantChroma, wantChroma, chromaDenom)
+			}
 		})
 	}
 }

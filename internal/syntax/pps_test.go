@@ -345,36 +345,126 @@ func TestPPSValidationRejects(t *testing.T) {
 	}
 }
 
-func TestPPSTruncationAtExtensionBoundaryIsDetected(t *testing.T) {
+func TestPPSExtensionAbsenceIsIndistinguishableFromTruncation(t *testing.T) {
 	sps := baseSPS()
 	sps.ChromaFormatIDC = Chroma444
 	lookup := lookupSPSFunc(sps)
 
-	p := basePPS(sps.ID)
-	p.HasExtension = true
-	p.Transform8x8Mode = true
-	p.PicScalingMatrixPresent = true
+	base := func() *PPS {
+		p := basePPS(sps.ID)
+		p.CABAC = true
+		p.WeightedPred = true
+		p.WeightedBipredIDC = 2
+		p.PicInitQPMinus26 = 5
+		p.PicInitQSMinus26 = -3
+		p.ChromaQPIndexOffset = 7
+		p.RedundantPicCntPresent = true
+		return p
+	}
+
+	withExt := base()
+	withExt.HasExtension = true
+	withExt.Transform8x8Mode = true
+	withExt.PicScalingMatrixPresent = true
 	for i := 0; i < 6; i++ {
-		p.ScalingList4x4Present[i] = true
-		p.ScalingList4x4[i] = flatList4x4(uint8(i))
+		withExt.ScalingList4x4Present[i] = true
+		withExt.ScalingList4x4[i] = flatList4x4(uint8(i))
 	}
-	p.SecondChromaQPIndexOffset = 4
+	withExt.SecondChromaQPIndexOffset = 4
 
-	full, err := WritePPS(p, lookup)
+	withoutExt := base()
+	withoutExt.HasExtension = false
+
+	baseOnlyBytes, err := WritePPS(withoutExt, lookup)
 	if err != nil {
-		t.Fatalf("WritePPS: %v", err)
+		t.Fatalf("WritePPS(withoutExt): %v", err)
 	}
-	truncated := full[:2]
 
-	got, err := ParsePPS(truncated, lookup)
-	if err == nil {
-		t.Fatalf("ParsePPS(% x) unexpectedly succeeded with %+v; want an error because the extension "+
-			"(transform_8x8_mode_flag, pic_scaling_matrix_present_flag and its scaling lists, "+
-			"second_chroma_qp_index_offset) was truncated away", truncated, got)
+	got, err := ParsePPS(baseOnlyBytes, lookup)
+	if err != nil {
+		t.Fatalf("ParsePPS(%x) unexpectedly failed: %v; a byte stream that ends exactly at the "+
+			"base-PPS/extension boundary is a valid extension-less PPS per more_rbsp_data() semantics, "+
+			"not a detectable truncation", baseOnlyBytes, err)
+	}
+	if got.HasExtension {
+		t.Fatalf("HasExtension = true, want false for %x", baseOnlyBytes)
+	}
+	if got.SecondChromaQPIndexOffset != got.ChromaQPIndexOffset {
+		t.Fatalf("SecondChromaQPIndexOffset = %d, want equal to ChromaQPIndexOffset %d",
+			got.SecondChromaQPIndexOffset, got.ChromaQPIndexOffset)
+	}
+
+	if _, err := WritePPS(withExt, lookup); err != nil {
+		t.Fatalf("WritePPS(withExt): %v", err)
 	}
 }
 
-func TestPPSTruncationNeverPanicsAlwaysErrors(t *testing.T) {
+func TestPPSHasExtensionRoundTrips(t *testing.T) {
+	sps := baseSPS()
+	lookup := lookupSPSFunc(sps)
+
+	noExt := basePPS(sps.ID)
+	noExt.HasExtension = false
+	b := mustWritePPS(t, noExt, lookup)
+	parsed := mustParsePPS(t, b, lookup)
+	if parsed.HasExtension {
+		t.Fatalf("HasExtension = true, want false")
+	}
+
+	withExt := basePPS(sps.ID)
+	withExt.HasExtension = true
+	b = mustWritePPS(t, withExt, lookup)
+	parsed = mustParsePPS(t, b, lookup)
+	if !parsed.HasExtension {
+		t.Fatalf("HasExtension = false, want true")
+	}
+}
+
+func TestPPSPicInitQSMinus26RangeRejected(t *testing.T) {
+	sps := baseSPS()
+	sps.ChromaFormatIDC = Chroma444
+	sps.ProfileIDC = 100
+	lookup := lookupSPSFunc(sps)
+
+	b := []byte("\xce\xce\x00\x00\x00\x01\x00\x00\x00\x010")
+
+	_, err := ParsePPS(b, lookup)
+	if !errors.Is(err, ErrInvalidValue) {
+		t.Fatalf("ParsePPS(% x) = %v, want error wrapping ErrInvalidValue", b, err)
+	}
+
+	for _, tc := range []struct {
+		value    int32
+		accepted bool
+	}{
+		{-26, true},
+		{25, true},
+		{-27, false},
+		{26, false},
+	} {
+		p := basePPS(sps.ID)
+		p.PicInitQSMinus26 = tc.value
+		wb, werr := WritePPS(p, lookup)
+		if werr != nil {
+			t.Fatalf("WritePPS(PicInitQSMinus26=%d) unexpectedly failed: %v", tc.value, werr)
+		}
+		parsed, perr := ParsePPS(wb, lookup)
+		if tc.accepted {
+			if perr != nil {
+				t.Fatalf("ParsePPS(PicInitQSMinus26=%d): unexpected error %v", tc.value, perr)
+			}
+			if parsed.PicInitQSMinus26 != tc.value {
+				t.Fatalf("PicInitQSMinus26 = %d, want %d", parsed.PicInitQSMinus26, tc.value)
+			}
+		} else {
+			if !errors.Is(perr, ErrInvalidValue) {
+				t.Fatalf("ParsePPS(PicInitQSMinus26=%d) = %v, want error wrapping ErrInvalidValue", tc.value, perr)
+			}
+		}
+	}
+}
+
+func TestPPSTruncationNeverPanicsOrReturnsNilBoth(t *testing.T) {
 	sps := baseSPS()
 	sps.ChromaFormatIDC = Chroma444
 	lookup := lookupSPSFunc(sps)
@@ -417,9 +507,9 @@ func TestPPSTruncationNeverPanicsAlwaysErrors(t *testing.T) {
 					t.Fatalf("ParsePPS panicked on truncated input len=%d: %v", n, r)
 				}
 			}()
-			_, err := ParsePPS(full[:n], lookup)
-			if err == nil {
-				t.Fatalf("expected error for truncated input of length %d, got nil", n)
+			got, err := ParsePPS(full[:n], lookup)
+			if err == nil && got == nil {
+				t.Fatalf("ParsePPS returned both a nil error and a nil PPS for truncated input len=%d", n)
 			}
 		}()
 	}

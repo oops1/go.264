@@ -1,0 +1,236 @@
+package decoder
+
+import (
+	"errors"
+
+	"github.com/oops1/go264/internal/pred"
+)
+
+var (
+	ErrUnsupported  = errors.New("go264/decoder: unsupported bitstream feature")
+	ErrCorrupt      = errors.New("go264/decoder: corrupt macroblock data")
+	ErrNoParameters = errors.New("go264/decoder: slice references absent parameter sets")
+)
+
+type mbState struct {
+	decoded      bool
+	intra        bool
+	ipcm         bool
+	kind         int
+	qpY          int
+	sliceID      int
+	nzY          [16]uint8
+	nzCb         [4]uint8
+	nzCr         [4]uint8
+	intra4Modes  [16]int8
+	intra16Mode  int8
+	chromaMode   int8
+	cbpLuma      int
+	cbpChroma    int
+	transform8x8 bool
+}
+
+var blkIdxGrid = [4][4]int{
+	{0, 1, 4, 5},
+	{2, 3, 6, 7},
+	{8, 9, 12, 13},
+	{10, 11, 14, 15},
+}
+
+func blkIdxAt(x, y int) int { return blkIdxGrid[y>>2][x>>2] }
+
+var topRightInsideMB = [16]bool{
+	false, false, true, false,
+	false, false, true, false,
+	true, true, true, false,
+	true, false, true, false,
+}
+
+type mbGrid struct {
+	mbs       []mbState
+	widthMBs  int
+	heightMBs int
+}
+
+func newMBGrid(widthMBs, heightMBs int) *mbGrid {
+	return &mbGrid{
+		mbs:       make([]mbState, widthMBs*heightMBs),
+		widthMBs:  widthMBs,
+		heightMBs: heightMBs,
+	}
+}
+
+func (g *mbGrid) reset() {
+	for i := range g.mbs {
+		g.mbs[i] = mbState{}
+	}
+}
+
+func (g *mbGrid) at(mbx, mby int) *mbState {
+	if mbx < 0 || mby < 0 || mbx >= g.widthMBs || mby >= g.heightMBs {
+		return nil
+	}
+	return &g.mbs[mby*g.widthMBs+mbx]
+}
+
+func (g *mbGrid) neighbour(mbx, mby, dx, dy, sliceID int) *mbState {
+	m := g.at(mbx+dx, mby+dy)
+	if m == nil || !m.decoded || m.sliceID != sliceID {
+		return nil
+	}
+	return m
+}
+
+type neighbours struct {
+	left     *mbState
+	top      *mbState
+	topLeft  *mbState
+	topRight *mbState
+}
+
+func (g *mbGrid) around(mbx, mby, sliceID int) neighbours {
+	return neighbours{
+		left:     g.neighbour(mbx, mby, -1, 0, sliceID),
+		top:      g.neighbour(mbx, mby, 0, -1, sliceID),
+		topLeft:  g.neighbour(mbx, mby, -1, -1, sliceID),
+		topRight: g.neighbour(mbx, mby, 1, -1, sliceID),
+	}
+}
+
+func usableForIntra(m *mbState, constrainedIntraPred bool) bool {
+	if m == nil {
+		return false
+	}
+	if constrainedIntraPred && !m.intra {
+		return false
+	}
+	return true
+}
+
+func lumaAvailability(blk int, n neighbours, constrained bool) pred.Availability {
+	x, y := blockX[blk], blockY[blk]
+	var a pred.Availability
+	if x > 0 || usableForIntra(n.left, constrained) {
+		a |= pred.AvailLeft
+	}
+	if y > 0 || usableForIntra(n.top, constrained) {
+		a |= pred.AvailTop
+	}
+	switch {
+	case x > 0 && y > 0:
+		a |= pred.AvailTopLeft
+	case x == 0 && y > 0:
+		if usableForIntra(n.left, constrained) {
+			a |= pred.AvailTopLeft
+		}
+	case x > 0 && y == 0:
+		if usableForIntra(n.top, constrained) {
+			a |= pred.AvailTopLeft
+		}
+	default:
+		if usableForIntra(n.topLeft, constrained) {
+			a |= pred.AvailTopLeft
+		}
+	}
+	switch {
+	case y > 0:
+		if topRightInsideMB[blk] {
+			a |= pred.AvailTopRight
+		}
+	case x < 12:
+		if usableForIntra(n.top, constrained) {
+			a |= pred.AvailTopRight
+		}
+	default:
+		if usableForIntra(n.topRight, constrained) {
+			a |= pred.AvailTopRight
+		}
+	}
+	return a
+}
+
+func mbAvailability(n neighbours, constrained bool) pred.Availability {
+	var a pred.Availability
+	if usableForIntra(n.left, constrained) {
+		a |= pred.AvailLeft
+	}
+	if usableForIntra(n.top, constrained) {
+		a |= pred.AvailTop
+	}
+	if usableForIntra(n.topLeft, constrained) {
+		a |= pred.AvailTopLeft
+	}
+	if usableForIntra(n.topRight, constrained) {
+		a |= pred.AvailTopRight
+	}
+	return a
+}
+
+func nonZeroLuma(m *mbState, blk int) (int, bool) {
+	if m == nil {
+		return 0, false
+	}
+	if m.ipcm {
+		return 16, true
+	}
+	return int(m.nzY[blk]), true
+}
+
+func nonZeroChroma(m *mbState, plane, blk int) (int, bool) {
+	if m == nil {
+		return 0, false
+	}
+	if m.ipcm {
+		return 16, true
+	}
+	if plane == 0 {
+		return int(m.nzCb[blk]), true
+	}
+	return int(m.nzCr[blk]), true
+}
+
+func combineNC(nA int, okA bool, nB int, okB bool) int {
+	switch {
+	case okA && okB:
+		return (nA + nB + 1) >> 1
+	case okA:
+		return nA
+	case okB:
+		return nB
+	}
+	return 0
+}
+
+func (d *sliceDecoder) lumaNC(blk int) int {
+	x, y := blockX[blk], blockY[blk]
+	var nA, nB int
+	var okA, okB bool
+	if x > 0 {
+		nA, okA = nonZeroLuma(d.cur, blkIdxAt(x-4, y))
+	} else {
+		nA, okA = nonZeroLuma(d.nb.left, blkIdxAt(12, y))
+	}
+	if y > 0 {
+		nB, okB = nonZeroLuma(d.cur, blkIdxAt(x, y-4))
+	} else {
+		nB, okB = nonZeroLuma(d.nb.top, blkIdxAt(x, 12))
+	}
+	return combineNC(nA, okA, nB, okB)
+}
+
+func (d *sliceDecoder) chromaNC(plane, blk int) int {
+	x, y := chromaBlockX[blk], chromaBlockY[blk]
+	var nA, nB int
+	var okA, okB bool
+	if x > 0 {
+		nA, okA = nonZeroChroma(d.cur, plane, blk-1)
+	} else {
+		nA, okA = nonZeroChroma(d.nb.left, plane, blk+1)
+	}
+	if y > 0 {
+		nB, okB = nonZeroChroma(d.cur, plane, blk-2)
+	} else {
+		nB, okB = nonZeroChroma(d.nb.top, plane, blk+2)
+	}
+	return combineNC(nA, okA, nB, okB)
+}

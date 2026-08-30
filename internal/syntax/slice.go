@@ -448,18 +448,20 @@ func parsePredWeightTable(r *bits.Reader, h *SliceHeader, sps *SPS) error {
 			return fmt.Errorf("%w: chroma_log2_weight_denom %d", ErrInvalidValue, t.ChromaLog2WeightDenom)
 		}
 	}
-	if t.L0, err = parseWeightList(r, int(h.NumRefIdxL0ActiveMinus1)+1, hasChroma); err != nil {
+	defLuma := int32(1) << t.LumaLog2WeightDenom
+	defChroma := int32(1) << t.ChromaLog2WeightDenom
+	if t.L0, err = parseWeightList(r, int(h.NumRefIdxL0ActiveMinus1)+1, hasChroma, defLuma, defChroma); err != nil {
 		return err
 	}
 	if h.SliceType.IsB() {
-		if t.L1, err = parseWeightList(r, int(h.NumRefIdxL1ActiveMinus1)+1, hasChroma); err != nil {
+		if t.L1, err = parseWeightList(r, int(h.NumRefIdxL1ActiveMinus1)+1, hasChroma, defLuma, defChroma); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func parseWeightList(r *bits.Reader, n int, hasChroma bool) ([]WeightEntry, error) {
+func parseWeightList(r *bits.Reader, n int, hasChroma bool, defLuma, defChroma int32) ([]WeightEntry, error) {
 	out := make([]WeightEntry, n)
 	for i := range out {
 		e := &out[i]
@@ -475,7 +477,7 @@ func parseWeightList(r *bits.Reader, n int, hasChroma bool) ([]WeightEntry, erro
 				return nil, err
 			}
 		} else {
-			e.LumaWeight = 1
+			e.LumaWeight = defLuma
 		}
 		if !hasChroma {
 			continue
@@ -493,8 +495,8 @@ func parseWeightList(r *bits.Reader, n int, hasChroma bool) ([]WeightEntry, erro
 				}
 			}
 		} else {
-			e.ChromaWeight[0] = 1
-			e.ChromaWeight[1] = 1
+			e.ChromaWeight[0] = defChroma
+			e.ChromaWeight[1] = defChroma
 		}
 	}
 	return out, nil

@@ -111,6 +111,9 @@ func ParsePPS(rbsp []byte, lookupSPS func(id uint32) *SPS) (*PPS, error) {
 	if p.PicInitQPMinus26 < -26 || p.PicInitQPMinus26 > 25 {
 		return nil, fmt.Errorf("%w: pic_init_qp_minus26 %d", ErrInvalidValue, p.PicInitQPMinus26)
 	}
+	if p.PicInitQSMinus26 < -26 || p.PicInitQSMinus26 > 25 {
+		return nil, fmt.Errorf("%w: pic_init_qs_minus26 %d", ErrInvalidValue, p.PicInitQSMinus26)
+	}
 	if p.ChromaQPIndexOffset, err = r.ReadSE(); err != nil {
 		return nil, err
 	}
