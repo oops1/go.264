@@ -79,7 +79,10 @@ go install github.com/oops1/go264/cmd/go264@latest
 
 ```bash
 go264 encode -s 1280x720 -qp 24 -gop 30 -i input.yuv -o output.264
-```\n
+```
+
+Or aim at a bitrate instead of a fixed quantiser:
+
 ```bash
 go264 encode -s 1280x720 -b 2500 -gop 30 -i input.yuv -o output.264
 ```
