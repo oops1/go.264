@@ -22,6 +22,8 @@ var Corpus = []Clip{
 	{Name: "base_ip_qp10", Width: 176, Height: 144, Frames: 10},
 	{Name: "base_ip_qp26", Width: 176, Height: 144, Frames: 10},
 	{Name: "base_ip_qp40", Width: 176, Height: 144, Frames: 10},
+	{Name: "base_ip_ref3", Width: 176, Height: 144, Frames: 10},
+	{Name: "base_ip_slices", Width: 176, Height: 144, Frames: 10},
 }
 
 func (c Clip) FrameSize() int { return c.Width * c.Height * 3 / 2 }

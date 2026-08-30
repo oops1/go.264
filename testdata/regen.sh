@@ -34,5 +34,7 @@ encode base_intra_nodb "keyint=1:qp=30:no-deblock=1:$common"
 encode base_ip_qp10    "keyint=10:qp=10:$common"
 encode base_ip_qp26    "keyint=10:qp=26:$common"
 encode base_ip_qp40    "keyint=10:qp=40:$common"
+encode base_ip_ref3    "keyint=25:qp=28:ref=3:threads=1:sliced-threads=0:aq-mode=0"
+encode base_ip_slices  "keyint=25:qp=28:ref=2:slices=3:threads=1:sliced-threads=0:aq-mode=0"
 
 echo "regenerated $(ls -1 "$out" | wc -l) files in $out"
