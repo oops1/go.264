@@ -22,7 +22,7 @@ Working today:
 | Decoder, Constrained Baseline | complete, bit-exact against ffmpeg |
 | Encoder, Constrained Baseline | complete, bit-exact against ffmpeg |
 | Intra prediction, all block sizes | complete |
-| Inter prediction, all P partitions | complete in the decoder, 16x16 in the encoder |
+| Inter prediction | all P partitions in the decoder, 16x16, 16x8 and 8x16 in the encoder |
 | CAVLC | complete, both directions |
 | In-loop deblocking filter | complete, shared by encoder and decoder |
 | Reference picture management | sliding window and MMCO |
@@ -97,6 +97,23 @@ with ffmpeg:
 ```bash
 ffmpeg -i movie.mp4 -pix_fmt yuv420p -f rawvideo - | go264 encode -s 1280x720 -o out.264
 ```
+
+## Verification
+
+Every numeric table taken from the specification is transcribed from an
+authoritative source and then validated structurally rather than trusted.
+For the CAVLC tables that means asserting each is a prefix free code whose
+Kraft sum is at or just below one, which caught seven wrong entries in one
+table and a chroma table whose sum exceeded one, an arithmetic
+impossibility for any prefix code.
+
+The decoder is measured against frames ffmpeg produces from the same
+streams, sample for sample. The encoder is measured the other way: ffmpeg
+must decode its output to exactly what our own decoder produces. Assembly
+kernels are compared against their pure Go twins on randomised inputs.
+Prediction and interpolation are compared against independent reference
+implementations written from the specification formulas rather than from
+the production code.
 
 ## Testing
 
