@@ -3,6 +3,7 @@ package decoder
 import (
 	"errors"
 
+	"github.com/oops1/go264/internal/frame"
 	"github.com/oops1/go264/internal/pred"
 )
 
@@ -31,7 +32,7 @@ type mbState struct {
 
 	mvL0           [16][2]int16
 	refIdxL0       [16]int8
-	refPicL0       [16]*Picture
+	refPicL0       [16]*frame.Picture
 	chromaQPOffset [2]int
 	disableDeblock uint32
 	alphaOffset    int

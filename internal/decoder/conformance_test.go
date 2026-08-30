@@ -5,10 +5,11 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/oops1/go264/internal/frame"
 	"github.com/oops1/go264/internal/testutil"
 )
 
-func decodeAll(t *testing.T, stream []byte) []*Picture {
+func decodeAll(t *testing.T, stream []byte) []*frame.Picture {
 	t.Helper()
 	d := New()
 	pics, err := d.Decode(stream)
@@ -99,7 +100,7 @@ func TestDecodeInChunks(t *testing.T) {
 	want := testutil.LoadReferenceYUV(t, clip)
 	for _, size := range []int{1, 7, 64, 1000} {
 		d := New()
-		var pics []*Picture
+		var pics []*frame.Picture
 		for off := 0; off < len(stream); off += size {
 			end := off + size
 			if end > len(stream) {

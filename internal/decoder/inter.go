@@ -3,6 +3,7 @@ package decoder
 import (
 	"fmt"
 
+	"github.com/oops1/go264/internal/frame"
 	"github.com/oops1/go264/internal/mc"
 	"github.com/oops1/go264/internal/transform"
 )
@@ -168,7 +169,7 @@ func (d *sliceDecoder) decodePSkip() error {
 	return nil
 }
 
-func (d *sliceDecoder) refPicture(idx int8) *Picture {
+func (d *sliceDecoder) refPicture(idx int8) *frame.Picture {
 	if int(idx) >= len(d.refList) || idx < 0 {
 		if len(d.refList) == 0 {
 			return nil
@@ -191,10 +192,9 @@ func clampComponent(v, lo, hi, fracBits int) int {
 }
 
 const (
-	lumaTapBefore   = 2
-	lumaTapAfter    = 3
-	chromaTapAfter  = 1
-	chromaMarginPad = lumaMargin / 2
+	lumaTapBefore  = 2
+	lumaTapAfter   = 3
+	chromaTapAfter = 1
 )
 
 func (d *sliceDecoder) motionCompensate() {
@@ -208,11 +208,11 @@ func (d *sliceDecoder) motionCompensate() {
 		y := baseY + seg.y
 
 		mvx := clampComponent(int(seg.mv[0]),
-			lumaTapBefore-lumaMargin-x,
-			ref.Width+lumaMargin-lumaTapAfter-x-seg.w, 2)
+			lumaTapBefore-frame.LumaMargin-x,
+			ref.Width+frame.LumaMargin-lumaTapAfter-x-seg.w, 2)
 		mvy := clampComponent(int(seg.mv[1]),
-			lumaTapBefore-lumaMargin-y,
-			ref.Height+lumaMargin-lumaTapAfter-y-seg.h, 2)
+			lumaTapBefore-frame.LumaMargin-y,
+			ref.Height+frame.LumaMargin-lumaTapAfter-y-seg.h, 2)
 		mc.PredictLuma(d.pic.Y, d.pic.StrideY, d.pic.LumaOffset(x, y),
 			ref.Y, ref.StrideY, ref.LumaOffset(x, y),
 			seg.w, seg.h, mvx, mvy)
@@ -220,11 +220,11 @@ func (d *sliceDecoder) motionCompensate() {
 		cx, cy := x/2, y/2
 		cw, ch := seg.w/2, seg.h/2
 		cmvx := clampComponent(int(seg.mv[0]),
-			-chromaMarginPad-cx,
-			ref.Width/2+chromaMarginPad-chromaTapAfter-cx-cw, 3)
+			-frame.ChromaMargin-cx,
+			ref.Width/2+frame.ChromaMargin-chromaTapAfter-cx-cw, 3)
 		cmvy := clampComponent(int(seg.mv[1]),
-			-chromaMarginPad-cy,
-			ref.Height/2+chromaMarginPad-chromaTapAfter-cy-ch, 3)
+			-frame.ChromaMargin-cy,
+			ref.Height/2+frame.ChromaMargin-chromaTapAfter-cy-ch, 3)
 		mc.PredictChroma(d.pic.Cb, d.pic.StrideC, d.pic.ChromaOffset(cx, cy),
 			ref.Cb, ref.StrideC, ref.ChromaOffset(cx, cy), cw, ch, cmvx, cmvy)
 		mc.PredictChroma(d.pic.Cr, d.pic.StrideC, d.pic.ChromaOffset(cx, cy),

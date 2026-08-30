@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"github.com/oops1/go264/internal/bits"
+	"github.com/oops1/go264/internal/frame"
 	"github.com/oops1/go264/internal/nal"
 	"github.com/oops1/go264/internal/syntax"
 )
@@ -14,7 +15,7 @@ type Decoder struct {
 
 	scanner *nal.Scanner
 	grid    *mbGrid
-	cur     *Picture
+	cur     *frame.Picture
 	sps     *syntax.SPS
 	buffer  *dpb
 	lastHdr *syntax.SliceHeader
@@ -34,9 +35,9 @@ func (d *Decoder) SPS(id uint32) *syntax.SPS { return d.spsMap[id] }
 
 func (d *Decoder) PPS(id uint32) *syntax.PPS { return d.ppsMap[id] }
 
-func (d *Decoder) Decode(data []byte) ([]*Picture, error) {
+func (d *Decoder) Decode(data []byte) ([]*frame.Picture, error) {
 	d.scanner.Append(data)
-	var out []*Picture
+	var out []*frame.Picture
 	for {
 		unit, ok := d.scanner.Next()
 		if !ok {
@@ -51,8 +52,8 @@ func (d *Decoder) Decode(data []byte) ([]*Picture, error) {
 	return out, nil
 }
 
-func (d *Decoder) Flush() ([]*Picture, error) {
-	var out []*Picture
+func (d *Decoder) Flush() ([]*frame.Picture, error) {
+	var out []*frame.Picture
 	if unit, ok := d.scanner.Flush(); ok {
 		pics, err := d.handleUnit(unit)
 		out = append(out, pics...)
@@ -66,7 +67,7 @@ func (d *Decoder) Flush() ([]*Picture, error) {
 	return out, nil
 }
 
-func (d *Decoder) finishPicture() *Picture {
+func (d *Decoder) finishPicture() *frame.Picture {
 	if d.cur == nil {
 		return nil
 	}
@@ -80,7 +81,7 @@ func (d *Decoder) finishPicture() *Picture {
 	return pic
 }
 
-func (d *Decoder) handleUnit(ebsp []byte) ([]*Picture, error) {
+func (d *Decoder) handleUnit(ebsp []byte) ([]*frame.Picture, error) {
 	u, err := nal.Parse(ebsp)
 	if err != nil {
 		return nil, err
@@ -130,7 +131,7 @@ func (d *Decoder) checkSupported(sps *syntax.SPS) error {
 	return nil
 }
 
-func (d *Decoder) decodeSlice(u nal.Unit) ([]*Picture, error) {
+func (d *Decoder) decodeSlice(u nal.Unit) ([]*frame.Picture, error) {
 	r := bits.NewReader(u.RBSP)
 	hdr, sps, pps, err := syntax.ParseSliceHeader(r, u.Header, d)
 	if err != nil {
@@ -143,7 +144,7 @@ func (d *Decoder) decodeSlice(u nal.Unit) ([]*Picture, error) {
 		return nil, fmt.Errorf("%w: weighted prediction", ErrUnsupported)
 	}
 
-	var out []*Picture
+	var out []*frame.Picture
 	if hdr.FirstMBInSlice == 0 {
 		if p := d.finishPicture(); p != nil {
 			out = append(out, p)
@@ -155,7 +156,7 @@ func (d *Decoder) decodeSlice(u nal.Unit) ([]*Picture, error) {
 			d.buffer.refs = d.buffer.refs[:0]
 		}
 		d.sps = sps
-		d.cur = NewPicture(sps.PicWidthInMbs(), sps.FrameHeightInMbs())
+		d.cur = frame.NewPicture(sps.PicWidthInMbs(), sps.FrameHeightInMbs())
 		d.cur.FrameNum = hdr.FrameNum
 		d.cur.IDR = hdr.IDR
 		d.cur.POC = d.buffer.computePOC(sps, hdr)
@@ -170,7 +171,7 @@ func (d *Decoder) decodeSlice(u nal.Unit) ([]*Picture, error) {
 
 	d.buffer.updatePicNums(hdr.FrameNum)
 	active := hdr.NumRefIdxL0Active(pps)
-	var refList []*Picture
+	var refList []*frame.Picture
 	if hdr.SliceType.IsP() || hdr.SliceType.IsSP() {
 		refList = d.buffer.buildListP(hdr, active)
 		if len(refList) == 0 {

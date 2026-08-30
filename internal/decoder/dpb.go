@@ -3,37 +3,12 @@ package decoder
 import (
 	"sort"
 
+	"github.com/oops1/go264/internal/frame"
 	"github.com/oops1/go264/internal/syntax"
 )
 
-func extendPlane(plane []byte, stride, origin, width, height, margin int) {
-	for y := 0; y < height; y++ {
-		row := origin + y*stride
-		left := plane[row]
-		right := plane[row+width-1]
-		for i := 1; i <= margin; i++ {
-			plane[row-i] = left
-			plane[row+width-1+i] = right
-		}
-	}
-	top := origin - margin
-	bottom := origin + (height-1)*stride - margin
-	rowLen := width + 2*margin
-	for i := 1; i <= margin; i++ {
-		copy(plane[top-i*stride:top-i*stride+rowLen], plane[top:top+rowLen])
-		copy(plane[bottom+i*stride:bottom+i*stride+rowLen], plane[bottom:bottom+rowLen])
-	}
-}
-
-func (p *Picture) ExtendBorders() {
-	extendPlane(p.Y, p.StrideY, p.OriginY(), p.Width, p.Height, lumaMargin)
-	cm := lumaMargin / 2
-	extendPlane(p.Cb, p.StrideC, p.OriginC(), p.Width/2, p.Height/2, cm)
-	extendPlane(p.Cr, p.StrideC, p.OriginC(), p.Width/2, p.Height/2, cm)
-}
-
 type refFrame struct {
-	pic          *Picture
+	pic          *frame.Picture
 	frameNum     uint32
 	frameNumWrap int
 	picNum       int
@@ -192,7 +167,7 @@ func (b *dpb) remove(target *refFrame) {
 	}
 }
 
-func (b *dpb) buildListP(hdr *syntax.SliceHeader, active int) []*Picture {
+func (b *dpb) buildListP(hdr *syntax.SliceHeader, active int) []*frame.Picture {
 	shortTerm := make([]*refFrame, 0, len(b.refs))
 	longTerm := make([]*refFrame, 0, len(b.refs))
 	for _, r := range b.refs {
@@ -213,7 +188,7 @@ func (b *dpb) buildListP(hdr *syntax.SliceHeader, active int) []*Picture {
 	if hdr.ModificationL0Present {
 		list = b.applyModifications(list, hdr.RefPicListModificationL0, hdr.FrameNum, active)
 	}
-	out := make([]*Picture, 0, active)
+	out := make([]*frame.Picture, 0, active)
 	for i := 0; i < active && i < len(list); i++ {
 		out = append(out, list[i].pic)
 	}
@@ -274,7 +249,7 @@ func moveToIndex(list []*refFrame, target *refFrame, idx int) []*refFrame {
 	return out
 }
 
-func (b *dpb) store(pic *Picture, hdr *syntax.SliceHeader) {
+func (b *dpb) store(pic *frame.Picture, hdr *syntax.SliceHeader) {
 	if hdr.NalRefIDC == 0 {
 		return
 	}

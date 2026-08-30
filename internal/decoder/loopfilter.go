@@ -2,6 +2,7 @@ package decoder
 
 import (
 	"github.com/oops1/go264/internal/deblock"
+	"github.com/oops1/go264/internal/frame"
 	"github.com/oops1/go264/internal/syntax"
 )
 
@@ -42,10 +43,10 @@ func edgeStrength(p, q *mbState, pBlk, qBlk int, mbEdge bool) uint8 {
 
 type edgeContext struct {
 	grid *mbGrid
-	pic  *Picture
+	pic  *frame.Picture
 }
 
-func (d *Decoder) filterPictureOn(pic *Picture) {
+func (d *Decoder) filterPictureOn(pic *frame.Picture) {
 	if d.grid == nil || pic == nil {
 		return
 	}
