@@ -1,0 +1,9 @@
+* text=auto eol=lf
+*.go text eol=lf
+*.s text eol=lf
+*.yml text eol=lf
+*.md text eol=lf
+*.yuv binary
+*.264 binary
+*.h264 binary
+*.bin binary

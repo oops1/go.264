@@ -1,0 +1,11 @@
+*.exe
+*.test
+*.out
+*.prof
+/bin/
+/dist/
+coverage.txt
+coverage.html
+testdata/conformance/
+testdata/*.yuv
+testdata/*.264

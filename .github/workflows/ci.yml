@@ -1,0 +1,94 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+env:
+  CGO_ENABLED: "0"
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.24'
+          check-latest: true
+      - name: Build
+        run: go build ./...
+      - name: Vet
+        run: go vet ./...
+      - name: Test
+        run: go test -count=1 -coverprofile=coverage.txt -covermode=atomic ./...
+      - name: Coverage summary
+        shell: bash
+        run: go tool cover -func=coverage.txt | tail -n 1
+
+  race:
+    runs-on: ubuntu-latest
+    env:
+      CGO_ENABLED: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.24'
+      - run: go test -count=1 -race ./...
+
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.24'
+      - name: gofmt
+        run: |
+          fmtout=$(gofmt -l .)
+          if [ -n "$fmtout" ]; then echo "$fmtout"; exit 1; fi
+      - name: staticcheck
+        run: |
+          go install honnef.co/go/tools/cmd/staticcheck@latest
+          staticcheck ./...
+
+  cgo-free:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.24'
+      - name: Assert no cgo imports
+        run: |
+          if grep -rn --include='*.go' -E '^\s*import\s+"C"|^\s*"C"$' .; then
+            echo "cgo import found"; exit 1
+          fi
+      - name: Build with CGO disabled on all targets
+        run: |
+          for target in linux/amd64 linux/arm64 windows/amd64 darwin/amd64 darwin/arm64; do
+            GOOS=${target%/*} GOARCH=${target#*/} go build ./... || exit 1
+          done
+
+  fuzz:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.24'
+      - name: Fuzz smoke
+        shell: bash
+        run: |
+          for pkg in $(go list ./...); do
+            for target in $(go test -list 'Fuzz.*' "$pkg" 2>/dev/null | grep '^Fuzz' || true); do
+              go test -run "$target" -fuzz "^$target$" -fuzztime=20s "$pkg" || exit 1
+            done
+          done
