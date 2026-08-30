@@ -325,6 +325,69 @@ func TestBuildListPOrderingAndTruncation(t *testing.T) {
 	})
 }
 
+func TestBuildListPAppliesModifications(t *testing.T) {
+	rA := newRef(0, false, 0)
+	rA.picNum = 1
+	rB := newRef(0, false, 0)
+	rB.picNum = 2
+	b := &dpb{maxFrameNum: 16, refs: []*refFrame{rA, rB}}
+
+	hdr := &syntax.SliceHeader{
+		FrameNum:              5,
+		ModificationL0Present: true,
+		RefPicListModificationL0: []syntax.RefPicListModification{
+			{IDC: 0, Value: 3}, // diff=4, predPicNum=5-4=1 -> targets rA
+		},
+	}
+
+	// Without the modification, buildListP would sort by descending picNum
+	// (rB=2 before rA=1). The modification must move rA to the front.
+	out := b.buildListP(hdr, 2)
+	if len(out) != 2 || out[0] != rA.pic || out[1] != rB.pic {
+		t.Fatalf("out = %v, want [rA, rB] (modification moves rA to front)", out)
+	}
+}
+
+func TestApplyModificationsStopsAtActiveCount(t *testing.T) {
+	rA := newRef(0, false, 0)
+	rA.picNum = 4
+	rB := newRef(0, false, 0)
+	rB.picNum = 1
+	rOther := newRef(0, false, 0)
+	rOther.picNum = 0
+	b := &dpb{maxFrameNum: 16, refs: []*refFrame{rOther, rA, rB}}
+	list := []*refFrame{rOther, rA, rB}
+
+	mods := []syntax.RefPicListModification{
+		{IDC: 0, Value: 0}, // predPicNum=5-1=4 -> rA, refIdx becomes 1 == active: loop must break here
+		{IDC: 0, Value: 5}, // would target rB if it were processed
+	}
+
+	out := b.applyModifications(list, mods, 5, 1)
+	// Only the first modification's effect (rA moved to the front) must be
+	// visible; the loop must have broken before consuming the second mod.
+	assertRefOrder(t, out, []*refFrame{rA, rOther, rB})
+}
+
+func TestStoreAppliesMMCOBeforeAppending(t *testing.T) {
+	toRemove := newRef(0, false, 0)
+	toRemove.picNum = 7
+	b := &dpb{maxNumRefs: 4, maxFrameNum: 16, refs: []*refFrame{toRemove}}
+	pic := frame.NewPicture(1, 1)
+	hdr := &syntax.SliceHeader{
+		NalRefIDC:             1,
+		FrameNum:              10,
+		AdaptiveRefPicMarking: true,
+		MMCOs:                 []syntax.MMCO{{Op: 1, DifferenceOfPicNumsMinus1: 2}}, // pn = 10-2-1 = 7
+	}
+
+	b.store(pic, hdr)
+
+	if len(b.refs) != 1 || b.refs[0].pic != pic {
+		t.Fatalf("refs = %v, want only the newly stored picture (MMCO op 1 must remove picNum 7 first)", b.refs)
+	}
+}
+
 func TestMoveToIndex(t *testing.T) {
 	r1, r2, r3 := newRef(1, false, 0), newRef(2, false, 0), newRef(3, false, 0)
 	rOutside := newRef(4, false, 0)

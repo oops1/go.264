@@ -185,6 +185,115 @@ func TestDecodeFirstSliceIsPWithNoReference(t *testing.T) {
 	}
 }
 
+func TestDecodeMalformedNALHeaderPropagatesError(t *testing.T) {
+	// forbidden_zero_bit (top bit of the NAL header byte) set: nal.Parse must
+	// reject it, and handleUnit must propagate that error out of Decode.
+	data := []byte{0, 0, 1, 0x80, 0x00, 0, 0, 1}
+
+	d := New()
+	_, err := d.Decode(data)
+	if !errors.Is(err, nal.ErrForbiddenBit) {
+		t.Fatalf("Decode() = %v, want nal.ErrForbiddenBit", err)
+	}
+}
+
+func TestDecodeUnsupportedSPSPropagatesError(t *testing.T) {
+	sps := minimalSPS()
+	sps.FrameMbsOnly = false // field/MBAFF coding: rejected by checkSupported
+	spsBytes := mustWriteSPSBytes(t, sps)
+
+	d := New()
+	_, err := decodeWithFlush(d, annexBUnit(nal.TypeSPS, 3, spsBytes))
+	if !errors.Is(err, ErrUnsupported) {
+		t.Fatalf("Decode() = %v, want ErrUnsupported", err)
+	}
+}
+
+func TestDecodeMalformedPPSPropagatesParseError(t *testing.T) {
+	var data []byte
+	// An empty PPS RBSP has nothing for pic_parameter_set_id's ue(v) to read.
+	data = append(data, annexBUnit(nal.TypePPS, 3, nil)...)
+	data = append(data, annexBUnit(nal.TypeAccessUnitDelim, 3, []byte{0xF0})...)
+
+	d := New()
+	_, err := d.Decode(data)
+	if err == nil {
+		t.Fatalf("Decode() = nil, want a parse error from the malformed PPS")
+	}
+}
+
+func TestDecodeSlicePicScalingMatrixIsUnsupported(t *testing.T) {
+	sps := minimalSPS()
+	pps := minimalPPS(sps.ID, false)
+	pps.HasExtension = true
+	pps.PicScalingMatrixPresent = true
+	spsBytes := mustWriteSPSBytes(t, sps)
+	ppsBytes := mustWritePPSBytes(t, pps, lookupOne(sps))
+
+	hdr := &syntax.SliceHeader{SliceType: syntax.SliceI, PPSID: pps.ID, IDR: true, NalRefIDC: 1}
+	sliceRBSP := mustSliceBytes(t, hdr, sps, pps)
+
+	var data []byte
+	data = append(data, annexBUnit(nal.TypeSPS, 3, spsBytes)...)
+	data = append(data, annexBUnit(nal.TypePPS, 3, ppsBytes)...)
+	data = append(data, annexBUnit(nal.TypeSliceIDR, 1, sliceRBSP)...)
+
+	d := New()
+	_, err := decodeWithFlush(d, data)
+	if !errors.Is(err, ErrUnsupported) {
+		t.Fatalf("Decode() = %v, want ErrUnsupported (picture scaling matrices)", err)
+	}
+}
+
+func TestDecodeSliceWeightedPredIsUnsupported(t *testing.T) {
+	sps := minimalSPS()
+	pps := minimalPPS(sps.ID, false)
+	pps.WeightedPred = true
+	spsBytes := mustWriteSPSBytes(t, sps)
+	ppsBytes := mustWritePPSBytes(t, pps, lookupOne(sps))
+
+	hdr := &syntax.SliceHeader{SliceType: syntax.SliceP, PPSID: pps.ID, NalRefIDC: 1}
+	// NumRefIdxL0ActiveMinus1 defaults to pps.NumRefIdxL0DefaultActiveMinus1
+	// (0), so the weight table needs exactly one L0 entry to round-trip.
+	hdr.PredWeight.L0 = make([]syntax.WeightEntry, 1)
+	sliceRBSP := mustSliceBytes(t, hdr, sps, pps)
+
+	var data []byte
+	data = append(data, annexBUnit(nal.TypeSPS, 3, spsBytes)...)
+	data = append(data, annexBUnit(nal.TypePPS, 3, ppsBytes)...)
+	data = append(data, annexBUnit(nal.TypeSliceNonIDR, 1, sliceRBSP)...)
+
+	d := New()
+	_, err := decodeWithFlush(d, data)
+	if !errors.Is(err, ErrUnsupported) {
+		t.Fatalf("Decode() = %v, want ErrUnsupported (weighted prediction)", err)
+	}
+}
+
+func TestDecodeContinuationSliceWithNoCurrentPictureErrors(t *testing.T) {
+	sps := minimalSPS()
+	pps := minimalPPS(sps.ID, false)
+	spsBytes := mustWriteSPSBytes(t, sps)
+	ppsBytes := mustWritePPSBytes(t, pps, lookupOne(sps))
+
+	// A non-zero first_mb_in_slice as the very first VCL NAL: no picture has
+	// been started yet, so decodeSlice must report ErrNoParameters instead
+	// of dereferencing a nil current picture.
+	hdr := &syntax.SliceHeader{FirstMBInSlice: 5, SliceType: syntax.SliceI, PPSID: pps.ID, IDR: true, NalRefIDC: 1}
+	sliceRBSP := mustSliceBytes(t, hdr, sps, pps)
+
+	var data []byte
+	data = append(data, annexBUnit(nal.TypeSPS, 3, spsBytes)...)
+	data = append(data, annexBUnit(nal.TypePPS, 3, ppsBytes)...)
+	data = append(data, annexBUnit(nal.TypeSliceIDR, 1, sliceRBSP)...)
+
+	d := New()
+	_, err := decodeWithFlush(d, data)
+	if !errors.Is(err, ErrNoParameters) {
+		t.Fatalf("Decode() = %v, want ErrNoParameters", err)
+	}
+}
+
 func TestRefPictureOutOfRangeAndEmpty(t *testing.T) {
 	sd := &sliceDecoder{}
 	if p := sd.refPicture(0); p != nil {
