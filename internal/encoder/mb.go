@@ -52,6 +52,7 @@ type mbEncoder struct {
 	scratch        [256]byte
 	mv             [2]int16
 	mvd            [2]int16
+	parts          []partResult
 	lumaScan       [16][16]int32
 	lumaDCScan     [16]int32
 	chromaDC       [2]transform.ChromaDC

@@ -73,9 +73,13 @@ jobs:
           fi
       - name: Build with CGO disabled on all targets
         run: |
-          for target in linux/amd64 linux/arm64 windows/amd64 darwin/amd64 darwin/arm64; do
+          for target in linux/amd64 linux/arm64 linux/386 windows/amd64 windows/arm64 darwin/amd64 darwin/arm64 freebsd/amd64 js/wasm; do
             GOOS=${target%/*} GOARCH=${target#*/} go build ./... || exit 1
           done
+      - name: Build and test the pure Go fallback
+        run: |
+          go build -tags purego ./...
+          go test -tags purego -count=1 ./...
 
   asm-in-sync:
     runs-on: ubuntu-latest

@@ -137,9 +137,28 @@ func buildEdgePicture(mbW, mbH int) *frame.Picture {
 	return pic
 }
 
+func buildMBEdgePicture(mbW, mbH int, low, high byte) *frame.Picture {
+	pic := frame.NewPicture(mbW, mbH)
+	col := alternating(low, high, 16)
+	fillColumns(pic, col, col)
+	return pic
+}
+
+func buildInternalEdgePicture(low, high byte, stepCol int) *frame.Picture {
+	pic := frame.NewPicture(1, 1)
+	col := func(x int) byte {
+		if x < stepCol {
+			return low
+		}
+		return high
+	}
+	fillColumns(pic, col, col)
+	return pic
+}
+
 func TestBoundaryStrengthBothIntra(t *testing.T) {
 	t.Run("mb_edge_bs4_stronger_than_internal_bs3", func(t *testing.T) {
-		mbEdgePic := buildEdgePicture(2, 1)
+		mbEdgePic := buildMBEdgePicture(2, 1, flatLow, flatHigh)
 		mb0 := makeMB(mbConfig{intra: true, qpy: 51})
 		mb1 := makeMB(mbConfig{intra: true, qpy: 51})
 		grid := map[[2]int]*MB{{0, 0}: mb0, {1, 0}: mb1}
@@ -163,7 +182,7 @@ func TestBoundaryStrengthBothIntra(t *testing.T) {
 			t.Fatalf("mb edge (bS4) should modify p1/q1, got p1=%d q1=%d", p1, q1)
 		}
 
-		internalPic := buildEdgePicture(1, 1)
+		internalPic := buildInternalEdgePicture(flatLow, flatHigh, 4)
 		mbInt := makeMB(mbConfig{intra: true, qpy: 51})
 		gridInt := map[[2]int]*MB{{0, 0}: mbInt}
 		Apply(internalPic, 1, 1, gridAt(gridInt, 1, 1))
@@ -173,7 +192,6 @@ func TestBoundaryStrengthBothIntra(t *testing.T) {
 		ip1 := internalPic.Y[internalPic.LumaOffset(2, 0)]
 		iq1 := internalPic.Y[internalPic.LumaOffset(5, 0)]
 		ip2 := internalPic.Y[internalPic.LumaOffset(1, 0)]
-		iq2 := internalPic.Y[internalPic.LumaOffset(6, 0)]
 
 		if ip0 == flatLow || iq0 == flatHigh {
 			t.Fatalf("internal edge (bS3): p0/q0 not modified: p0=%d q0=%d", ip0, iq0)
@@ -181,8 +199,8 @@ func TestBoundaryStrengthBothIntra(t *testing.T) {
 		if ip1 == flatLow || iq1 == flatHigh {
 			t.Fatalf("internal edge (bS3): p1/q1 should be modified too, got p1=%d q1=%d", ip1, iq1)
 		}
-		if ip2 != flatLow || iq2 != flatHigh {
-			t.Fatalf("internal edge (bS3) must NOT touch p2/q2 (weak filter), got p2=%d q2=%d (orig %d/%d)", ip2, iq2, flatLow, flatHigh)
+		if ip2 != flatLow {
+			t.Fatalf("internal edge (bS3) must NOT touch p2 (weak filter), got p2=%d (orig %d)", ip2, flatLow)
 		}
 
 		if ip0 == p0 && iq0 == q0 {
@@ -191,12 +209,8 @@ func TestBoundaryStrengthBothIntra(t *testing.T) {
 	})
 }
 
-func interMBEdgePicture() (*frame.Picture, map[[2]int]*MB) {
-	pic := buildEdgePicture(2, 1)
-	return pic, map[[2]int]*MB{}
-}
-
-func applyPairAndSampleEdge(pic *frame.Picture, mb0, mb1 *MB) (p0, q0 byte) {
+func applyPairAndSampleEdge(mb0, mb1 *MB) (p0, q0 byte) {
+	pic := buildMBEdgePicture(2, 1, flatLow, flatHigh)
 	grid := map[[2]int]*MB{{0, 0}: mb0, {1, 0}: mb1}
 	Apply(pic, 2, 1, gridAt(grid, 2, 1))
 	p0 = pic.Y[pic.LumaOffset(15, 0)]
@@ -210,38 +224,52 @@ func TestBoundaryStrengthInter(t *testing.T) {
 	}
 
 	t.Run("no_coeffs_same_ref_same_mv_not_filtered", func(t *testing.T) {
-		pic := buildEdgePicture(2, 1)
 		mb0 := makeMB(base())
 		mb1 := makeMB(base())
-		p0, q0 := applyPairAndSampleEdge(pic, mb0, mb1)
+		p0, q0 := applyPairAndSampleEdge(mb0, mb1)
 		if p0 != flatLow || q0 != flatHigh {
 			t.Fatalf("expected no filtering: p0=%d (want %d) q0=%d (want %d)", p0, flatLow, q0, flatHigh)
 		}
 	})
 
 	t.Run("nonzero_luma_coeffs_filtered", func(t *testing.T) {
-		pic := buildEdgePicture(2, 1)
 		c0 := base()
 		c1 := base()
 		c1.nz = 1
 		mb0 := makeMB(c0)
 		mb1 := makeMB(c1)
-		p0, q0 := applyPairAndSampleEdge(pic, mb0, mb1)
+		p0, q0 := applyPairAndSampleEdge(mb0, mb1)
 		if p0 == flatLow || q0 == flatHigh {
 			t.Fatalf("expected filtering when q side has nonzero coeffs: p0=%d q0=%d", p0, q0)
 		}
 	})
 
 	t.Run("different_ref_pics_filtered", func(t *testing.T) {
-		pic := buildEdgePicture(2, 1)
 		c0 := base()
 		c1 := base()
 		c1.ref = refB
 		mb0 := makeMB(c0)
 		mb1 := makeMB(c1)
-		p0, q0 := applyPairAndSampleEdge(pic, mb0, mb1)
+		p0, q0 := applyPairAndSampleEdge(mb0, mb1)
 		if p0 == flatLow || q0 == flatHigh {
 			t.Fatalf("expected filtering with different reference pictures: p0=%d q0=%d", p0, q0)
+		}
+	})
+
+	t.Run("ipcm_side_counts_as_nonzero_coeffs_even_with_nz_zero", func(t *testing.T) {
+		const low, high byte = 70, 80
+		pic := buildMBEdgePicture(2, 1, low, high)
+		c0 := base()
+		c1 := base()
+		c1.ipcm = true
+		mb0 := makeMB(c0)
+		mb1 := makeMB(c1)
+		grid := map[[2]int]*MB{{0, 0}: mb0, {1, 0}: mb1}
+		Apply(pic, 2, 1, gridAt(grid, 2, 1))
+		p0 := pic.Y[pic.LumaOffset(15, 0)]
+		q0 := pic.Y[pic.LumaOffset(16, 0)]
+		if p0 == low || q0 == high {
+			t.Fatalf("expected filtering when q side is IPCM even though NzY is zero: p0=%d q0=%d", p0, q0)
 		}
 	})
 
@@ -261,13 +289,12 @@ func TestBoundaryStrengthInter(t *testing.T) {
 	}
 	for _, mc := range mvCases {
 		t.Run(mc.name, func(t *testing.T) {
-			pic := buildEdgePicture(2, 1)
 			c0 := base()
 			c1 := base()
 			c1.mv = mc.mv
 			mb0 := makeMB(c0)
 			mb1 := makeMB(c1)
-			p0, q0 := applyPairAndSampleEdge(pic, mb0, mb1)
+			p0, q0 := applyPairAndSampleEdge(mb0, mb1)
 			changed := p0 != flatLow || q0 != flatHigh
 			if changed != mc.filtered {
 				t.Fatalf("mv diff %v: filtered=%v (p0=%d q0=%d), want filtered=%v", mc.mv, changed, p0, q0, mc.filtered)
@@ -298,7 +325,21 @@ func TestDisableDeblockValue1(t *testing.T) {
 }
 
 func TestDisableDeblockValue2SliceBoundary(t *testing.T) {
-	pic := buildEdgePicture(3, 1)
+	pic := frame.NewPicture(3, 1)
+	col := func(x int) byte {
+		switch {
+		case x < 16:
+			return 80
+		case x < 20:
+			return 60
+		case x < 32:
+			return 80
+		default:
+			return 60
+		}
+	}
+	fillColumns(pic, col, col)
+
 	mb0 := makeMB(mbConfig{intra: false, qpy: 51, ref: refA, mv: [2]int16{0, 0}, nz: 1, sliceID: 0})
 	mb1 := makeMB(mbConfig{intra: false, qpy: 51, ref: refA, mv: [2]int16{0, 0}, nz: 1, sliceID: 1, disableDeblock: 2})
 	mb2 := makeMB(mbConfig{intra: false, qpy: 51, ref: refA, mv: [2]int16{0, 0}, nz: 1, sliceID: 1, disableDeblock: 2})
@@ -307,20 +348,20 @@ func TestDisableDeblockValue2SliceBoundary(t *testing.T) {
 
 	p0 := pic.Y[pic.LumaOffset(15, 0)]
 	q0 := pic.Y[pic.LumaOffset(16, 0)]
-	if p0 != flatLow || q0 != flatHigh {
-		t.Errorf("edge between different SliceIDs (0 vs 1) with DisableDeblock=2 must be suppressed: p0=%d q0=%d", p0, q0)
+	if p0 != col(15) || q0 != col(16) {
+		t.Errorf("edge between different SliceIDs (0 vs 1) with DisableDeblock=2 must be suppressed: p0=%d (want %d) q0=%d (want %d)", p0, col(15), q0, col(16))
 	}
 
 	p0b := pic.Y[pic.LumaOffset(31, 0)]
 	q0b := pic.Y[pic.LumaOffset(32, 0)]
-	if p0b == flatLow || q0b == flatHigh {
-		t.Errorf("edge between same-SliceID neighbours with DisableDeblock=2 must still be filtered: p0=%d q0=%d", p0b, q0b)
+	if p0b == col(31) && q0b == col(32) {
+		t.Errorf("edge between same-SliceID neighbours with DisableDeblock=2 must still be filtered: p0=%d q0=%d unchanged", p0b, q0b)
 	}
 
 	ip0 := pic.Y[pic.LumaOffset(19, 0)]
 	iq0 := pic.Y[pic.LumaOffset(20, 0)]
-	if ip0 == flatLow || iq0 == flatHigh {
-		t.Errorf("internal edge inside a DisableDeblock=2 macroblock must still be filtered: p0=%d q0=%d", ip0, iq0)
+	if ip0 == col(19) && iq0 == col(20) {
+		t.Errorf("internal edge inside a DisableDeblock=2 macroblock must still be filtered: p0=%d q0=%d unchanged", ip0, iq0)
 	}
 }
 

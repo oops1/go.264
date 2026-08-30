@@ -1,7 +1,6 @@
 package encoder
 
 import (
-	"github.com/oops1/go264/internal/frame"
 	"github.com/oops1/go264/internal/mc"
 	"github.com/oops1/go264/internal/syntax"
 	"github.com/oops1/go264/internal/transform"
@@ -19,7 +18,7 @@ type motion struct {
 	ref int8
 }
 
-func (s *mbEncoder) neighbourMotion(x, y int) (motion, bool) {
+func (s *mbEncoder) neighbourMotion(x, y, curZ int) (motion, bool) {
 	unavailable := motion{ref: -1}
 	switch {
 	case x < 0 && y < 0:
@@ -28,7 +27,7 @@ func (s *mbEncoder) neighbourMotion(x, y int) (motion, bool) {
 		}
 		return motionOf(s.nb.topLeft, blkIdxAt(12, 12)), true
 	case x < 0:
-		if s.nb.left == nil {
+		if y >= 16 || s.nb.left == nil {
 			return unavailable, false
 		}
 		return motionOf(s.nb.left, blkIdxAt(12, y&^3)), true
@@ -43,8 +42,14 @@ func (s *mbEncoder) neighbourMotion(x, y int) (motion, bool) {
 			return unavailable, false
 		}
 		return motionOf(s.nb.topRight, blkIdxAt(0, 12)), true
+	case x >= 16 || y >= 16:
+		return unavailable, false
 	}
-	return unavailable, false
+	z := zscanOf[y>>2][x>>2]
+	if z >= curZ {
+		return unavailable, false
+	}
+	return motionOf(s.cur, z), true
 }
 
 func motionOf(m *mbInfo, blk int) motion {
@@ -64,15 +69,26 @@ func median(a, b, c int16) int16 {
 	return b
 }
 
-func (s *mbEncoder) predictMV16x16() [2]int16 {
-	a, okA := s.neighbourMotion(-1, 0)
-	b, okB := s.neighbourMotion(0, -1)
-	c, okC := s.neighbourMotion(16, -1)
+func (s *mbEncoder) predictMV(x, y, w int, partIdx, kind int) [2]int16 {
+	curZ := zscanOf[y>>2][x>>2]
+	a, okA := s.neighbourMotion(x-1, y, curZ)
+	b, okB := s.neighbourMotion(x, y-1, curZ)
+	c, okC := s.neighbourMotion(x+w, y-1, curZ)
 	if !okC {
-		c, okC = s.neighbourMotion(-1, -1)
+		c, okC = s.neighbourMotion(x-1, y-1, curZ)
 	}
 	if !okB && !okC && okA {
 		b, c = a, a
+	}
+	switch {
+	case kind == mbTypeP16x8 && partIdx == 0 && b.ref == 0:
+		return b.mv
+	case kind == mbTypeP16x8 && partIdx == 1 && a.ref == 0:
+		return a.mv
+	case kind == mbTypeP8x16 && partIdx == 0 && a.ref == 0:
+		return a.mv
+	case kind == mbTypeP8x16 && partIdx == 1 && c.ref == 0:
+		return c.mv
 	}
 	matches := 0
 	var only motion
@@ -91,12 +107,16 @@ func (s *mbEncoder) predictMV16x16() [2]int16 {
 	}
 }
 
+func (s *mbEncoder) predictMV16x16() [2]int16 {
+	return s.predictMV(0, 0, 16, 0, mbTypeP16x16)
+}
+
 func (s *mbEncoder) skipMV() [2]int16 {
 	if s.nb.left == nil || s.nb.top == nil {
 		return [2]int16{}
 	}
-	a, _ := s.neighbourMotion(-1, 0)
-	b, _ := s.neighbourMotion(0, -1)
+	a, _ := s.neighbourMotion(-1, 0, 0)
+	b, _ := s.neighbourMotion(0, -1, 0)
 	if a.ref == 0 && a.mv == [2]int16{} {
 		return [2]int16{}
 	}
@@ -106,27 +126,11 @@ func (s *mbEncoder) skipMV() [2]int16 {
 	return s.predictMV16x16()
 }
 
-func (s *mbEncoder) mvLimits() (loX, hiX, loY, hiY int) {
-	x, y := s.mbx*16, s.mby*16
-	ref := s.e.ref
-	loX = lumaTapBefore - frame.LumaMargin - x
-	hiX = ref.Width + frame.LumaMargin - lumaTapAfter - x - 16
-	loY = lumaTapBefore - frame.LumaMargin - y
-	hiY = ref.Height + frame.LumaMargin - lumaTapAfter - y - 16
-	return
-}
-
 const (
 	lumaTapBefore = 2
 	lumaTapAfter  = 3
 	searchRange   = 24
 )
-
-func (s *mbEncoder) integerSAD(ix, iy int) int {
-	ref := s.e.ref
-	return sad(s.e.src.Y, s.e.src.StrideY, s.e.src.LumaOffset(s.mbx*16, s.mby*16),
-		ref.Y, ref.StrideY, ref.LumaOffset(s.mbx*16+ix, s.mby*16+iy), 16, 16)
-}
 
 func mvBitCost(mv, mvp [2]int16, lambda int) int {
 	return lambda * (bitsForSE(int(mv[0])-int(mvp[0])) + bitsForSE(int(mv[1])-int(mvp[1])))
@@ -144,116 +148,6 @@ func bitsForSE(v int) int {
 		n += 2
 	}
 	return n
-}
-
-func (s *mbEncoder) searchInteger(mvp [2]int16, lambda int) [2]int16 {
-	loX, hiX, loY, hiY := s.mvLimits()
-	clampX := func(v int) int {
-		if v < loX {
-			return loX
-		}
-		if v > hiX {
-			return hiX
-		}
-		return v
-	}
-	clampY := func(v int) int {
-		if v < loY {
-			return loY
-		}
-		if v > hiY {
-			return hiY
-		}
-		return v
-	}
-
-	type cand struct{ x, y int }
-	seeds := []cand{
-		{clampX(int(mvp[0]) >> 2), clampY(int(mvp[1]) >> 2)},
-		{0, 0},
-	}
-	if s.nb.left != nil {
-		seeds = append(seeds, cand{clampX(int(s.nb.left.MvL0[5][0]) >> 2), clampY(int(s.nb.left.MvL0[5][1]) >> 2)})
-	}
-	if s.nb.top != nil {
-		seeds = append(seeds, cand{clampX(int(s.nb.top.MvL0[10][0]) >> 2), clampY(int(s.nb.top.MvL0[10][1]) >> 2)})
-	}
-
-	bestX, bestY := seeds[0].x, seeds[0].y
-	best := s.integerSAD(bestX, bestY) + mvBitCost([2]int16{int16(bestX << 2), int16(bestY << 2)}, mvp, lambda)
-	for _, c := range seeds[1:] {
-		cost := s.integerSAD(c.x, c.y) + mvBitCost([2]int16{int16(c.x << 2), int16(c.y << 2)}, mvp, lambda)
-		if cost < best {
-			best, bestX, bestY = cost, c.x, c.y
-		}
-	}
-
-	step := 8
-	for step >= 1 {
-		improved := true
-		for improved {
-			improved = false
-			for _, d := range [4][2]int{{0, -1}, {0, 1}, {-1, 0}, {1, 0}} {
-				nx := clampX(bestX + d[0]*step)
-				ny := clampY(bestY + d[1]*step)
-				if nx == bestX && ny == bestY {
-					continue
-				}
-				if abs(nx) > searchRange || abs(ny) > searchRange {
-					continue
-				}
-				cost := s.integerSAD(nx, ny) + mvBitCost([2]int16{int16(nx << 2), int16(ny << 2)}, mvp, lambda)
-				if cost < best {
-					best, bestX, bestY = cost, nx, ny
-					improved = true
-				}
-			}
-		}
-		step >>= 1
-	}
-	return [2]int16{int16(bestX << 2), int16(bestY << 2)}
-}
-
-func (s *mbEncoder) predictInto(dst []byte, stride, off int, mv [2]int16, w, h int) {
-	ref := s.e.ref
-	mc.PredictLuma(dst, stride, off, ref.Y, ref.StrideY,
-		ref.LumaOffset(s.mbx*16, s.mby*16), w, h, int(mv[0]), int(mv[1]))
-}
-
-func (s *mbEncoder) subPelCost(mv [2]int16, mvp [2]int16, lambda int) int {
-	s.predictInto(s.scratch[:], 16, 0, mv, 16, 16)
-	c := satdBlock(s.e.src.Y, s.e.src.StrideY, s.e.src.LumaOffset(s.mbx*16, s.mby*16),
-		s.scratch[:], 16, 0, 16, 16)
-	return c + mvBitCost(mv, mvp, lambda)
-}
-
-func (s *mbEncoder) refine(mv [2]int16, mvp [2]int16, lambda int) [2]int16 {
-	loX, hiX, loY, hiY := s.mvLimits()
-	inRange := func(m [2]int16) bool {
-		return int(m[0])>>2 >= loX && int(m[0])>>2 <= hiX && int(m[1])>>2 >= loY && int(m[1])>>2 <= hiY
-	}
-	best := mv
-	bestCost := s.subPelCost(mv, mvp, lambda)
-	for _, step := range []int16{2, 1} {
-		for {
-			improved := false
-			for _, d := range [8][2]int16{{0, -1}, {0, 1}, {-1, 0}, {1, 0}, {-1, -1}, {1, -1}, {-1, 1}, {1, 1}} {
-				cand := [2]int16{best[0] + d[0]*step, best[1] + d[1]*step}
-				if !inRange(cand) {
-					continue
-				}
-				cost := s.subPelCost(cand, mvp, lambda)
-				if cost < bestCost {
-					bestCost, best = cost, cand
-					improved = true
-				}
-			}
-			if !improved {
-				break
-			}
-		}
-	}
-	return best
 }
 
 func (s *mbEncoder) motionCompensateMB(mv [2]int16) {
@@ -419,11 +313,14 @@ func (s *mbEncoder) encodeInterMB() (bool, error) {
 		return true, nil
 	}
 
-	mvp := s.predictMV16x16()
-	mv := s.searchInteger(mvp, lambda)
-	mv = s.refine(mv, mvp, lambda)
-	interCost := s.subPelCost(mv, mvp, lambda)
-
+	bestKind := mbTypeP16x16
+	interCost, bestParts := s.trySplit(mbTypeP16x16, lambda)
+	for _, kind := range []int{mbTypeP16x8, mbTypeP8x16} {
+		cost, parts := s.trySplit(kind, lambda)
+		if cost+lambda*20 < interCost {
+			interCost, bestParts, bestKind = cost, parts, kind
+		}
+	}
 	intraCost, intraMode := s.searchIntra16x16()
 	if intraCost+lambda*16 < interCost {
 		s.reset()
@@ -434,12 +331,14 @@ func (s *mbEncoder) encodeInterMB() (bool, error) {
 	}
 
 	s.reset()
-	s.cur.kind = mbTypeP16x16
+	s.cur.kind = bestKind
 	s.cur.Intra = false
-	s.mv = mv
-	s.mvd = [2]int16{mv[0] - mvp[0], mv[1] - mvp[1]}
-	s.setMotion(mv)
-	s.motionCompensateMB(mv)
+	s.parts = bestParts
+	s.clearMotion()
+	for i, p := range partitionsFor(bestKind) {
+		s.storePartitionMotion(p, bestParts[i].mv)
+	}
+	s.compensatePartitions(bestKind, bestParts)
 	s.quantiseInterLuma()
 	s.quantiseInterChroma()
 	s.reconstructInterLuma()
@@ -456,14 +355,24 @@ func (s *mbEncoder) encodeInterMB() (bool, error) {
 func (s *mbEncoder) encodeIntraMBInP(mode16 int) error {
 	s.w.WriteUE(s.pendingSkipRun)
 	s.pendingSkipRun = 0
+	s.clearMotion()
 	_ = mode16
 	return s.encodeIntraMB(5)
 }
 
 func (s *mbEncoder) writeInterMB() error {
-	s.w.WriteUE(0)
-	s.w.WriteSE(int32(s.mvd[0]))
-	s.w.WriteSE(int32(s.mvd[1]))
+	switch s.cur.kind {
+	case mbTypeP16x8:
+		s.w.WriteUE(1)
+	case mbTypeP8x16:
+		s.w.WriteUE(2)
+	default:
+		s.w.WriteUE(0)
+	}
+	for _, r := range s.parts {
+		s.w.WriteSE(int32(r.mvd[0]))
+		s.w.WriteSE(int32(r.mvd[1]))
+	}
 	cbp := uint8(s.cur.cbpLuma | s.cur.cbpChroma<<4)
 	s.w.WriteUE(interCBPToGolomb[cbp])
 	if cbp != 0 {
