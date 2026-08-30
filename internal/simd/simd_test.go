@@ -1,0 +1,209 @@
+package simd
+
+import (
+	"math/rand"
+	"testing"
+)
+
+var blockSizes = [][2]int{
+	{16, 16}, {16, 8}, {8, 16}, {8, 8}, {8, 4}, {4, 8}, {4, 4}, {4, 2}, {2, 4}, {2, 2},
+}
+
+func randomPlane(rng *rand.Rand, n int) []byte {
+	b := make([]byte, n)
+	for i := range b {
+		b[i] = byte(rng.Intn(256))
+	}
+	return b
+}
+
+func TestSADMatchesGenericOnRandomInput(t *testing.T) {
+	rng := rand.New(rand.NewSource(20260831))
+	const stride = 64
+	const rows = 64
+	for iter := 0; iter < 4000; iter++ {
+		src := randomPlane(rng, stride*rows)
+		ref := randomPlane(rng, stride*rows)
+		for _, size := range blockSizes {
+			w, h := size[0], size[1]
+			srcOff := rng.Intn(stride-w) + rng.Intn(rows-h)*stride
+			refOff := rng.Intn(stride-w) + rng.Intn(rows-h)*stride
+			got := SAD(src, stride, srcOff, ref, stride, refOff, w, h)
+			want := SADGeneric(src, stride, srcOff, ref, stride, refOff, w, h)
+			if got != want {
+				t.Fatalf("%dx%d at src %d ref %d: SAD = %d, generic = %d", w, h, srcOff, refOff, got, want)
+			}
+		}
+	}
+}
+
+func TestSADExtremes(t *testing.T) {
+	const stride = 32
+	const rows = 32
+	cases := []struct {
+		name     string
+		srcFill  byte
+		refFill  byte
+		expected func(w, h int) int
+	}{
+		{"identical", 128, 128, func(w, h int) int { return 0 }},
+		{"maximum", 255, 0, func(w, h int) int { return w * h * 255 }},
+		{"maximum reversed", 0, 255, func(w, h int) int { return w * h * 255 }},
+		{"one apart", 100, 101, func(w, h int) int { return w * h }},
+	}
+	for _, c := range cases {
+		src := make([]byte, stride*rows)
+		ref := make([]byte, stride*rows)
+		for i := range src {
+			src[i] = c.srcFill
+			ref[i] = c.refFill
+		}
+		for _, size := range blockSizes {
+			w, h := size[0], size[1]
+			got := SAD(src, stride, 0, ref, stride, 0, w, h)
+			want := c.expected(w, h)
+			if got != want {
+				t.Errorf("%s %dx%d: SAD = %d, want %d", c.name, w, h, got, want)
+			}
+			if g := SADGeneric(src, stride, 0, ref, stride, 0, w, h); g != want {
+				t.Errorf("%s %dx%d: generic SAD = %d, want %d", c.name, w, h, g, want)
+			}
+		}
+	}
+}
+
+func TestSADReadsOnlyItsBlock(t *testing.T) {
+	const stride = 48
+	const rows = 48
+	for _, size := range blockSizes {
+		w, h := size[0], size[1]
+		src := make([]byte, stride*rows)
+		ref := make([]byte, stride*rows)
+		for i := range src {
+			src[i] = 200
+			ref[i] = 40
+		}
+		off := 8*stride + 8
+		for y := 0; y < h; y++ {
+			for x := 0; x < w; x++ {
+				src[off+y*stride+x] = 10
+				ref[off+y*stride+x] = 10
+			}
+		}
+		if got := SAD(src, stride, off, ref, stride, off, w, h); got != 0 {
+			t.Errorf("%dx%d: SAD read outside its block, got %d", w, h, got)
+		}
+	}
+}
+
+func TestSADFallsBackWhenSliceIsShort(t *testing.T) {
+	const stride = 16
+	src := make([]byte, stride*16)
+	ref := make([]byte, stride*16)
+	for i := range src {
+		src[i] = byte(i)
+		ref[i] = byte(i * 3)
+	}
+	got := SAD(src, stride, 0, ref, stride, 0, 16, 16)
+	want := SADGeneric(src, stride, 0, ref, stride, 0, 16, 16)
+	if got != want {
+		t.Fatalf("tight buffer: SAD = %d, generic = %d", got, want)
+	}
+}
+
+func TestSADStrideIndependence(t *testing.T) {
+	rng := rand.New(rand.NewSource(7))
+	for _, stride := range []int{16, 17, 32, 33, 64, 129} {
+		rows := 20
+		src := randomPlane(rng, stride*rows)
+		ref := randomPlane(rng, stride*rows)
+		for _, size := range blockSizes {
+			w, h := size[0], size[1]
+			if w > stride {
+				continue
+			}
+			got := SAD(src, stride, 0, ref, stride, 0, w, h)
+			want := SADGeneric(src, stride, 0, ref, stride, 0, w, h)
+			if got != want {
+				t.Errorf("stride %d %dx%d: SAD = %d, generic = %d", stride, w, h, got, want)
+			}
+		}
+	}
+}
+
+func TestSADMixedStrides(t *testing.T) {
+	rng := rand.New(rand.NewSource(99))
+	src := randomPlane(rng, 100*40)
+	ref := randomPlane(rng, 67*40)
+	for _, size := range blockSizes {
+		w, h := size[0], size[1]
+		got := SAD(src, 100, 0, ref, 67, 0, w, h)
+		want := SADGeneric(src, 100, 0, ref, 67, 0, w, h)
+		if got != want {
+			t.Errorf("%dx%d with differing strides: SAD = %d, generic = %d", w, h, got, want)
+		}
+	}
+}
+
+func TestAcceleratedIsReported(t *testing.T) {
+	t.Logf("assembly kernels in use: %v", Accelerated())
+}
+
+func FuzzSADAgainstGeneric(f *testing.F) {
+	f.Add(int64(1), 0, 0)
+	f.Add(int64(500), 3, 1)
+	f.Fuzz(func(t *testing.T, seed int64, sizeIdx, offIdx int) {
+		if sizeIdx < 0 {
+			sizeIdx = -sizeIdx
+		}
+		if offIdx < 0 {
+			offIdx = -offIdx
+		}
+		size := blockSizes[sizeIdx%len(blockSizes)]
+		w, h := size[0], size[1]
+		const stride = 40
+		const rows = 40
+		rng := rand.New(rand.NewSource(seed))
+		src := randomPlane(rng, stride*rows)
+		ref := randomPlane(rng, stride*rows)
+		off := offIdx % ((rows - h) * stride)
+		if off > (rows-h)*stride-w {
+			off = (rows-h)*stride - w
+		}
+		got := SAD(src, stride, off, ref, stride, off, w, h)
+		want := SADGeneric(src, stride, off, ref, stride, off, w, h)
+		if got != want {
+			t.Fatalf("%dx%d at %d: SAD = %d, generic = %d", w, h, off, got, want)
+		}
+	})
+}
+
+func BenchmarkSAD16x16(b *testing.B) {
+	rng := rand.New(rand.NewSource(1))
+	src := randomPlane(rng, 64*64)
+	ref := randomPlane(rng, 64*64)
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		SAD(src, 64, 0, ref, 64, 0, 16, 16)
+	}
+}
+
+func BenchmarkSAD16x16Generic(b *testing.B) {
+	rng := rand.New(rand.NewSource(1))
+	src := randomPlane(rng, 64*64)
+	ref := randomPlane(rng, 64*64)
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		SADGeneric(src, 64, 0, ref, 64, 0, 16, 16)
+	}
+}
+
+func BenchmarkSAD8x8(b *testing.B) {
+	rng := rand.New(rand.NewSource(1))
+	src := randomPlane(rng, 64*64)
+	ref := randomPlane(rng, 64*64)
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		SAD(src, 64, 0, ref, 64, 0, 8, 8)
+	}
+}

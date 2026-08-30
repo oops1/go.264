@@ -77,6 +77,22 @@ jobs:
             GOOS=${target%/*} GOARCH=${target#*/} go build ./... || exit 1
           done
 
+  asm-in-sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.24'
+      - name: Regenerate assembly
+        run: go generate ./internal/simd/
+      - name: Assert the committed assembly matches
+        run: |
+          if ! git diff --exit-code -- internal/simd; then
+            echo "generated assembly is out of date, run go generate ./internal/simd/"
+            exit 1
+          fi
+
   fuzz:
     runs-on: ubuntu-latest
     steps:

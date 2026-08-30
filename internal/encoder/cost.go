@@ -1,6 +1,10 @@
 package encoder
 
-import "math"
+import (
+	"math"
+
+	"github.com/oops1/go264/internal/simd"
+)
 
 var lambdaTable [52]int
 
@@ -22,15 +26,7 @@ func abs(v int) int {
 }
 
 func sad(src []byte, srcStride, srcOff int, ref []byte, refStride, refOff, w, h int) int {
-	total := 0
-	for y := 0; y < h; y++ {
-		a := src[srcOff+y*srcStride:]
-		b := ref[refOff+y*refStride:]
-		for x := 0; x < w; x++ {
-			total += abs(int(a[x]) - int(b[x]))
-		}
-	}
-	return total
+	return simd.SAD(src, srcStride, srcOff, ref, refStride, refOff, w, h)
 }
 
 func satd4x4(src []byte, srcStride, srcOff int, ref []byte, refStride, refOff int) int {
