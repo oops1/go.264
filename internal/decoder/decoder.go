@@ -16,9 +16,10 @@ type Decoder struct {
 	grid    *mbGrid
 	cur     *Picture
 	sps     *syntax.SPS
+	buffer  *dpb
+	lastHdr *syntax.SliceHeader
 
 	sliceCount int
-	pending    []*Picture
 }
 
 func New() *Decoder {
@@ -42,10 +43,10 @@ func (d *Decoder) Decode(data []byte) ([]*Picture, error) {
 			break
 		}
 		pics, err := d.handleUnit(unit)
+		out = append(out, pics...)
 		if err != nil {
 			return out, err
 		}
-		out = append(out, pics...)
 	}
 	return out, nil
 }
@@ -59,12 +60,24 @@ func (d *Decoder) Flush() ([]*Picture, error) {
 			return out, err
 		}
 	}
-	if d.cur != nil {
-		d.filterPicture()
-		out = append(out, d.cur)
-		d.cur = nil
+	if p := d.finishPicture(); p != nil {
+		out = append(out, p)
 	}
 	return out, nil
+}
+
+func (d *Decoder) finishPicture() *Picture {
+	if d.cur == nil {
+		return nil
+	}
+	pic := d.cur
+	d.cur = nil
+	d.filterPictureOn(pic)
+	pic.ExtendBorders()
+	if d.buffer != nil && d.lastHdr != nil {
+		d.buffer.store(pic, d.lastHdr)
+	}
+	return pic
 }
 
 func (d *Decoder) handleUnit(ebsp []byte) ([]*Picture, error) {
@@ -126,17 +139,26 @@ func (d *Decoder) decodeSlice(u nal.Unit) ([]*Picture, error) {
 	if pps.PicScalingMatrixPresent {
 		return nil, fmt.Errorf("%w: picture scaling matrices", ErrUnsupported)
 	}
+	if pps.WeightedPred && (hdr.SliceType.IsP() || hdr.SliceType.IsSP()) {
+		return nil, fmt.Errorf("%w: weighted prediction", ErrUnsupported)
+	}
 
 	var out []*Picture
 	if hdr.FirstMBInSlice == 0 {
-		if d.cur != nil {
-			d.filterPicture()
-			out = append(out, d.cur)
+		if p := d.finishPicture(); p != nil {
+			out = append(out, p)
+		}
+		if d.sps != sps || d.buffer == nil {
+			d.buffer = newDPB(sps)
+		}
+		if hdr.IDR {
+			d.buffer.refs = d.buffer.refs[:0]
 		}
 		d.sps = sps
 		d.cur = NewPicture(sps.PicWidthInMbs(), sps.FrameHeightInMbs())
 		d.cur.FrameNum = hdr.FrameNum
 		d.cur.IDR = hdr.IDR
+		d.cur.POC = d.buffer.computePOC(sps, hdr)
 		d.grid = newMBGrid(sps.PicWidthInMbs(), sps.FrameHeightInMbs())
 		d.sliceCount = 0
 	}
@@ -144,15 +166,28 @@ func (d *Decoder) decodeSlice(u nal.Unit) ([]*Picture, error) {
 		return out, ErrNoParameters
 	}
 	d.sliceCount++
+	d.lastHdr = hdr
+
+	d.buffer.updatePicNums(hdr.FrameNum)
+	active := hdr.NumRefIdxL0Active(pps)
+	var refList []*Picture
+	if hdr.SliceType.IsP() || hdr.SliceType.IsSP() {
+		refList = d.buffer.buildListP(hdr, active)
+		if len(refList) == 0 {
+			return out, fmt.Errorf("%w: P slice with an empty reference list", ErrCorrupt)
+		}
+	}
 
 	sd := &sliceDecoder{
-		r:       r,
-		sps:     sps,
-		pps:     pps,
-		hdr:     hdr,
-		pic:     d.cur,
-		grid:    d.grid,
-		sliceID: d.sliceCount,
+		r:               r,
+		sps:             sps,
+		pps:             pps,
+		hdr:             hdr,
+		pic:             d.cur,
+		grid:            d.grid,
+		refList:         refList,
+		numRefIdxActive: active,
+		sliceID:         d.sliceCount,
 	}
 	if err := sd.run(); err != nil {
 		return out, err

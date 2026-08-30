@@ -29,6 +29,14 @@ func edgeStrength(p, q *mbState, pBlk, qBlk int, mbEdge bool) uint8 {
 	if lumaNonZero(p, pBlk) || lumaNonZero(q, qBlk) {
 		return 2
 	}
+	if p.refPicL0[pBlk] != q.refPicL0[qBlk] {
+		return 1
+	}
+	dx := int(p.mvL0[pBlk][0]) - int(q.mvL0[qBlk][0])
+	dy := int(p.mvL0[pBlk][1]) - int(q.mvL0[qBlk][1])
+	if dx <= -4 || dx >= 4 || dy <= -4 || dy >= 4 {
+		return 1
+	}
 	return 0
 }
 
@@ -37,11 +45,11 @@ type edgeContext struct {
 	pic  *Picture
 }
 
-func (d *Decoder) filterPicture() {
-	if d.grid == nil || d.cur == nil {
+func (d *Decoder) filterPictureOn(pic *Picture) {
+	if d.grid == nil || pic == nil {
 		return
 	}
-	ctx := edgeContext{grid: d.grid, pic: d.cur}
+	ctx := edgeContext{grid: d.grid, pic: pic}
 	for mby := 0; mby < d.grid.heightMBs; mby++ {
 		for mbx := 0; mbx < d.grid.widthMBs; mbx++ {
 			ctx.filterMB(mbx, mby)

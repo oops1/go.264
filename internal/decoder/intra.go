@@ -249,12 +249,20 @@ func (d *sliceDecoder) reconstructChroma(res *mbResidual) {
 	off := d.pic.ChromaOffset(baseX, baseY)
 	avail := mbAvailability(d.nb, d.constrained)
 	planes := [2][]byte{d.pic.Cb, d.pic.Cr}
-	offsets := [2]int32{d.pps.ChromaQPIndexOffset, d.pps.SecondChromaQPIndexOffset}
 	for plane := 0; plane < 2; plane++ {
 		pred.IntraChroma8x8(planes[plane], d.pic.StrideC, off, int(d.cur.chromaMode), avail)
-		if d.cur.cbpChroma == 0 {
-			continue
-		}
+	}
+	d.addChromaResidual(res)
+}
+
+func (d *sliceDecoder) addChromaResidual(res *mbResidual) {
+	if d.cur.cbpChroma == 0 {
+		return
+	}
+	baseX, baseY := d.mbx*8, d.mby*8
+	planes := [2][]byte{d.pic.Cb, d.pic.Cr}
+	offsets := [2]int32{d.pps.ChromaQPIndexOffset, d.pps.SecondChromaQPIndexOffset}
+	for plane := 0; plane < 2; plane++ {
 		qpc := syntax.ChromaQP(d.qpY, int(offsets[plane]))
 		transform.DequantChromaDC(&res.chromaDC[plane], qpc)
 		for blk := 0; blk < 4; blk++ {

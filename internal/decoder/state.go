@@ -29,6 +29,9 @@ type mbState struct {
 	cbpChroma    int
 	transform8x8 bool
 
+	mvL0           [16][2]int16
+	refIdxL0       [16]int8
+	refPicL0       [16]*Picture
 	chromaQPOffset [2]int
 	disableDeblock uint32
 	alphaOffset    int

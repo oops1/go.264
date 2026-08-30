@@ -1,6 +1,8 @@
 package decoder
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/oops1/go264/internal/testutil"
@@ -76,4 +78,78 @@ func TestIntraNoDeblockAllFrames(t *testing.T) {
 func TestIntraDeblockedAllFrames(t *testing.T) {
 	clip := testutil.Corpus[0]
 	runClip(t, clip, clip.Frames)
+}
+
+func TestInterFirstFrames(t *testing.T) {
+	for _, i := range []int{2, 3, 4} {
+		clip := testutil.Corpus[i]
+		t.Run(clip.Name, func(t *testing.T) { runClip(t, clip, clip.Frames) })
+	}
+}
+
+func TestAllCorpusClips(t *testing.T) {
+	for _, clip := range testutil.Corpus {
+		t.Run(clip.Name, func(t *testing.T) { runClip(t, clip, clip.Frames) })
+	}
+}
+
+func TestDecodeInChunks(t *testing.T) {
+	clip := testutil.Corpus[3]
+	stream := testutil.LoadStream(t, clip)
+	want := testutil.LoadReferenceYUV(t, clip)
+	for _, size := range []int{1, 7, 64, 1000} {
+		d := New()
+		var pics []*Picture
+		for off := 0; off < len(stream); off += size {
+			end := off + size
+			if end > len(stream) {
+				end = len(stream)
+			}
+			got, err := d.Decode(stream[off:end])
+			if err != nil {
+				t.Fatalf("chunk size %d: %v", size, err)
+			}
+			pics = append(pics, got...)
+		}
+		rest, err := d.Flush()
+		if err != nil {
+			t.Fatalf("chunk size %d flush: %v", size, err)
+		}
+		pics = append(pics, rest...)
+		if len(pics) != clip.Frames {
+			t.Fatalf("chunk size %d: decoded %d frames, want %d", size, len(pics), clip.Frames)
+		}
+		buf := make([]byte, clip.FrameSize())
+		for i, p := range pics {
+			p.CopyOut(buf)
+			ref := clip.Frame(want, i)
+			for j := range buf {
+				if buf[j] != ref[j] {
+					t.Fatalf("chunk size %d frame %d differs at sample %d", size, i, j)
+				}
+			}
+		}
+	}
+}
+
+func FuzzDecoderNeverPanics(f *testing.F) {
+	for _, clip := range testutil.Corpus {
+		data, err := os.ReadFile(filepath.Join(testutil.CorpusDir(), clip.Name+".264"))
+		if err == nil {
+			f.Add(data)
+		}
+	}
+	f.Add([]byte{0, 0, 1, 0x67, 0x42})
+	f.Fuzz(func(t *testing.T, data []byte) {
+		d := New()
+		pics, _ := d.Decode(data)
+		rest, _ := d.Flush()
+		for _, p := range append(pics, rest...) {
+			if p.Width <= 0 || p.Height <= 0 {
+				t.Fatalf("decoded a picture of size %dx%d", p.Width, p.Height)
+			}
+			buf := make([]byte, p.Size())
+			p.CopyOut(buf)
+		}
+	})
 }
