@@ -3,7 +3,7 @@ package decoder
 import (
 	"errors"
 
-	"github.com/oops1/go264/internal/frame"
+	"github.com/oops1/go264/internal/loopfilter"
 	"github.com/oops1/go264/internal/pred"
 )
 
@@ -14,13 +14,8 @@ var (
 )
 
 type mbState struct {
-	decoded      bool
-	intra        bool
-	ipcm         bool
+	loopfilter.MB
 	kind         int
-	qpY          int
-	sliceID      int
-	nzY          [16]uint8
 	nzCb         [4]uint8
 	nzCr         [4]uint8
 	intra4Modes  [16]int8
@@ -30,23 +25,8 @@ type mbState struct {
 	cbpChroma    int
 	transform8x8 bool
 
-	mvL0           [16][2]int16
-	refIdxL0       [16]int8
-	refPicL0       [16]*frame.Picture
-	chromaQPOffset [2]int
-	disableDeblock uint32
-	alphaOffset    int
-	betaOffset     int
+	refIdxL0 [16]int8
 }
-
-var blkIdxGrid = [4][4]int{
-	{0, 1, 4, 5},
-	{2, 3, 6, 7},
-	{8, 9, 12, 13},
-	{10, 11, 14, 15},
-}
-
-func blkIdxAt(x, y int) int { return blkIdxGrid[y>>2][x>>2] }
 
 var topRightInsideMB = [16]bool{
 	false, false, true, false,
@@ -84,7 +64,7 @@ func (g *mbGrid) at(mbx, mby int) *mbState {
 
 func (g *mbGrid) neighbour(mbx, mby, dx, dy, sliceID int) *mbState {
 	m := g.at(mbx+dx, mby+dy)
-	if m == nil || !m.decoded || m.sliceID != sliceID {
+	if m == nil || !m.Decoded || m.SliceID != sliceID {
 		return nil
 	}
 	return m
@@ -110,7 +90,7 @@ func usableForIntra(m *mbState, constrainedIntraPred bool) bool {
 	if m == nil {
 		return false
 	}
-	if constrainedIntraPred && !m.intra {
+	if constrainedIntraPred && !m.Intra {
 		return false
 	}
 	return true
@@ -179,17 +159,17 @@ func nonZeroLuma(m *mbState, blk int) (int, bool) {
 	if m == nil {
 		return 0, false
 	}
-	if m.ipcm {
+	if m.IPCM {
 		return 16, true
 	}
-	return int(m.nzY[blk]), true
+	return int(m.NzY[blk]), true
 }
 
 func nonZeroChroma(m *mbState, plane, blk int) (int, bool) {
 	if m == nil {
 		return 0, false
 	}
-	if m.ipcm {
+	if m.IPCM {
 		return 16, true
 	}
 	if plane == 0 {
@@ -215,14 +195,14 @@ func (d *sliceDecoder) lumaNC(blk int) int {
 	var nA, nB int
 	var okA, okB bool
 	if x > 0 {
-		nA, okA = nonZeroLuma(d.cur, blkIdxAt(x-4, y))
+		nA, okA = nonZeroLuma(d.cur, loopfilter.BlkIdxAt(x-4, y))
 	} else {
-		nA, okA = nonZeroLuma(d.nb.left, blkIdxAt(12, y))
+		nA, okA = nonZeroLuma(d.nb.left, loopfilter.BlkIdxAt(12, y))
 	}
 	if y > 0 {
-		nB, okB = nonZeroLuma(d.cur, blkIdxAt(x, y-4))
+		nB, okB = nonZeroLuma(d.cur, loopfilter.BlkIdxAt(x, y-4))
 	} else {
-		nB, okB = nonZeroLuma(d.nb.top, blkIdxAt(x, 12))
+		nB, okB = nonZeroLuma(d.nb.top, loopfilter.BlkIdxAt(x, 12))
 	}
 	return combineNC(nA, okA, nB, okB)
 }

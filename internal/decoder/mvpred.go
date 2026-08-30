@@ -1,5 +1,7 @@
 package decoder
 
+import "github.com/oops1/go264/internal/loopfilter"
+
 type motion struct {
 	mv  [2]int16
 	ref int8
@@ -13,7 +15,7 @@ var zscanOf = [4][4]int{
 }
 
 func blockMotion(m *mbState, blk int) motion {
-	return motion{mv: m.mvL0[blk], ref: m.refIdxL0[blk]}
+	return motion{mv: m.MvL0[blk], ref: m.refIdxL0[blk]}
 }
 
 func (d *sliceDecoder) neighbourMotion(x, y, curZ int) (motion, bool) {
@@ -23,23 +25,23 @@ func (d *sliceDecoder) neighbourMotion(x, y, curZ int) (motion, bool) {
 		if d.nb.topLeft == nil {
 			return unavailable, false
 		}
-		return blockMotion(d.nb.topLeft, blkIdxAt(12, 12)), true
+		return blockMotion(d.nb.topLeft, loopfilter.BlkIdxAt(12, 12)), true
 	case x < 0:
 		if y >= 16 || d.nb.left == nil {
 			return unavailable, false
 		}
-		return blockMotion(d.nb.left, blkIdxAt(12, y&^3)), true
+		return blockMotion(d.nb.left, loopfilter.BlkIdxAt(12, y&^3)), true
 	case y < 0:
 		if x < 16 {
 			if d.nb.top == nil {
 				return unavailable, false
 			}
-			return blockMotion(d.nb.top, blkIdxAt(x&^3, 12)), true
+			return blockMotion(d.nb.top, loopfilter.BlkIdxAt(x&^3, 12)), true
 		}
 		if d.nb.topRight == nil {
 			return unavailable, false
 		}
-		return blockMotion(d.nb.topRight, blkIdxAt(0, 12)), true
+		return blockMotion(d.nb.topRight, loopfilter.BlkIdxAt(0, 12)), true
 	case x >= 16 || y >= 16:
 		return unavailable, false
 	}
@@ -129,9 +131,9 @@ func (d *sliceDecoder) storeMotion(x, y, w, h int, mv [2]int16, ref int8) {
 	for by := y; by < y+h; by += 4 {
 		for bx := x; bx < x+w; bx += 4 {
 			z := zscanOf[by>>2][bx>>2]
-			d.cur.mvL0[z] = mv
+			d.cur.MvL0[z] = mv
 			d.cur.refIdxL0[z] = ref
-			d.cur.refPicL0[z] = pic
+			d.cur.RefPicL0[z] = pic
 		}
 	}
 }

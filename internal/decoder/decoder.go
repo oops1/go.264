@@ -5,6 +5,7 @@ import (
 
 	"github.com/oops1/go264/internal/bits"
 	"github.com/oops1/go264/internal/frame"
+	"github.com/oops1/go264/internal/loopfilter"
 	"github.com/oops1/go264/internal/nal"
 	"github.com/oops1/go264/internal/syntax"
 )
@@ -73,7 +74,15 @@ func (d *Decoder) finishPicture() *frame.Picture {
 	}
 	pic := d.cur
 	d.cur = nil
-	d.filterPictureOn(pic)
+	if d.grid != nil {
+		loopfilter.Apply(pic, d.grid.widthMBs, d.grid.heightMBs, func(mbx, mby int) *loopfilter.MB {
+			m := d.grid.at(mbx, mby)
+			if m == nil {
+				return nil
+			}
+			return &m.MB
+		})
+	}
 	pic.ExtendBorders()
 	if d.buffer != nil && d.lastHdr != nil {
 		d.buffer.store(pic, d.lastHdr)

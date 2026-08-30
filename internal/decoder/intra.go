@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"github.com/oops1/go264/internal/cavlc"
+	"github.com/oops1/go264/internal/loopfilter"
 	"github.com/oops1/go264/internal/pred"
 	"github.com/oops1/go264/internal/syntax"
 	"github.com/oops1/go264/internal/transform"
@@ -30,23 +31,23 @@ func (d *sliceDecoder) predIntra4x4Mode(blk int) int {
 	if mbA == nil || mbB == nil {
 		return pred.I4x4DC
 	}
-	if d.constrained && (!mbA.intra || !mbB.intra) {
+	if d.constrained && (!mbA.Intra || !mbB.Intra) {
 		return pred.I4x4DC
 	}
 	modeA := pred.I4x4DC
 	if mbA.kind == mbTypeINxN {
 		if x > 0 {
-			modeA = int(mbA.intra4Modes[blkIdxAt(x-4, y)])
+			modeA = int(mbA.intra4Modes[loopfilter.BlkIdxAt(x-4, y)])
 		} else {
-			modeA = int(mbA.intra4Modes[blkIdxAt(12, y)])
+			modeA = int(mbA.intra4Modes[loopfilter.BlkIdxAt(12, y)])
 		}
 	}
 	modeB := pred.I4x4DC
 	if mbB.kind == mbTypeINxN {
 		if y > 0 {
-			modeB = int(mbB.intra4Modes[blkIdxAt(x, y-4)])
+			modeB = int(mbB.intra4Modes[loopfilter.BlkIdxAt(x, y-4)])
 		} else {
-			modeB = int(mbB.intra4Modes[blkIdxAt(x, 12)])
+			modeB = int(mbB.intra4Modes[loopfilter.BlkIdxAt(x, 12)])
 		}
 	}
 	if modeA < modeB {
@@ -138,7 +139,7 @@ func (d *sliceDecoder) readLumaAC(res *mbResidual, blk int, startIdx int) error 
 	if err != nil {
 		return err
 	}
-	d.cur.nzY[blk] = uint8(n)
+	d.cur.NzY[blk] = uint8(n)
 	transform.ScanToBlock(&res.luma[blk], &scan)
 	return nil
 }
@@ -176,7 +177,7 @@ func (d *sliceDecoder) readResidual(res *mbResidual, i16 bool) error {
 	for i8 := 0; i8 < 4; i8++ {
 		if d.cur.cbpLuma&(1<<uint(i8)) == 0 {
 			for i4 := 0; i4 < 4; i4++ {
-				d.cur.nzY[i8*4+i4] = 0
+				d.cur.NzY[i8*4+i4] = 0
 			}
 			continue
 		}
@@ -218,7 +219,7 @@ func (d *sliceDecoder) reconstructIntra4x4(res *mbResidual) {
 		off := d.pic.LumaOffset(baseX+blockX[blk], baseY+blockY[blk])
 		avail := lumaAvailability(blk, d.nb, d.constrained)
 		pred.Intra4x4(d.pic.Y, d.pic.StrideY, off, int(d.cur.intra4Modes[blk]), avail)
-		if d.cur.nzY[blk] == 0 {
+		if d.cur.NzY[blk] == 0 {
 			continue
 		}
 		transform.Dequant4x4(&res.luma[blk], d.qpY, false)
@@ -304,10 +305,10 @@ func (d *sliceDecoder) decodeIPCM() error {
 			}
 		}
 	}
-	d.cur.ipcm = true
-	d.cur.qpY = 0
-	for i := range d.cur.nzY {
-		d.cur.nzY[i] = 16
+	d.cur.IPCM = true
+	d.cur.QPY = 0
+	for i := range d.cur.NzY {
+		d.cur.NzY[i] = 16
 	}
 	for i := 0; i < 4; i++ {
 		d.cur.nzCb[i] = 16
@@ -326,7 +327,7 @@ func (d *sliceDecoder) alignForPCM() error {
 }
 
 func (d *sliceDecoder) decodeIntraMB(info mbTypeInfo, res *mbResidual) error {
-	d.cur.intra = true
+	d.cur.Intra = true
 	d.cur.kind = info.kind
 
 	switch info.kind {
@@ -360,7 +361,7 @@ func (d *sliceDecoder) decodeIntraMB(info mbTypeInfo, res *mbResidual) error {
 				return err
 			}
 		}
-		d.cur.qpY = d.qpY
+		d.cur.QPY = d.qpY
 		d.reconstructIntra4x4(res)
 		d.reconstructChroma(res)
 		return nil
@@ -378,7 +379,7 @@ func (d *sliceDecoder) decodeIntraMB(info mbTypeInfo, res *mbResidual) error {
 		if err := d.readResidual(res, true); err != nil {
 			return err
 		}
-		d.cur.qpY = d.qpY
+		d.cur.QPY = d.qpY
 		d.reconstructIntra16x16(res)
 		d.reconstructChroma(res)
 		return nil

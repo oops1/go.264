@@ -5,6 +5,7 @@ import (
 
 	"github.com/oops1/go264/internal/bits"
 	"github.com/oops1/go264/internal/frame"
+	"github.com/oops1/go264/internal/loopfilter"
 	"github.com/oops1/go264/internal/syntax"
 )
 
@@ -37,12 +38,14 @@ func (d *sliceDecoder) startMB(mbAddr int) {
 	d.mby = mbAddr / d.grid.widthMBs
 	d.cur = d.grid.at(d.mbx, d.mby)
 	*d.cur = mbState{
-		sliceID:        d.sliceID,
-		qpY:            d.qpY,
-		chromaQPOffset: [2]int{int(d.pps.ChromaQPIndexOffset), int(d.pps.SecondChromaQPIndexOffset)},
-		disableDeblock: d.hdr.DisableDeblockingFilterIDC,
-		alphaOffset:    int(d.hdr.SliceAlphaC0OffsetDiv2) * 2,
-		betaOffset:     int(d.hdr.SliceBetaOffsetDiv2) * 2,
+		MB: loopfilter.MB{
+			SliceID:        d.sliceID,
+			QPY:            d.qpY,
+			ChromaQPOffset: [2]int{int(d.pps.ChromaQPIndexOffset), int(d.pps.SecondChromaQPIndexOffset)},
+			DisableDeblock: d.hdr.DisableDeblockingFilterIDC,
+			AlphaOffset:    int(d.hdr.SliceAlphaC0OffsetDiv2) * 2,
+			BetaOffset:     int(d.hdr.SliceBetaOffsetDiv2) * 2,
+		},
 	}
 	for i := range d.cur.refIdxL0 {
 		d.cur.refIdxL0[i] = -1
@@ -75,7 +78,7 @@ func (d *sliceDecoder) run() error {
 				if err := d.decodePSkip(); err != nil {
 					return err
 				}
-				d.cur.decoded = true
+				d.cur.Decoded = true
 				mbAddr++
 			}
 			if run > 0 && !d.r.MoreRBSPData() {
@@ -90,7 +93,7 @@ func (d *sliceDecoder) run() error {
 		if err := d.decodeMacroblock(&res); err != nil {
 			return err
 		}
-		d.cur.decoded = true
+		d.cur.Decoded = true
 
 		mbAddr++
 		if !d.r.MoreRBSPData() {

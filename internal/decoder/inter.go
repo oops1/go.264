@@ -68,7 +68,7 @@ func (d *sliceDecoder) readMVD() ([2]int16, error) {
 
 func (d *sliceDecoder) decodeInterMB(info mbTypeInfo, res *mbResidual) error {
 	d.cur.kind = info.kind
-	d.cur.intra = false
+	d.cur.Intra = false
 	maxRef := uint32(d.numRefIdxActive - 1)
 
 	if info.kind == mbTypeP8x8 || info.kind == mbTypeP8x8Ref0 {
@@ -107,7 +107,7 @@ func (d *sliceDecoder) decodeInterMB(info mbTypeInfo, res *mbResidual) error {
 			return err
 		}
 	}
-	d.cur.qpY = d.qpY
+	d.cur.QPY = d.qpY
 	d.motionCompensate()
 	d.addInterResidual(res)
 	return nil
@@ -159,10 +159,10 @@ func (d *sliceDecoder) decodeP8x8(info mbTypeInfo, maxRef uint32) error {
 
 func (d *sliceDecoder) decodePSkip() error {
 	d.cur.kind = mbTypePSkip
-	d.cur.intra = false
+	d.cur.Intra = false
 	d.cur.cbpLuma = 0
 	d.cur.cbpChroma = 0
-	d.cur.qpY = d.qpY
+	d.cur.QPY = d.qpY
 	mv := d.skipMV()
 	d.storeMotion(0, 0, 16, 16, mv, 0)
 	d.motionCompensate()
@@ -247,12 +247,12 @@ func motionSegments(m *mbState) []motionSegment {
 			if used[z] {
 				continue
 			}
-			mv := m.mvL0[z]
+			mv := m.MvL0[z]
 			ref := m.refIdxL0[z]
 			w := 4
 			for bx+w < 16 {
 				nz := zscanOf[by>>2][(bx+w)>>2]
-				if used[nz] || m.mvL0[nz] != mv || m.refIdxL0[nz] != ref {
+				if used[nz] || m.MvL0[nz] != mv || m.refIdxL0[nz] != ref {
 					break
 				}
 				w += 4
@@ -262,7 +262,7 @@ func motionSegments(m *mbState) []motionSegment {
 				same := true
 				for i := 0; i < w; i += 4 {
 					nz := zscanOf[(by+h)>>2][(bx+i)>>2]
-					if used[nz] || m.mvL0[nz] != mv || m.refIdxL0[nz] != ref {
+					if used[nz] || m.MvL0[nz] != mv || m.refIdxL0[nz] != ref {
 						same = false
 						break
 					}
@@ -286,7 +286,7 @@ func motionSegments(m *mbState) []motionSegment {
 func (d *sliceDecoder) addInterResidual(res *mbResidual) {
 	baseX, baseY := d.mbx*16, d.mby*16
 	for blk := 0; blk < 16; blk++ {
-		if d.cur.nzY[blk] == 0 {
+		if d.cur.NzY[blk] == 0 {
 			continue
 		}
 		transform.Dequant4x4(&res.luma[blk], d.qpY, false)

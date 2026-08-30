@@ -1,4 +1,4 @@
-package decoder
+package loopfilter
 
 import (
 	"github.com/oops1/go264/internal/deblock"
@@ -6,22 +6,46 @@ import (
 	"github.com/oops1/go264/internal/syntax"
 )
 
-func (m *mbState) filterQPY() int {
-	if m.ipcm {
+type MB struct {
+	Decoded        bool
+	Intra          bool
+	IPCM           bool
+	QPY            int
+	SliceID        int
+	NzY            [16]uint8
+	MvL0           [16][2]int16
+	RefPicL0       [16]*frame.Picture
+	ChromaQPOffset [2]int
+	DisableDeblock uint32
+	AlphaOffset    int
+	BetaOffset     int
+}
+
+var blkIdxGrid = [4][4]int{
+	{0, 1, 4, 5},
+	{2, 3, 6, 7},
+	{8, 9, 12, 13},
+	{10, 11, 14, 15},
+}
+
+func BlkIdxAt(x, y int) int { return blkIdxGrid[y>>2][x>>2] }
+
+func (m *MB) filterQPY() int {
+	if m.IPCM {
 		return 0
 	}
-	return m.qpY
+	return m.QPY
 }
 
-func lumaNonZero(m *mbState, blk int) bool {
-	if m.ipcm {
+func lumaNonZero(m *MB, blk int) bool {
+	if m.IPCM {
 		return true
 	}
-	return m.nzY[blk] != 0
+	return m.NzY[blk] != 0
 }
 
-func edgeStrength(p, q *mbState, pBlk, qBlk int, mbEdge bool) uint8 {
-	if p.intra || q.intra {
+func edgeStrength(p, q *MB, pBlk, qBlk int, mbEdge bool) uint8 {
+	if p.Intra || q.Intra {
 		if mbEdge {
 			return 4
 		}
@@ -30,11 +54,11 @@ func edgeStrength(p, q *mbState, pBlk, qBlk int, mbEdge bool) uint8 {
 	if lumaNonZero(p, pBlk) || lumaNonZero(q, qBlk) {
 		return 2
 	}
-	if p.refPicL0[pBlk] != q.refPicL0[qBlk] {
+	if p.RefPicL0[pBlk] != q.RefPicL0[qBlk] {
 		return 1
 	}
-	dx := int(p.mvL0[pBlk][0]) - int(q.mvL0[qBlk][0])
-	dy := int(p.mvL0[pBlk][1]) - int(q.mvL0[qBlk][1])
+	dx := int(p.MvL0[pBlk][0]) - int(q.MvL0[qBlk][0])
+	dy := int(p.MvL0[pBlk][1]) - int(q.MvL0[qBlk][1])
 	if dx <= -4 || dx >= 4 || dy <= -4 || dy >= 4 {
 		return 1
 	}
@@ -42,36 +66,36 @@ func edgeStrength(p, q *mbState, pBlk, qBlk int, mbEdge bool) uint8 {
 }
 
 type edgeContext struct {
-	grid *mbGrid
-	pic  *frame.Picture
+	at  func(mbx, mby int) *MB
+	pic *frame.Picture
 }
 
-func (d *Decoder) filterPictureOn(pic *frame.Picture) {
-	if d.grid == nil || pic == nil {
+func Apply(pic *frame.Picture, widthMBs, heightMBs int, at func(mbx, mby int) *MB) {
+	if pic == nil || at == nil {
 		return
 	}
-	ctx := edgeContext{grid: d.grid, pic: pic}
-	for mby := 0; mby < d.grid.heightMBs; mby++ {
-		for mbx := 0; mbx < d.grid.widthMBs; mbx++ {
+	ctx := edgeContext{at: at, pic: pic}
+	for mby := 0; mby < heightMBs; mby++ {
+		for mbx := 0; mbx < widthMBs; mbx++ {
 			ctx.filterMB(mbx, mby)
 		}
 	}
 }
 
-func (c *edgeContext) neighbourFor(m *mbState, mbx, mby, dx, dy int) *mbState {
-	n := c.grid.at(mbx+dx, mby+dy)
-	if n == nil || !n.decoded {
+func (c *edgeContext) neighbourFor(m *MB, mbx, mby, dx, dy int) *MB {
+	n := c.at(mbx+dx, mby+dy)
+	if n == nil || !n.Decoded {
 		return nil
 	}
-	if m.disableDeblock == 2 && n.sliceID != m.sliceID {
+	if m.DisableDeblock == 2 && n.SliceID != m.SliceID {
 		return nil
 	}
 	return n
 }
 
 func (c *edgeContext) filterMB(mbx, mby int) {
-	cur := c.grid.at(mbx, mby)
-	if !cur.decoded || cur.disableDeblock == 1 {
+	cur := c.at(mbx, mby)
+	if cur == nil || !cur.Decoded || cur.DisableDeblock == 1 {
 		return
 	}
 	left := c.neighbourFor(cur, mbx, mby, -1, 0)
@@ -85,7 +109,7 @@ func (c *edgeContext) filterMB(mbx, mby int) {
 	}
 }
 
-func (c *edgeContext) verticalEdge(cur, left *mbState, mbx, mby, e int) {
+func (c *edgeContext) verticalEdge(cur, left *MB, mbx, mby, e int) {
 	p := cur
 	mbEdge := e == 0
 	if mbEdge {
@@ -99,12 +123,12 @@ func (c *edgeContext) verticalEdge(cur, left *mbState, mbx, mby, e int) {
 	any := false
 	for g := 0; g < 4; g++ {
 		y := g * 4
-		qBlk := blkIdxAt(x, y)
+		qBlk := BlkIdxAt(x, y)
 		var pBlk int
 		if mbEdge {
-			pBlk = blkIdxAt(12, y)
+			pBlk = BlkIdxAt(12, y)
 		} else {
-			pBlk = blkIdxAt(x-4, y)
+			pBlk = BlkIdxAt(x-4, y)
 		}
 		bs[g] = edgeStrength(p, cur, pBlk, qBlk, mbEdge)
 		if bs[g] != 0 {
@@ -115,8 +139,8 @@ func (c *edgeContext) verticalEdge(cur, left *mbState, mbx, mby, e int) {
 		return
 	}
 	qpAv := deblock.AverageQP(p.filterQPY(), cur.filterQPY())
-	ia := deblock.IndexA(qpAv, cur.alphaOffset)
-	ib := deblock.IndexB(qpAv, cur.betaOffset)
+	ia := deblock.IndexA(qpAv, cur.AlphaOffset)
+	ib := deblock.IndexB(qpAv, cur.BetaOffset)
 	deblock.FilterLumaEdgeVertical(c.pic.Y, c.pic.StrideY,
 		c.pic.LumaOffset(mbx*16+x, mby*16), bs, ia, ib)
 
@@ -124,7 +148,7 @@ func (c *edgeContext) verticalEdge(cur, left *mbState, mbx, mby, e int) {
 		return
 	}
 	cx := mbx*8 + e*2
-	offsets := cur.chromaQPOffset
+	offsets := cur.ChromaQPOffset
 	planes := [2][]byte{c.pic.Cb, c.pic.Cr}
 	for plane := 0; plane < 2; plane++ {
 		qpc := deblock.AverageQP(
@@ -132,11 +156,11 @@ func (c *edgeContext) verticalEdge(cur, left *mbState, mbx, mby, e int) {
 			syntax.ChromaQP(cur.filterQPY(), offsets[plane]))
 		deblock.FilterChromaEdgeVertical(planes[plane], c.pic.StrideC,
 			c.pic.ChromaOffset(cx, mby*8), bs,
-			deblock.IndexA(qpc, cur.alphaOffset), deblock.IndexB(qpc, cur.betaOffset))
+			deblock.IndexA(qpc, cur.AlphaOffset), deblock.IndexB(qpc, cur.BetaOffset))
 	}
 }
 
-func (c *edgeContext) horizontalEdge(cur, top *mbState, mbx, mby, e int) {
+func (c *edgeContext) horizontalEdge(cur, top *MB, mbx, mby, e int) {
 	p := cur
 	mbEdge := e == 0
 	if mbEdge {
@@ -150,12 +174,12 @@ func (c *edgeContext) horizontalEdge(cur, top *mbState, mbx, mby, e int) {
 	any := false
 	for g := 0; g < 4; g++ {
 		x := g * 4
-		qBlk := blkIdxAt(x, y)
+		qBlk := BlkIdxAt(x, y)
 		var pBlk int
 		if mbEdge {
-			pBlk = blkIdxAt(x, 12)
+			pBlk = BlkIdxAt(x, 12)
 		} else {
-			pBlk = blkIdxAt(x, y-4)
+			pBlk = BlkIdxAt(x, y-4)
 		}
 		bs[g] = edgeStrength(p, cur, pBlk, qBlk, mbEdge)
 		if bs[g] != 0 {
@@ -168,13 +192,13 @@ func (c *edgeContext) horizontalEdge(cur, top *mbState, mbx, mby, e int) {
 	qpAv := deblock.AverageQP(p.filterQPY(), cur.filterQPY())
 	deblock.FilterLumaEdgeHorizontal(c.pic.Y, c.pic.StrideY,
 		c.pic.LumaOffset(mbx*16, mby*16+y), bs,
-		deblock.IndexA(qpAv, cur.alphaOffset), deblock.IndexB(qpAv, cur.betaOffset))
+		deblock.IndexA(qpAv, cur.AlphaOffset), deblock.IndexB(qpAv, cur.BetaOffset))
 
 	if e != 0 && e != 2 {
 		return
 	}
 	cy := mby*8 + e*2
-	offsets := cur.chromaQPOffset
+	offsets := cur.ChromaQPOffset
 	planes := [2][]byte{c.pic.Cb, c.pic.Cr}
 	for plane := 0; plane < 2; plane++ {
 		qpc := deblock.AverageQP(
@@ -182,6 +206,6 @@ func (c *edgeContext) horizontalEdge(cur, top *mbState, mbx, mby, e int) {
 			syntax.ChromaQP(cur.filterQPY(), offsets[plane]))
 		deblock.FilterChromaEdgeHorizontal(planes[plane], c.pic.StrideC,
 			c.pic.ChromaOffset(mbx*8, cy), bs,
-			deblock.IndexA(qpc, cur.alphaOffset), deblock.IndexB(qpc, cur.betaOffset))
+			deblock.IndexA(qpc, cur.AlphaOffset), deblock.IndexB(qpc, cur.BetaOffset))
 	}
 }
