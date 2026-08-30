@@ -6,6 +6,4 @@
 /dist/
 coverage.txt
 coverage.html
-testdata/conformance/
-testdata/*.yuv
-testdata/*.264
+testdata/scratch/
