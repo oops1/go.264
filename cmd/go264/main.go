@@ -22,7 +22,7 @@ func main() {
 func usage() string {
 	return strings.Join([]string{
 		"usage:",
-		"  go264 encode -s WxH [-qp N] [-gop N] [-fps N] [-i in.yuv] [-o out.264]",
+		"  go264 encode -s WxH [-qp N | -b KBPS] [-gop N] [-fps N] [-i in.yuv] [-o out.264]",
 		"  go264 decode [-i in.264] [-o out.yuv]",
 		"  go264 backends",
 	}, "\n")

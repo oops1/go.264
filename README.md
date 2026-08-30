@@ -27,9 +27,9 @@ Working today:
 | In-loop deblocking filter | complete, shared by encoder and decoder |
 | Reference picture management | sliding window and MMCO |
 | Hardware acceleration | probe and fallback in place, no backend implemented yet |
-| SIMD kernels | not started, pure Go throughout |
+| Bitrate targeted rate control | complete, within about a fifth of the request |
+| SIMD kernels | sum of absolute differences on amd64, about thirty times faster |
 | CABAC, B slices, High profile | not started |
-| Bitrate-targeted rate control | not started, constant quantiser only |
 
 See [docs/PLAN.md](docs/PLAN.md) for the phase breakdown and
 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the design.
@@ -79,6 +79,9 @@ go install github.com/oops1/go264/cmd/go264@latest
 
 ```bash
 go264 encode -s 1280x720 -qp 24 -gop 30 -i input.yuv -o output.264
+```\n
+```bash
+go264 encode -s 1280x720 -b 2500 -gop 30 -i input.yuv -o output.264
 ```
 
 ```bash
