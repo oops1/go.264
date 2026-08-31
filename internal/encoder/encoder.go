@@ -26,6 +26,9 @@ type Config struct {
 
 	BitrateKbps int
 	RefFrames   int
+
+	CABAC        bool
+	MotionSearch MotionSearch
 }
 
 func (c *Config) validate() error {
@@ -76,6 +79,7 @@ type Encoder struct {
 	frameNum   uint32
 	frameIndex int
 	headers    []byte
+	forceKey   bool
 }
 
 func New(cfg Config) (*Encoder, error) {
@@ -136,9 +140,15 @@ func (e *Encoder) pickLevel() uint8 {
 }
 
 func (e *Encoder) buildParameterSets() {
+	profile := uint8(syntax.ProfileBaseline)
+	constraints := uint8(0xC0)
+	if e.cfg.CABAC {
+		profile = syntax.ProfileMain
+		constraints = 0x40
+	}
 	sps := &syntax.SPS{
-		ProfileIDC:                syntax.ProfileBaseline,
-		ConstraintSet:             0xC0,
+		ProfileIDC:                profile,
+		ConstraintSet:             constraints,
 		LevelIDC:                  e.pickLevel(),
 		ID:                        0,
 		ChromaFormatIDC:           syntax.Chroma420,
@@ -170,6 +180,7 @@ func (e *Encoder) buildParameterSets() {
 		NumRefIdxL1DefaultActiveMinus1: 0,
 		PicInitQPMinus26:               int32(e.cfg.QP - 26),
 		DeblockingFilterControlPresent: true,
+		CABAC:                          e.cfg.CABAC,
 	}
 	e.sps = sps
 	e.pps = pps
@@ -202,13 +213,27 @@ func (e *Encoder) parameterSetBytes() ([]byte, error) {
 func (e *Encoder) Headers() ([]byte, error) { return e.parameterSetBytes() }
 
 func (e *Encoder) Encode(yuv []byte) ([]byte, error) {
+	return e.EncodeWithHints(yuv, Hints{})
+}
+
+func (e *Encoder) ForceKeyFrame() { e.forceKey = true }
+
+func (e *Encoder) EncodeWithHints(yuv []byte, h Hints) ([]byte, error) {
 	want := e.cfg.Width * e.cfg.Height * 3 / 2
 	if len(yuv) != want {
 		return nil, fmt.Errorf("%w: got %d bytes, want %d", ErrFrameSize, len(yuv), want)
 	}
 	e.loadSource(yuv)
 
-	idr := e.frameIndex%e.cfg.GOPSize == 0
+	idr := e.frameIndex%e.cfg.GOPSize == 0 || e.forceKey
+	e.forceKey = false
+	if len(e.refs) == 0 {
+		idr = true
+	}
+	hints := e.prepareHints(h)
+	if idr {
+		hints = nil
+	}
 	var out []byte
 	if idr {
 		hdrs, err := e.parameterSetBytes()
@@ -252,7 +277,7 @@ func (e *Encoder) Encode(yuv []byte) ([]byte, error) {
 	if err := syntax.WriteSliceHeader(w, hdr, e.sps, e.pps); err != nil {
 		return nil, err
 	}
-	if err := e.encodeSlice(w, hdr, qp, active); err != nil {
+	if err := e.encodeSlice(w, hdr, qp, active, hints); err != nil {
 		return nil, err
 	}
 	w.WriteRBSPTrailingBits()

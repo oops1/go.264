@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"github.com/oops1/go.264/internal/bits"
+	"github.com/oops1/go.264/internal/cabac"
 	"github.com/oops1/go.264/internal/cavlc"
 	"github.com/oops1/go.264/internal/loopfilter"
 	"github.com/oops1/go.264/internal/pred"
@@ -49,14 +50,21 @@ type mbEncoder struct {
 
 	isP            bool
 	numRefs        int
+	hints          *frameHints
+	sliceQP        int
+	prevQP         int
 	pendingSkipRun uint32
-	scratch        [256]byte
-	parts          []partResult
-	subs           []subResult
-	lumaScan       [16][16]int32
-	lumaDCScan     [16]int32
-	chromaDC       [2]transform.ChromaDC
-	chromaScan     [2][4][16]int32
+
+	cb                 *cabac.Encoder
+	prevQPDeltaNonZero bool
+
+	scratch    [256]byte
+	parts      []partResult
+	subs       []subResult
+	lumaScan   [16][16]int32
+	lumaDCScan [16]int32
+	chromaDC   [2]transform.ChromaDC
+	chromaScan [2][4][16]int32
 }
 
 func (s *mbEncoder) reset() {
@@ -66,15 +74,24 @@ func (s *mbEncoder) reset() {
 	s.chromaScan = [2][4][16]int32{}
 }
 
-func (e *Encoder) encodeSlice(w *bits.Writer, hdr *syntax.SliceHeader, qp, numRefs int) error {
+func (e *Encoder) encodeSlice(w *bits.Writer, hdr *syntax.SliceHeader, qp, numRefs int, hints *frameHints) error {
 	for i := range e.grid {
 		e.grid[i] = mbInfo{}
 	}
-	s := &mbEncoder{e: e, w: w, qpY: qp, isP: hdr.SliceType.IsP(), numRefs: numRefs}
+	s := &mbEncoder{e: e, w: w, qpY: qp, isP: hdr.SliceType.IsP(), numRefs: numRefs,
+		hints: hints, sliceQP: qp, prevQP: qp}
+	if e.pps.CABAC {
+		s.cb = &cabac.Encoder{}
+		if err := s.cb.Init(w, qp, !s.isP, hdr.CABACInitIDC); err != nil {
+			return err
+		}
+	}
+	last := e.widthMBs*e.heightMBs - 1
 	for mby := 0; mby < e.heightMBs; mby++ {
 		for mbx := 0; mbx < e.widthMBs; mbx++ {
 			s.mbx = mbx
 			s.mby = mby
+			s.qpY = clampQP(s.sliceQP + hints.qpDelta(mbx, mby))
 			s.cur = e.at(mbx, mby)
 			*s.cur = mbInfo{MB: loopfilter.MB{
 				QPY:            s.qpY,
@@ -86,27 +103,45 @@ func (e *Encoder) encodeSlice(w *bits.Writer, hdr *syntax.SliceHeader, qp, numRe
 			s.nb = e.around(mbx, mby)
 			s.reset()
 
-			if !s.isP {
-				if err := s.encodeIntraMB(0); err != nil {
-					return err
-				}
-				s.cur.Decoded = true
-				continue
-			}
-			skipped, err := s.encodeInterMB()
-			if err != nil {
+			if err := s.encodeMB(); err != nil {
 				return err
 			}
-			if skipped {
-				s.pendingSkipRun++
-			}
 			s.cur.Decoded = true
+			if s.cb != nil {
+				s.cb.EndOfSlice(mby*e.widthMBs+mbx == last)
+			}
 		}
+	}
+	if s.cb != nil {
+		s.cb.Finish()
+		return w.Err()
 	}
 	if s.isP && s.pendingSkipRun > 0 {
 		w.WriteUE(s.pendingSkipRun)
 	}
 	return w.Err()
+}
+
+func (s *mbEncoder) encodeMB() error {
+	if !s.isP {
+		if s.cb != nil {
+			s.encodeIntraModes()
+			s.writeIntraMBCABAC(false)
+			return s.w.Err()
+		}
+		return s.encodeIntraMB(0)
+	}
+	if s.cb != nil {
+		return s.encodeInterMBCABAC()
+	}
+	skipped, err := s.encodeInterMB()
+	if err != nil {
+		return err
+	}
+	if skipped {
+		s.pendingSkipRun++
+	}
+	return nil
 }
 
 func (s *mbEncoder) lumaOffset(blk int) int {
@@ -131,6 +166,7 @@ func (s *mbEncoder) encodeIntraModes() {
 		s.cur.kind = mbTypeINxN
 	}
 	s.cur.Intra = true
+	s.cur.skipped = false
 
 	chromaMode := s.searchChroma()
 	s.cur.chromaMode = int8(chromaMode)
@@ -413,10 +449,12 @@ func (s *mbEncoder) writeIntraMB(typeOffset uint32) error {
 		cbp := uint8(s.cur.cbpLuma | s.cur.cbpChroma<<4)
 		s.w.WriteUE(intraCBPToGolomb[cbp])
 		if cbp != 0 {
-			s.w.WriteSE(0)
+			s.writeQPDelta()
 			if err := s.writeResidual(false); err != nil {
 				return err
 			}
+		} else {
+			s.holdQP()
 		}
 		return s.w.Err()
 	}
@@ -428,7 +466,7 @@ func (s *mbEncoder) writeIntraMB(typeOffset uint32) error {
 	mbType := 1 + int(s.cur.intra16Mode) + 4*s.cur.cbpChroma + 12*cbpLumaBit
 	s.w.WriteUE(uint32(mbType) + typeOffset)
 	s.w.WriteUE(uint32(s.cur.chromaMode))
-	s.w.WriteSE(0)
+	s.writeQPDelta()
 	if err := s.writeResidual(true); err != nil {
 		return err
 	}
@@ -475,4 +513,25 @@ func (s *mbEncoder) writeResidual(i16 bool) error {
 		}
 	}
 	return nil
+}
+
+func clampQP(qp int) int {
+	if qp < 0 {
+		return 0
+	}
+	if qp > 51 {
+		return 51
+	}
+	return qp
+}
+
+func (s *mbEncoder) writeQPDelta() {
+	s.w.WriteSE(int32(s.qpY - s.prevQP))
+	s.prevQP = s.qpY
+	s.cur.QPY = s.qpY
+}
+
+func (s *mbEncoder) holdQP() {
+	s.qpY = s.prevQP
+	s.cur.QPY = s.prevQP
 }

@@ -301,6 +301,83 @@ func (s *mbEncoder) setMotion(mv [2]int16) {
 }
 
 func (s *mbEncoder) encodeInterMB() (bool, error) {
+	if s.hints.unchanged(s.mbx, s.mby) {
+		s.holdQP()
+		if s.applyUnchanged() {
+			s.cur.QPY = s.prevQP
+			return true, nil
+		}
+		s.cur.QPY = s.prevQP
+		s.w.WriteUE(s.pendingSkipRun)
+		s.pendingSkipRun = 0
+		return false, s.writeInterMB()
+	}
+	choice, cand, skipMV, err := s.decideInterMB()
+	if err != nil {
+		return false, err
+	}
+	switch choice {
+	case choiceSkip:
+		s.holdQP()
+		s.applySkip(skipMV)
+		s.cur.QPY = s.prevQP
+		return true, nil
+	case choiceIntra:
+		s.w.WriteUE(s.pendingSkipRun)
+		s.pendingSkipRun = 0
+		return false, s.writeIntraMB(5)
+	}
+
+	s.clearMotion()
+	s.applyInterCandidate(cand)
+	s.w.WriteUE(s.pendingSkipRun)
+	s.pendingSkipRun = 0
+	if err := s.writeInterMB(); err != nil {
+		return false, err
+	}
+	return false, nil
+}
+
+func (s *mbEncoder) encodeInterMBCABAC() error {
+	inc := s.skipFlagInc()
+	if s.hints.unchanged(s.mbx, s.mby) {
+		s.cabacHoldQP()
+		if s.applyUnchanged() {
+			s.cur.QPY = s.prevQP
+			s.cb.MBSkipFlagP(inc, true)
+			return nil
+		}
+		s.cur.QPY = s.prevQP
+		s.cb.MBSkipFlagP(inc, false)
+		s.writeInterMBCABAC()
+		return s.w.Err()
+	}
+
+	choice, cand, skipMV, err := s.decideInterMB()
+	if err != nil {
+		return err
+	}
+	switch choice {
+	case choiceSkip:
+		s.cabacHoldQP()
+		s.applySkip(skipMV)
+		s.cur.QPY = s.prevQP
+		s.cb.MBSkipFlagP(inc, true)
+		return nil
+	case choiceIntra:
+		s.cb.MBSkipFlagP(inc, false)
+		s.writeIntraMBCABAC(true)
+		return s.w.Err()
+	}
+
+	s.clearMotion()
+	s.applyInterCandidate(cand)
+	s.cb.MBSkipFlagP(inc, false)
+	s.writeInterMBCABAC()
+	return s.w.Err()
+}
+
+func (s *mbEncoder) decideInterMB() (int, interCandidate, [2]int16, error) {
 	satdLambda := lambdaTable[s.qpY]
 	rdLambda := lambdaRDTable[s.qpY]
 	skipMV := s.skipMV()
@@ -309,18 +386,21 @@ func (s *mbEncoder) encodeInterMB() (bool, error) {
 	var bestCand interCandidate
 	bestChoice := choiceInter
 
-	for _, kind := range []int{mbTypeP16x16, mbTypeP16x8, mbTypeP8x16, mbTypeP8x8} {
+	for _, kind := range s.candidateKinds() {
 		var c interCandidate
-		if kind == mbTypeP8x8 {
+		switch {
+		case kind == mbTypeP8x8:
 			_, subs := s.trySplit8x8(satdLambda)
 			c = interCandidate{kind: kind, subs: subs}
-		} else {
+		case s.e.cfg.MotionSearch == MotionSearchZero:
+			c = interCandidate{kind: kind, parts: s.zeroMotionParts(kind)}
+		default:
 			_, parts := s.trySplit(kind, satdLambda)
 			c = interCandidate{kind: kind, parts: parts}
 		}
 		j, err := s.evaluateInter(c, rdLambda)
 		if err != nil {
-			return false, err
+			return 0, interCandidate{}, skipMV, err
 		}
 		if j < bestCost {
 			bestCost, bestCand, bestChoice = j, c, choiceInter
@@ -334,30 +414,12 @@ func (s *mbEncoder) encodeInterMB() (bool, error) {
 	s.clearMotion()
 	j, err := s.evaluateIntra(5, rdLambda)
 	if err != nil {
-		return false, err
+		return 0, interCandidate{}, skipMV, err
 	}
 	if j < bestCost {
 		bestChoice = choiceIntra
 	}
-
-	switch bestChoice {
-	case choiceSkip:
-		s.applySkip(skipMV)
-		return true, nil
-	case choiceIntra:
-		s.w.WriteUE(s.pendingSkipRun)
-		s.pendingSkipRun = 0
-		return false, s.writeIntraMB(5)
-	}
-
-	s.clearMotion()
-	s.applyInterCandidate(bestCand)
-	s.w.WriteUE(s.pendingSkipRun)
-	s.pendingSkipRun = 0
-	if err := s.writeInterMB(); err != nil {
-		return false, err
-	}
-	return false, nil
+	return bestChoice, bestCand, skipMV, nil
 }
 
 func (s *mbEncoder) writeInterMB() error {
@@ -385,10 +447,12 @@ func (s *mbEncoder) writeInterMB() error {
 	cbp := uint8(s.cur.cbpLuma | s.cur.cbpChroma<<4)
 	s.w.WriteUE(interCBPToGolomb[cbp])
 	if cbp != 0 {
-		s.w.WriteSE(0)
+		s.writeQPDelta()
 		if err := s.writeResidual(false); err != nil {
 			return err
 		}
+	} else {
+		s.holdQP()
 	}
 	return s.w.Err()
 }
@@ -405,3 +469,46 @@ const (
 	choiceSkip
 	choiceIntra
 )
+
+func (s *mbEncoder) applyUnchanged() bool {
+	skipMV := s.skipMV()
+	if skipMV == [2]int16{} {
+		s.applySkip(skipMV)
+		return true
+	}
+	s.reset()
+	s.cur.kind = mbTypeP16x16
+	s.cur.Intra = false
+	s.cur.skipped = false
+	s.cur.cbpLuma = 0
+	s.cur.cbpChroma = 0
+	s.cur.NzY = [16]uint8{}
+	s.cur.nzCb = [4]uint8{}
+	s.cur.nzCr = [4]uint8{}
+	s.clearMotion()
+	mvp := s.predictMV16x16()
+	s.parts = s.parts[:0]
+	s.parts = append(s.parts, partResult{mvd: [2]int16{-mvp[0], -mvp[1]}})
+	s.subs = nil
+	s.setMotion([2]int16{})
+	s.storeMVD(0, 0, 16, 16, s.parts[0].mvd)
+	s.motionCompensateMB([2]int16{})
+	return false
+}
+
+func (s *mbEncoder) candidateKinds() []int {
+	if s.e.cfg.MotionSearch == MotionSearchZero {
+		return []int{mbTypeP16x16}
+	}
+	return []int{mbTypeP16x16, mbTypeP16x8, mbTypeP8x16, mbTypeP8x8}
+}
+
+func (s *mbEncoder) zeroMotionParts(kind int) []partResult {
+	parts := partitionsFor(kind)
+	out := make([]partResult, 0, len(parts))
+	for i, p := range parts {
+		mvp := s.predictMV(p.x, p.y, p.w, i, kind, 0)
+		out = append(out, partResult{mvd: [2]int16{-mvp[0], -mvp[1]}})
+	}
+	return out
+}

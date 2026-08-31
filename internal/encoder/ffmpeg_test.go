@@ -217,3 +217,82 @@ func TestFFmpegDecodesMultiReferenceStreams(t *testing.T) {
 		t.Logf("refs %d: %d bytes, twelve frames decode identically in ffmpeg", refs, len(stream))
 	}
 }
+
+func TestFFmpegDecodesOurCABACStreamIdentically(t *testing.T) {
+	for _, qp := range []int{12, 26, 38} {
+		for _, gop := range []int{1, 8} {
+			cfg := cabacConfig(qp, gop)
+			cfg.RefFrames = 2
+			var frames [][]byte
+			for i := 0; i < 6; i++ {
+				frames = append(frames, syntheticFrame(cfg.Width, cfg.Height, i))
+			}
+			enc, err := New(cfg)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var stream []byte
+			for _, f := range frames {
+				pkt, err := enc.Encode(f)
+				if err != nil {
+					t.Fatal(err)
+				}
+				stream = append(stream, pkt...)
+			}
+
+			ref := decodeWithFFmpeg(t, stream)
+			frameSize := cfg.Width * cfg.Height * 3 / 2
+			if len(ref) != frameSize*len(frames) {
+				t.Fatalf("qp %d gop %d: ffmpeg produced %d bytes, want %d",
+					qp, gop, len(ref), frameSize*len(frames))
+			}
+			pics, _, _ := encodeAndDecode(t, cfg, frames)
+			for i := range pics {
+				got := make([]byte, pics[i].Size())
+				pics[i].CopyOut(got)
+				want := ref[i*frameSize : (i+1)*frameSize]
+				for j := range got {
+					if got[j] != want[j] {
+						t.Fatalf("qp %d gop %d frame %d: ffmpeg and our decoder disagree at sample %d, ffmpeg %d ours %d",
+							qp, gop, i, j, want[j], got[j])
+					}
+				}
+			}
+			t.Logf("qp %d gop %d: %d CABAC bytes decode identically in ffmpeg", qp, gop, len(stream))
+		}
+	}
+}
+
+func TestFFmpegReportsMainProfileForCABAC(t *testing.T) {
+	bin, err := exec.LookPath("ffprobe")
+	if err != nil {
+		t.Skip("ffprobe is not installed")
+	}
+	cfg := cabacConfig(28, 4)
+	enc, err := New(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var stream []byte
+	for i := 0; i < 3; i++ {
+		pkt, err := enc.Encode(syntheticFrame(cfg.Width, cfg.Height, i))
+		if err != nil {
+			t.Fatal(err)
+		}
+		stream = append(stream, pkt...)
+	}
+	dir := t.TempDir()
+	in := filepath.Join(dir, "in.264")
+	if err := os.WriteFile(in, stream, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	out, err := exec.Command(bin, "-hide_banner", "-loglevel", "error",
+		"-show_entries", "stream=profile,pix_fmt", "-of", "default=nw=1", in).CombinedOutput()
+	if err != nil {
+		t.Fatalf("ffprobe failed: %v\n%s", err, out)
+	}
+	t.Logf("ffprobe reports:\n%s", out)
+	if !containsLine(string(out), "profile=Main") {
+		t.Errorf("ffprobe does not call our CABAC stream Main profile:\n%s", out)
+	}
+}

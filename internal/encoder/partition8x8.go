@@ -118,6 +118,7 @@ func (s *mbEncoder) applySubMotion(subs []subResult) {
 		ox, oy := i%2*8, i/2*8
 		for j, p := range subPartitionsOf(subMbShapes[sub.subType], ox, oy) {
 			s.storePartitionMotion(p, sub.parts[j].mv, sub.ref)
+			s.storeMVD(p.x, p.y, p.w, p.h, sub.parts[j].mvd)
 		}
 	}
 }

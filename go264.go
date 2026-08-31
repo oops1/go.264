@@ -2,6 +2,7 @@ package go264
 
 import (
 	"errors"
+	"image"
 
 	"github.com/oops1/go.264/internal/decoder"
 	"github.com/oops1/go.264/internal/encoder"
@@ -65,8 +66,28 @@ type EncoderConfig struct {
 	BitrateKbps int
 	RefFrames   int
 
+	CABAC         bool
+	MotionSearch  MotionSearch
 	ForceSoftware bool
 }
+
+type MotionSearch = encoder.MotionSearch
+
+const (
+	MotionSearchFull = encoder.MotionSearchFull
+	MotionSearchZero = encoder.MotionSearchZero
+)
+
+type RegionKind = encoder.RegionKind
+
+const (
+	RegionUnknown = encoder.RegionUnknown
+	RegionFill    = encoder.RegionFill
+	RegionText    = encoder.RegionText
+	RegionImage   = encoder.RegionImage
+)
+
+type Region = encoder.Region
 
 type Encoder struct {
 	cpu     *encoder.Encoder
@@ -94,14 +115,16 @@ func NewEncoder(cfg EncoderConfig) (*Encoder, error) {
 		}
 	}
 	cpu, err := encoder.New(encoder.Config{
-		Width:       cfg.Width,
-		Height:      cfg.Height,
-		FPSNum:      cfg.FPSNum,
-		FPSDen:      cfg.FPSDen,
-		GOPSize:     cfg.GOPSize,
-		QP:          cfg.QP,
-		BitrateKbps: cfg.BitrateKbps,
-		RefFrames:   cfg.RefFrames,
+		Width:        cfg.Width,
+		Height:       cfg.Height,
+		FPSNum:       cfg.FPSNum,
+		FPSDen:       cfg.FPSDen,
+		GOPSize:      cfg.GOPSize,
+		QP:           cfg.QP,
+		BitrateKbps:  cfg.BitrateKbps,
+		RefFrames:    cfg.RefFrames,
+		CABAC:        cfg.CABAC,
+		MotionSearch: cfg.MotionSearch,
 	})
 	if err != nil {
 		return nil, err
@@ -120,6 +143,26 @@ func (e *Encoder) Encode(i420 []byte) ([]byte, error) {
 		return e.hw.Encode(i420)
 	}
 	return e.cpu.Encode(i420)
+}
+
+func (e *Encoder) EncodeFrame(f *Frame, changed []image.Rectangle, regions []Region) ([]byte, error) {
+	if e.closed {
+		return nil, ErrClosed
+	}
+	if f == nil {
+		return nil, errors.New("go264: EncodeFrame was given no frame")
+	}
+	yuv := f.AppendI420(make([]byte, 0, f.I420Size()))
+	if e.hw != nil {
+		return e.hw.Encode(yuv)
+	}
+	return e.cpu.EncodeWithHints(yuv, encoder.Hints{Changed: changed, Regions: regions})
+}
+
+func (e *Encoder) ForceKeyFrame() {
+	if e.cpu != nil {
+		e.cpu.ForceKeyFrame()
+	}
 }
 
 func (e *Encoder) Flush() ([]byte, error) {

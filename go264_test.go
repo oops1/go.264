@@ -188,3 +188,71 @@ func BenchmarkRoundTripQCIF(b *testing.B) {
 		enc.Close()
 	}
 }
+
+func TestCABACRoundTripThroughThePublicAPI(t *testing.T) {
+	const w, h = 320, 240
+	cfg := EncoderConfig{Width: w, Height: h, FPSNum: 25, FPSDen: 1, GOPSize: 5, QP: 24,
+		CABAC: true, ForceSoftware: true}
+	enc, err := NewEncoder(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer enc.Close()
+
+	var stream []byte
+	var sources [][]byte
+	for i := 0; i < 10; i++ {
+		src := pattern(w, h, i)
+		sources = append(sources, src)
+		pkt, err := enc.Encode(src)
+		if err != nil {
+			t.Fatalf("frame %d: %v", i, err)
+		}
+		stream = append(stream, pkt...)
+	}
+
+	dec := NewDecoderWithConfig(DecoderConfig{ForceSoftware: true})
+	defer dec.Close()
+	frames, err := dec.Decode(stream)
+	if err != nil {
+		t.Fatalf("decoding our own CABAC stream: %v", err)
+	}
+	rest, err := dec.Flush()
+	if err != nil {
+		t.Fatal(err)
+	}
+	frames = append(frames, rest...)
+	if len(frames) != len(sources) {
+		t.Fatalf("decoded %d frames, want %d", len(frames), len(sources))
+	}
+	for i, f := range frames {
+		if q := psnr(sources[i], f.AppendI420(nil)); q < 32 {
+			t.Errorf("frame %d: PSNR only %.2f dB", i, q)
+		}
+	}
+}
+
+func TestCABACCostsFewerBitsThanCAVLC(t *testing.T) {
+	const w, h = 320, 240
+	sizes := map[bool]int{}
+	for _, on := range []bool{false, true} {
+		enc, err := NewEncoder(EncoderConfig{Width: w, Height: h, FPSNum: 25, FPSDen: 1,
+			GOPSize: 10, QP: 26, CABAC: on, ForceSoftware: true})
+		if err != nil {
+			t.Fatal(err)
+		}
+		for i := 0; i < 12; i++ {
+			pkt, err := enc.Encode(pattern(w, h, i))
+			if err != nil {
+				t.Fatal(err)
+			}
+			sizes[on] += len(pkt)
+		}
+		enc.Close()
+	}
+	if sizes[true] >= sizes[false] {
+		t.Fatalf("CABAC spent %d bytes against CAVLC's %d", sizes[true], sizes[false])
+	}
+	t.Logf("CAVLC %d bytes, CABAC %d bytes, saving %.1f%%",
+		sizes[false], sizes[true], 100*float64(sizes[false]-sizes[true])/float64(sizes[false]))
+}

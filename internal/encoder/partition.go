@@ -192,6 +192,7 @@ func (s *mbEncoder) clearMotion() {
 		s.cur.MvL0[i] = [2]int16{}
 		s.cur.refIdx[i] = -1
 		s.cur.RefPicL0[i] = nil
+		s.cur.mvdL0[i] = [2]uint8{}
 	}
 }
 

@@ -26,6 +26,11 @@ type mbInfo struct {
 	cbpLuma     int
 	cbpChroma   int
 	refIdx      [16]int8
+
+	mvdL0       [16][2]uint8
+	cbfLumaDC   bool
+	cbfChromaDC [2]bool
+	skipped     bool
 }
 
 var blockX = [16]int{0, 4, 0, 4, 8, 12, 8, 12, 0, 4, 0, 4, 8, 12, 8, 12}
