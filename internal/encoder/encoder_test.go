@@ -353,3 +353,62 @@ func TestRateControlStreamsStayDecodable(t *testing.T) {
 		}
 	}
 }
+
+func kindHistogram(e *Encoder) map[int]int {
+	h := map[int]int{}
+	for i := range e.grid {
+		h[e.grid[i].kind]++
+	}
+	return h
+}
+
+func TestSubMacroblockPartitionsGetChosen(t *testing.T) {
+	cfg := Config{Width: 176, Height: 144, FPSNum: 25, FPSDen: 1, GOPSize: 12, QP: 22}
+	enc, err := New(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rng := rand.New(rand.NewSource(5))
+	base := syntheticFrame(cfg.Width, cfg.Height, 0)
+	seen := 0
+	for i := 0; i < 12; i++ {
+		src := make([]byte, len(base))
+		copy(src, base)
+		for j := 0; j < 400; j++ {
+			p := rng.Intn(cfg.Width * cfg.Height)
+			src[p] = byte(rng.Intn(256))
+		}
+		if _, err := enc.Encode(src); err != nil {
+			t.Fatal(err)
+		}
+		if kindHistogram(enc)[mbTypeP8x8] > 0 {
+			seen++
+		}
+	}
+	if seen == 0 {
+		t.Error("no picture used an 8x8 sub-macroblock partitioning")
+	}
+	t.Logf("pictures containing P_8x8 macroblocks: %d of 12", seen)
+}
+
+func TestEveryPartitioningRoundTrips(t *testing.T) {
+	for _, qp := range []int{16, 26, 36} {
+		cfg := Config{Width: 176, Height: 144, FPSNum: 25, FPSDen: 1, GOPSize: 10, QP: qp}
+		var frames [][]byte
+		for i := 0; i < 10; i++ {
+			frames = append(frames, syntheticFrame(cfg.Width, cfg.Height, i*3))
+		}
+		pics, _, recons := encodeAndDecode(t, cfg, frames)
+		for i := range pics {
+			got := make([]byte, pics[i].Size())
+			pics[i].CopyOut(got)
+			want := make([]byte, recons[i].Size())
+			recons[i].CopyOut(want)
+			for j := range got {
+				if got[j] != want[j] {
+					t.Fatalf("qp %d frame %d: differs at sample %d", qp, i, j)
+				}
+			}
+		}
+	}
+}

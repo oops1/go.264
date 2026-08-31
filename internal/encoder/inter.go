@@ -315,11 +315,15 @@ func (s *mbEncoder) encodeInterMB() (bool, error) {
 
 	bestKind := mbTypeP16x16
 	interCost, bestParts := s.trySplit(mbTypeP16x16, lambda)
+	var bestSubs []subResult
 	for _, kind := range []int{mbTypeP16x8, mbTypeP8x16} {
 		cost, parts := s.trySplit(kind, lambda)
 		if cost+lambda*20 < interCost {
 			interCost, bestParts, bestKind = cost, parts, kind
 		}
+	}
+	if cost, subs := s.trySplit8x8(lambda); cost+lambda*20 < interCost {
+		interCost, bestSubs, bestKind = cost, subs, mbTypeP8x8
 	}
 	intraCost, intraMode := s.searchIntra16x16()
 	if intraCost+lambda*16 < interCost {
@@ -334,11 +338,17 @@ func (s *mbEncoder) encodeInterMB() (bool, error) {
 	s.cur.kind = bestKind
 	s.cur.Intra = false
 	s.parts = bestParts
-	s.clearMotion()
-	for i, p := range partitionsFor(bestKind) {
-		s.storePartitionMotion(p, bestParts[i].mv)
+	s.subs = bestSubs
+	if bestKind == mbTypeP8x8 {
+		s.applySubMotion(bestSubs)
+		s.compensateSubMBs(bestSubs)
+	} else {
+		s.clearMotion()
+		for i, p := range partitionsFor(bestKind) {
+			s.storePartitionMotion(p, bestParts[i].mv)
+		}
+		s.compensatePartitions(bestKind, bestParts)
 	}
-	s.compensatePartitions(bestKind, bestParts)
 	s.quantiseInterLuma()
 	s.quantiseInterChroma()
 	s.reconstructInterLuma()
@@ -366,12 +376,18 @@ func (s *mbEncoder) writeInterMB() error {
 		s.w.WriteUE(1)
 	case mbTypeP8x16:
 		s.w.WriteUE(2)
+	case mbTypeP8x8:
+		s.w.WriteUE(3)
 	default:
 		s.w.WriteUE(0)
 	}
-	for _, r := range s.parts {
-		s.w.WriteSE(int32(r.mvd[0]))
-		s.w.WriteSE(int32(r.mvd[1]))
+	if s.cur.kind == mbTypeP8x8 {
+		s.writeSubMBs()
+	} else {
+		for _, r := range s.parts {
+			s.w.WriteSE(int32(r.mvd[0]))
+			s.w.WriteSE(int32(r.mvd[1]))
+		}
 	}
 	cbp := uint8(s.cur.cbpLuma | s.cur.cbpChroma<<4)
 	s.w.WriteUE(interCBPToGolomb[cbp])

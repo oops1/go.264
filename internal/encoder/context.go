@@ -12,6 +12,7 @@ const (
 	mbTypeP16x16
 	mbTypeP16x8
 	mbTypeP8x16
+	mbTypeP8x8
 )
 
 type mbInfo struct {

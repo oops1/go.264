@@ -68,9 +68,11 @@ the deblocking edge filters.
 ## Remaining
 
 ### Phase 9 — Encoder partitions and quality
-16x8 and 8x16 are done. Still to do: 8x8 sub-macroblocks, multiple
-reference frames, and a rate-distortion mode decision to replace the
-current transformed-difference heuristic.
+All P partitionings are done, including 8x8 sub-macroblocks with their
+four sub types. Coded size of the inter frames dropped about a tenth
+against 16x16, 16x8 and 8x16 alone. Still to do: multiple reference
+frames, and a rate-distortion mode decision to replace the current
+transformed-difference heuristic.
 
 ### Phase 10 — Decoder, Main profile
 CABAC, B slices and weighted prediction as decoder side tools, measured

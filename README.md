@@ -22,7 +22,7 @@ Working today:
 | Decoder, Constrained Baseline | complete, bit-exact against ffmpeg |
 | Encoder, Constrained Baseline | complete, bit-exact against ffmpeg |
 | Intra prediction, all block sizes | complete |
-| Inter prediction | all P partitions in the decoder, 16x16, 16x8 and 8x16 in the encoder |
+| Inter prediction | all P partitions, both directions, including 8x8 sub-macroblocks |
 | CAVLC | complete, both directions |
 | In-loop deblocking filter | complete, shared by encoder and decoder |
 | Reference picture management | sliding window and MMCO |

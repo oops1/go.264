@@ -51,6 +51,7 @@ type mbEncoder struct {
 	pendingSkipRun uint32
 	scratch        [256]byte
 	parts          []partResult
+	subs           []subResult
 	lumaScan       [16][16]int32
 	lumaDCScan     [16]int32
 	chromaDC       [2]transform.ChromaDC
