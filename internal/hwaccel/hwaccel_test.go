@@ -29,8 +29,18 @@ type mockEncoder struct {
 	encodeCalls [][]byte
 	encodeRet   []byte
 	encodeErr   error
+	drainCalls  int
+	drainRet    []byte
+	drainErr    error
 	closeCalls  int
 	closeErr    error
+}
+
+func (m *mockEncoder) Drain() ([]byte, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.drainCalls++
+	return m.drainRet, m.drainErr
 }
 
 func (m *mockEncoder) Encode(i420 []byte) ([]byte, error) {

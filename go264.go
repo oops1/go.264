@@ -85,6 +85,8 @@ func NewEncoder(cfg EncoderConfig) (*Encoder, error) {
 			FPSDen:  cfg.FPSDen,
 			GOPSize: cfg.GOPSize,
 			QP:      cfg.QP,
+
+			BitrateKbps: cfg.BitrateKbps,
 		}); ok {
 			e.hw = hw
 			e.backend = name
@@ -118,6 +120,16 @@ func (e *Encoder) Encode(i420 []byte) ([]byte, error) {
 		return e.hw.Encode(i420)
 	}
 	return e.cpu.Encode(i420)
+}
+
+func (e *Encoder) Flush() ([]byte, error) {
+	if e.closed {
+		return nil, ErrClosed
+	}
+	if e.hw != nil {
+		return e.hw.Drain()
+	}
+	return nil, nil
 }
 
 func (e *Encoder) Close() error {

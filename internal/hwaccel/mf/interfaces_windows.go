@@ -1,5 +1,7 @@
 package mf
 
+import "unsafe"
+
 var (
 	IIDIMFTransform           = GUID{Data1: 0xbf94c121, Data2: 0x5b05, Data3: 0x4e6f, Data4: [8]byte{0x80, 0x00, 0xba, 0x59, 0x89, 0x61, 0x41, 0x4d}}
 	IIDIMFMediaType           = GUID{Data1: 0x44ae0fa8, Data2: 0xea31, Data3: 0x4109, Data4: [8]byte{0x8d, 0x2e, 0x4c, 0xae, 0x49, 0x97, 0xc5, 0x55}}
@@ -78,9 +80,9 @@ const (
 
 type MFTOutputDataBuffer struct {
 	DwStreamID uint32
-	PSample    uintptr
+	PSample    unsafe.Pointer
 	DwStatus   uint32
-	PEvents    uintptr
+	PEvents    unsafe.Pointer
 }
 
 type MFTInputStreamInfo struct {

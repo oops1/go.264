@@ -9,10 +9,13 @@ type EncoderParams struct {
 	FPSDen  int
 	GOPSize int
 	QP      int
+
+	BitrateKbps int
 }
 
 type Encoder interface {
 	Encode(i420 []byte) ([]byte, error)
+	Drain() ([]byte, error)
 	Close() error
 }
 
