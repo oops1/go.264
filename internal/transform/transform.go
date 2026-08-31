@@ -1,5 +1,7 @@
 package transform
 
+import "github.com/oops1/go.264/internal/simd"
+
 type Block [16]int32
 
 type ChromaDC [4]int32
@@ -43,53 +45,11 @@ func init() {
 }
 
 func Forward4x4(b *Block) {
-	for i := 0; i < 16; i += 4 {
-		s0, s1, s2, s3 := b[i], b[i+1], b[i+2], b[i+3]
-		t0 := s0 + s3
-		t1 := s1 + s2
-		t2 := s1 - s2
-		t3 := s0 - s3
-		b[i] = t0 + t1
-		b[i+1] = t3*2 + t2
-		b[i+2] = t0 - t1
-		b[i+3] = t3 - t2*2
-	}
-	for i := 0; i < 4; i++ {
-		s0, s1, s2, s3 := b[i], b[i+4], b[i+8], b[i+12]
-		t0 := s0 + s3
-		t1 := s1 + s2
-		t2 := s1 - s2
-		t3 := s0 - s3
-		b[i] = t0 + t1
-		b[i+4] = t3*2 + t2
-		b[i+8] = t0 - t1
-		b[i+12] = t3 - t2*2
-	}
+	simd.Forward4x4((*[16]int32)(b))
 }
 
 func Inverse4x4(b *Block) {
-	for i := 0; i < 16; i += 4 {
-		s0, s1, s2, s3 := b[i], b[i+1], b[i+2], b[i+3]
-		t0 := s0 + s2
-		t1 := s0 - s2
-		t2 := s1>>1 - s3
-		t3 := s1 + s3>>1
-		b[i] = t0 + t3
-		b[i+1] = t1 + t2
-		b[i+2] = t1 - t2
-		b[i+3] = t0 - t3
-	}
-	for i := 0; i < 4; i++ {
-		s0, s1, s2, s3 := b[i], b[i+4], b[i+8], b[i+12]
-		t0 := s0 + s2
-		t1 := s0 - s2
-		t2 := s1>>1 - s3
-		t3 := s1 + s3>>1
-		b[i] = (t0 + t3 + 32) >> 6
-		b[i+4] = (t1 + t2 + 32) >> 6
-		b[i+8] = (t1 - t2 + 32) >> 6
-		b[i+12] = (t0 - t3 + 32) >> 6
-	}
+	simd.Inverse4x4((*[16]int32)(b))
 }
 
 func Hadamard4x4(b *Block) {
@@ -154,21 +114,14 @@ func Dequant4x4(b *Block, qp int, skipDC bool) {
 	m := qp % 6
 	shift := qp / 6
 	scale := &levelScale[m]
-	start := 0
+
+	var savedDC int32
 	if skipDC {
-		start = 1
+		savedDC = b[0]
 	}
-	if shift >= 4 {
-		s := uint(shift - 4)
-		for i := start; i < 16; i++ {
-			b[i] = b[i] * scale[i] << s
-		}
-		return
-	}
-	s := uint(4 - shift)
-	round := int32(1) << (s - 1)
-	for i := start; i < 16; i++ {
-		b[i] = (b[i]*scale[i] + round) >> s
+	simd.Dequant4x4((*[16]int32)(b), scale, uint32(shift))
+	if skipDC {
+		b[0] = savedDC
 	}
 }
 
@@ -209,14 +162,7 @@ func Quant4x4(b *Block, qp int, intra bool) {
 		f = int32(1) << qbits / 6
 	}
 	mf := &levelQuant[m]
-	for i := range b {
-		v := b[i]
-		if v >= 0 {
-			b[i] = (v*mf[i] + f) >> qbits
-		} else {
-			b[i] = -((-v*mf[i] + f) >> qbits)
-		}
-	}
+	simd.Quant4x4((*[16]int32)(b), mf, f, uint32(qbits))
 }
 
 func QuantLumaDC(b *Block, qp int, intra bool) {

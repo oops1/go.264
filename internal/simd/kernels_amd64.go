@@ -13,3 +13,15 @@ func sad8x16(src []byte, srcStride int, ref []byte, refStride int) int
 func sad8x8(src []byte, srcStride int, ref []byte, refStride int) int
 
 func sad8x4(src []byte, srcStride int, ref []byte, refStride int) int
+
+func forward4x4(b *[16]int32)
+
+func inverse4x4(b *[16]int32)
+
+func quant4x4(b *[16]int32, mf *[16]int32, f int32, qbits uint64)
+
+func dequantLeft4x4(b *[16]int32, scale *[16]int32, shift uint64)
+
+func dequantRight4x4(b *[16]int32, scale *[16]int32, shift uint64, round int32)
+
+func addResidual4x4(plane []byte, stride int, b *[16]int32)

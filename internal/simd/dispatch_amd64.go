@@ -22,3 +22,33 @@ func sadDispatch(src []byte, srcStride int, ref []byte, refStride, w, h int) int
 }
 
 func Accelerated() bool { return true }
+
+func Forward4x4(b *[16]int32) {
+	forward4x4(b)
+}
+
+func Inverse4x4(b *[16]int32) {
+	inverse4x4(b)
+}
+
+func Quant4x4(b *[16]int32, mf *[16]int32, f int32, qbits uint32) {
+	quant4x4(b, mf, f, uint64(qbits))
+}
+
+func Dequant4x4(b *[16]int32, scale *[16]int32, shift uint32) {
+	if shift >= 4 {
+		dequantLeft4x4(b, scale, uint64(shift-4))
+		return
+	}
+	s := uint64(4 - shift)
+	round := int32(1) << (s - 1)
+	dequantRight4x4(b, scale, s, round)
+}
+
+func AddResidual4x4(plane []byte, stride, offset int, b *[16]int32) {
+	if !addResidualFits(plane, stride, offset) {
+		addResidual4x4Generic(plane, stride, offset, b)
+		return
+	}
+	addResidual4x4(plane[offset:], stride, b)
+}

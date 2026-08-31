@@ -1,5 +1,7 @@
 package transform
 
+import "github.com/oops1/go.264/internal/simd"
+
 func Clip1(v int32) byte {
 	if v < 0 {
 		return 0
@@ -22,13 +24,7 @@ func Residual4x4(dst *Block, src []byte, srcStride, srcOff int, pred []byte, pre
 }
 
 func AddResidual4x4(plane []byte, stride, offset int, b *Block) {
-	for y := 0; y < 4; y++ {
-		row := plane[offset+y*stride:]
-		row[0] = Clip1(int32(row[0]) + b[y*4])
-		row[1] = Clip1(int32(row[1]) + b[y*4+1])
-		row[2] = Clip1(int32(row[2]) + b[y*4+2])
-		row[3] = Clip1(int32(row[3]) + b[y*4+3])
-	}
+	simd.AddResidual4x4(plane, stride, offset, (*[16]int32)(b))
 }
 
 var zigzag4x4 = [16]int{
