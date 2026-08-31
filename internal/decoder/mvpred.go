@@ -18,38 +18,44 @@ func blockMotion(m *mbState, blk int) motion {
 	return motion{mv: m.MvL0[blk], ref: m.refIdxL0[blk]}
 }
 
-func (d *sliceDecoder) neighbourMotion(x, y, curZ int) (motion, bool) {
-	unavailable := motion{ref: -1}
+func (d *sliceDecoder) neighbourBlock(x, y, curZ int) (*mbState, int) {
 	switch {
 	case x < 0 && y < 0:
-		if d.nb.topLeft == nil {
-			return unavailable, false
-		}
-		return blockMotion(d.nb.topLeft, loopfilter.BlkIdxAt(12, 12)), true
+		return d.nb.topLeft, loopfilter.BlkIdxAt(12, 12)
 	case x < 0:
-		if y >= 16 || d.nb.left == nil {
-			return unavailable, false
+		if y >= 16 {
+			return nil, 0
 		}
-		return blockMotion(d.nb.left, loopfilter.BlkIdxAt(12, y&^3)), true
+		return d.nb.left, loopfilter.BlkIdxAt(12, y&^3)
 	case y < 0:
 		if x < 16 {
-			if d.nb.top == nil {
-				return unavailable, false
-			}
-			return blockMotion(d.nb.top, loopfilter.BlkIdxAt(x&^3, 12)), true
+			return d.nb.top, loopfilter.BlkIdxAt(x&^3, 12)
 		}
-		if d.nb.topRight == nil {
-			return unavailable, false
-		}
-		return blockMotion(d.nb.topRight, loopfilter.BlkIdxAt(0, 12)), true
+		return d.nb.topRight, loopfilter.BlkIdxAt(0, 12)
 	case x >= 16 || y >= 16:
-		return unavailable, false
+		return nil, 0
 	}
 	z := zscanOf[y>>2][x>>2]
 	if z >= curZ {
-		return unavailable, false
+		return nil, 0
 	}
-	return blockMotion(d.cur, z), true
+	return d.cur, z
+}
+
+func (d *sliceDecoder) neighbourMotion(x, y, curZ int) (motion, bool) {
+	m, blk := d.neighbourBlock(x, y, curZ)
+	if m == nil {
+		return motion{ref: -1}, false
+	}
+	return blockMotion(m, blk), true
+}
+
+func (d *sliceDecoder) neighbourMVD(x, y, curZ int) [2]uint8 {
+	m, blk := d.neighbourBlock(x, y, curZ)
+	if m == nil || m.Intra {
+		return [2]uint8{}
+	}
+	return m.mvdL0[blk]
 }
 
 func median(a, b, c int16) int16 {
@@ -124,6 +130,33 @@ func (d *sliceDecoder) skipMV() [2]int16 {
 		return [2]int16{}
 	}
 	return d.predictMV(0, 0, 16, 16, 0, 0, mbTypeP16x16)
+}
+
+func absClip70(v int16) uint8 {
+	if v < 0 {
+		v = -v
+	}
+	if v > 70 {
+		return 70
+	}
+	return uint8(v)
+}
+
+func (d *sliceDecoder) storeMVD(x, y, w, h int, mvd [2]int16) {
+	packed := [2]uint8{absClip70(mvd[0]), absClip70(mvd[1])}
+	for by := y; by < y+h; by += 4 {
+		for bx := x; bx < x+w; bx += 4 {
+			d.cur.mvdL0[zscanOf[by>>2][bx>>2]] = packed
+		}
+	}
+}
+
+func (d *sliceDecoder) storeRefIdx(x, y, w, h int, ref int8) {
+	for by := y; by < y+h; by += 4 {
+		for bx := x; bx < x+w; bx += 4 {
+			d.cur.refIdxL0[zscanOf[by>>2][bx>>2]] = ref
+		}
+	}
 }
 
 func (d *sliceDecoder) storeMotion(x, y, w, h int, mv [2]int16, ref int8) {

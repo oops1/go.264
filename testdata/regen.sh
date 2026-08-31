@@ -48,8 +48,8 @@ mcommon='threads=1:sliced-threads=0:aq-mode=0'
 
 main main_intra_cabac      "keyint=1:qp=26:cabac=1:ref=1:bframes=0:$mcommon"
 main main_intra_cabac_nodb "keyint=1:qp=26:cabac=1:ref=1:bframes=0:no-deblock=1:$mcommon"
-main main_ip_cabac         "keyint=10:qp=26:cabac=1:ref=1:bframes=0:$mcommon"
-main main_ipb_cabac        "keyint=10:qp=26:cabac=1:ref=2:bframes=2:b-pyramid=none:$mcommon"
+main main_ip_cabac         "keyint=10:qp=26:cabac=1:ref=1:bframes=0:weightp=0:$mcommon"
+main main_ipb_cabac        "keyint=10:qp=26:cabac=1:ref=2:bframes=2:b-pyramid=none:weightp=0:weightb=0:$mcommon"
 main main_ip_weightp       "keyint=10:qp=26:cabac=1:ref=2:bframes=0:weightp=2:$mcommon"
 
 echo "regenerated $(ls -1 "$out" | wc -l) files in $out"

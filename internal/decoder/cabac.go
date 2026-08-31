@@ -200,12 +200,7 @@ func (d *sliceDecoder) cabacQPDelta() error {
 	return nil
 }
 
-func (d *sliceDecoder) decodeIntraMBCABAC(res *mbResidual) error {
-	v := d.cb.IntraMBType(d.intraMBTypeInc())
-	info, ok := intraMBType(uint32(v))
-	if !ok {
-		return fmt.Errorf("%w: mb_type %d in a CABAC I slice", ErrCorrupt, v)
-	}
+func (d *sliceDecoder) decodeIntraMBCABAC(info mbTypeInfo, res *mbResidual) error {
 	d.cur.Intra = true
 	d.cur.kind = info.kind
 
@@ -252,22 +247,155 @@ func (d *sliceDecoder) decodeIntraMBCABAC(res *mbResidual) error {
 	return fmt.Errorf("%w: macroblock kind %d", ErrCorrupt, info.kind)
 }
 
+func (d *sliceDecoder) skipFlagInc() int {
+	inc := 0
+	if m := d.nb.left; m != nil && m.kind != mbTypePSkip {
+		inc++
+	}
+	if m := d.nb.top; m != nil && m.kind != mbTypePSkip {
+		inc++
+	}
+	return inc
+}
+
+func (d *sliceDecoder) cabacRefIdx(x, y, w, h int, maxRef int) int8 {
+	if maxRef == 0 {
+		d.storeRefIdx(x, y, w, h, 0)
+		return 0
+	}
+	curZ := zscanOf[y>>2][x>>2]
+	inc := 0
+	if a, _ := d.neighbourMotion(x-1, y, curZ); a.ref > 0 {
+		inc++
+	}
+	if b, _ := d.neighbourMotion(x, y-1, curZ); b.ref > 0 {
+		inc += 2
+	}
+	ref := int8(d.cb.RefIdx(inc))
+	d.storeRefIdx(x, y, w, h, ref)
+	return ref
+}
+
+func (d *sliceDecoder) cabacMVD(x, y, w, h int) [2]int16 {
+	curZ := zscanOf[y>>2][x>>2]
+	a := d.neighbourMVD(x-1, y, curZ)
+	b := d.neighbourMVD(x, y-1, curZ)
+	var mvd [2]int16
+	mvd[0] = int16(d.cb.MVD(cabac.MVDHorizontal, int(a[0])+int(b[0])))
+	mvd[1] = int16(d.cb.MVD(cabac.MVDVertical, int(a[1])+int(b[1])))
+	d.storeMVD(x, y, w, h, mvd)
+	return mvd
+}
+
+func (d *sliceDecoder) decodeP8x8CABAC(maxRef int) error {
+	var sub [4]subMbInfo
+	for i := 0; i < 4; i++ {
+		sub[i] = subMbTable[d.cb.SubMBTypeP()]
+	}
+	var refs [4]int8
+	for i := 0; i < 4; i++ {
+		refs[i] = d.cabacRefIdx(i%2*8, i/2*8, 8, 8, maxRef)
+	}
+	for i := 0; i < 4; i++ {
+		ox, oy := i%2*8, i/2*8
+		s := sub[i]
+		cols := 8 / s.w
+		for p := 0; p < s.numParts; p++ {
+			px := ox + p%cols*s.w
+			py := oy + p/cols*s.h
+			mvd := d.cabacMVD(px, py, s.w, s.h)
+			mvp := d.predictMV(px, py, s.w, s.h, refs[i], p, mbTypeP8x8)
+			d.storeMotion(px, py, s.w, s.h, [2]int16{mvp[0] + mvd[0], mvp[1] + mvd[1]}, refs[i])
+		}
+	}
+	return nil
+}
+
+func (d *sliceDecoder) decodeInterMBCABAC(kind int, res *mbResidual) error {
+	d.cur.kind = kind
+	d.cur.Intra = false
+	maxRef := d.numRefIdxActive - 1
+
+	if kind == mbTypeP8x8 {
+		if err := d.decodeP8x8CABAC(maxRef); err != nil {
+			return err
+		}
+	} else {
+		parts := partitionsOf(kind)
+		var refs [2]int8
+		for i, p := range parts {
+			refs[i] = d.cabacRefIdx(p.x, p.y, p.w, p.h, maxRef)
+		}
+		for i, p := range parts {
+			mvd := d.cabacMVD(p.x, p.y, p.w, p.h)
+			mvp := d.predictMV(p.x, p.y, p.w, p.h, refs[i], i, kind)
+			d.storeMotion(p.x, p.y, p.w, p.h, [2]int16{mvp[0] + mvd[0], mvp[1] + mvd[1]}, refs[i])
+		}
+	}
+
+	left, top := d.neighbourCBP(d.nb.left), d.neighbourCBP(d.nb.top)
+	d.cur.cbpLuma = d.cb.CodedBlockPatternLuma(left, top)
+	d.cur.cbpChroma = d.cb.CodedBlockPatternChroma(left, top)
+	if d.cur.cbpLuma != 0 || d.cur.cbpChroma != 0 {
+		if err := d.cabacQPDelta(); err != nil {
+			return err
+		}
+		d.cabacResidual(res, false)
+	} else {
+		d.prevQPDeltaNonZero = false
+	}
+	d.cur.QPY = d.qpY
+	d.motionCompensate()
+	d.addInterResidual(res)
+	return nil
+}
+
+func (d *sliceDecoder) decodeMacroblockCABAC(res *mbResidual) error {
+	if d.hdr.SliceType.IsI() {
+		v := d.cb.IntraMBType(d.intraMBTypeInc())
+		info, ok := intraMBType(uint32(v))
+		if !ok {
+			return fmt.Errorf("%w: mb_type %d in a CABAC I slice", ErrCorrupt, v)
+		}
+		return d.decodeIntraMBCABAC(info, res)
+	}
+	v, intra := d.cb.MBTypeP()
+	if intra {
+		info, ok := intraMBType(uint32(v))
+		if !ok {
+			return fmt.Errorf("%w: intra mb_type %d in a CABAC P slice", ErrCorrupt, v)
+		}
+		return d.decodeIntraMBCABAC(info, res)
+	}
+	info, ok := interMBType(uint32(v))
+	if !ok {
+		return fmt.Errorf("%w: mb_type %d in a CABAC P slice", ErrCorrupt, v)
+	}
+	return d.decodeInterMBCABAC(info.kind, res)
+}
+
 func (d *sliceDecoder) runCABAC() error {
 	if err := d.cb.Init(d.r, d.qpY, d.hdr.SliceType.IsI(), d.hdr.CABACInitIDC); err != nil {
 		return err
 	}
+	if !d.hdr.SliceType.IsI() && !d.hdr.SliceType.IsP() {
+		return fmt.Errorf("%w: CABAC %s slices", ErrUnsupported, d.hdr.SliceType)
+	}
+	inter := !d.hdr.SliceType.IsI()
 	var res mbResidual
 	mbAddr := int(d.hdr.FirstMBInSlice)
 	if mbAddr >= d.totalMBs() {
 		return fmt.Errorf("%w: first_mb_in_slice %d beyond the picture", ErrCorrupt, mbAddr)
 	}
-	if !d.hdr.SliceType.IsI() {
-		return fmt.Errorf("%w: CABAC %s slices", ErrUnsupported, d.hdr.SliceType)
-	}
 	for {
 		d.startMB(mbAddr)
 		res.reset()
-		if err := d.decodeIntraMBCABAC(&res); err != nil {
+		if inter && d.cb.MBSkipFlagP(d.skipFlagInc()) {
+			if err := d.decodePSkip(); err != nil {
+				return err
+			}
+			d.prevQPDeltaNonZero = false
+		} else if err := d.decodeMacroblockCABAC(&res); err != nil {
 			return err
 		}
 		d.cur.Decoded = true

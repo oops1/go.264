@@ -27,6 +27,7 @@ type mbState struct {
 	cbfChromaDC [2]bool
 
 	refIdxL0 [16]int8
+	mvdL0    [16][2]uint8
 }
 
 var topRightInsideMB = [16]bool{

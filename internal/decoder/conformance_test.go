@@ -163,3 +163,8 @@ func TestMainProfileIntraCABACNoDeblock(t *testing.T) {
 	clip := testutil.MainCorpus[1]
 	runClip(t, clip, clip.Frames)
 }
+
+func TestMainProfilePCABAC(t *testing.T) {
+	clip := testutil.MainCorpus[2]
+	runClip(t, clip, clip.Frames)
+}

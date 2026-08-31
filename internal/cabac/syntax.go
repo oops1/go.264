@@ -1,6 +1,12 @@
 package cabac
 
 const (
+	offMBSkipP          = 11
+	offMBTypeP          = 14
+	offMBTypeIinP       = 17
+	offSubMBTypeP       = 21
+	offMVD              = 40
+	offRefIdx           = 54
 	offMBTypeI          = 3
 	offMBQPDelta        = 60
 	offIntraChromaPred  = 64
@@ -15,23 +21,113 @@ const (
 	CBPPCM         = 0x2F
 )
 
-func (d *Decoder) IntraMBType(inc int) int {
-	if d.DecodeDecision(offMBTypeI+inc) == 0 {
-		return 0
-	}
+const (
+	MVDHorizontal = offMVD
+	MVDVertical   = offMVD + 7
+)
+
+func (d *Decoder) intraMBTypeSuffix(base, spread int) int {
 	if d.DecodeTerminate() == 1 {
 		return 25
 	}
 	mbType := 1
-	if d.DecodeDecision(offMBTypeI+3) == 1 {
+	if d.DecodeDecision(base+1) == 1 {
 		mbType += 12
 	}
-	if d.DecodeDecision(offMBTypeI+4) == 1 {
-		mbType += 4 + 4*int(d.DecodeDecision(offMBTypeI+5))
+	if d.DecodeDecision(base+2) == 1 {
+		mbType += 4 + 4*int(d.DecodeDecision(base+2+spread))
 	}
-	mbType += 2 * int(d.DecodeDecision(offMBTypeI+6))
-	mbType += int(d.DecodeDecision(offMBTypeI + 7))
+	mbType += 2 * int(d.DecodeDecision(base+3+spread))
+	mbType += int(d.DecodeDecision(base + 3 + 2*spread))
 	return mbType
+}
+
+func (d *Decoder) IntraMBType(inc int) int {
+	if d.DecodeDecision(offMBTypeI+inc) == 0 {
+		return 0
+	}
+	return d.intraMBTypeSuffix(offMBTypeI+2, 1)
+}
+
+func (d *Decoder) MBSkipFlagP(inc int) bool {
+	return d.DecodeDecision(offMBSkipP+inc) == 1
+}
+
+func (d *Decoder) MBTypeP() (mbType int, intra bool) {
+	if d.DecodeDecision(offMBTypeP) == 1 {
+		if d.DecodeDecision(offMBTypeIinP) == 0 {
+			return 0, true
+		}
+		return d.intraMBTypeSuffix(offMBTypeIinP, 0), true
+	}
+	if d.DecodeDecision(offMBTypeP+1) == 0 {
+		return 3 * int(d.DecodeDecision(offMBTypeP+2)), false
+	}
+	return 2 - int(d.DecodeDecision(offMBTypeP+3)), false
+}
+
+func (d *Decoder) SubMBTypeP() int {
+	if d.DecodeDecision(offSubMBTypeP) == 1 {
+		return 0
+	}
+	if d.DecodeDecision(offSubMBTypeP+1) == 0 {
+		return 1
+	}
+	if d.DecodeDecision(offSubMBTypeP+2) == 1 {
+		return 2
+	}
+	return 3
+}
+
+func (d *Decoder) RefIdx(inc int) int {
+	ref := 0
+	ctx := inc
+	for d.DecodeDecision(offRefIdx+ctx) == 1 {
+		ref++
+		ctx = ctx>>2 + 4
+		if ref >= 32 {
+			break
+		}
+	}
+	return ref
+}
+
+func (d *Decoder) MVD(base, absSum int) int {
+	inc := 0
+	if absSum > 2 {
+		inc++
+	}
+	if absSum > 32 {
+		inc++
+	}
+	if d.DecodeDecision(base+inc) == 0 {
+		return 0
+	}
+	v := 1
+	ctx := base + 3
+	for v < 9 && d.DecodeDecision(ctx) == 1 {
+		if v < 4 {
+			ctx++
+		}
+		v++
+	}
+	if v >= 9 {
+		k := 3
+		for d.DecodeBypass() == 1 {
+			v += 1 << uint(k)
+			k++
+			if k > 24 {
+				break
+			}
+		}
+		for k--; k >= 0; k-- {
+			v += int(d.DecodeBypass()) << uint(k)
+		}
+	}
+	if d.DecodeBypass() == 1 {
+		return -v
+	}
+	return v
 }
 
 func (d *Decoder) IntraChromaPredMode(inc int) int {
