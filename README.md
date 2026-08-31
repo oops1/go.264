@@ -22,12 +22,13 @@ Working today:
 | Decoder, Constrained Baseline | complete, bit-exact against ffmpeg |
 | Encoder, Constrained Baseline | complete, bit-exact against ffmpeg |
 | Intra prediction, all block sizes | complete |
-| Inter prediction | all P partitions, both directions, including 8x8 sub-macroblocks |
+| Inter prediction | all P partitions both directions, 8x8 sub-macroblocks, multiple references |
 | CAVLC | complete, both directions |
 | In-loop deblocking filter | complete, shared by encoder and decoder |
 | Reference picture management | sliding window and MMCO, up to sixteen references in the encoder |
 | Hardware acceleration | probe and fallback in place, no backend implemented yet |
 | Bitrate targeted rate control | complete, within about a fifth of the request |
+| Mode decision | rate-distortion, trial encoding each candidate |
 | SIMD kernels | sum of absolute differences on amd64, about thirty times faster |
 | CABAC, B slices, High profile | not started |
 

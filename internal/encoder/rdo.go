@@ -1,0 +1,123 @@
+package encoder
+
+import (
+	"math"
+
+	"github.com/oops1/go.264/internal/bits"
+)
+
+var lambdaRDTable [52]float64
+
+func init() {
+	for qp := 0; qp < 52; qp++ {
+		lambdaRDTable[qp] = 0.85 * math.Pow(2, float64(qp-12)/3)
+	}
+}
+
+func (s *mbEncoder) mbSSD() int {
+	total := 0
+	for y := 0; y < 16; y++ {
+		src := s.e.src.Y[s.e.src.LumaOffset(s.mbx*16, s.mby*16+y):]
+		rec := s.e.rec.Y[s.e.rec.LumaOffset(s.mbx*16, s.mby*16+y):]
+		for x := 0; x < 16; x++ {
+			d := int(src[x]) - int(rec[x])
+			total += d * d
+		}
+	}
+	for y := 0; y < 8; y++ {
+		so := s.e.src.ChromaOffset(s.mbx*8, s.mby*8+y)
+		ro := s.e.rec.ChromaOffset(s.mbx*8, s.mby*8+y)
+		for x := 0; x < 8; x++ {
+			d := int(s.e.src.Cb[so+x]) - int(s.e.rec.Cb[ro+x])
+			total += d * d
+			d = int(s.e.src.Cr[so+x]) - int(s.e.rec.Cr[ro+x])
+			total += d * d
+		}
+	}
+	return total
+}
+
+func (s *mbEncoder) trialBits(write func() error) (int, error) {
+	saved := s.w
+	scratch := bits.NewWriterSize(512)
+	s.w = scratch
+	err := write()
+	s.w = saved
+	if err != nil {
+		return 0, err
+	}
+	if e := scratch.Err(); e != nil {
+		return 0, e
+	}
+	return scratch.BitsWritten(), nil
+}
+
+func rdCost(ssd, bits int, lambda float64) float64 {
+	return float64(ssd) + lambda*float64(bits)
+}
+
+type interCandidate struct {
+	kind  int
+	parts []partResult
+	subs  []subResult
+}
+
+func (s *mbEncoder) applyInterCandidate(c interCandidate) {
+	s.reset()
+	s.cur.kind = c.kind
+	s.cur.Intra = false
+	s.parts = c.parts
+	s.subs = c.subs
+	if c.kind == mbTypeP8x8 {
+		s.applySubMotion(c.subs)
+		s.compensateSubMBs(c.subs)
+	} else {
+		s.clearMotion()
+		for i, p := range partitionsFor(c.kind) {
+			s.storePartitionMotion(p, c.parts[i].mv, c.parts[i].ref)
+		}
+		s.compensatePartitions(c.kind, c.parts)
+	}
+	s.quantiseInterLuma()
+	s.quantiseInterChroma()
+	s.reconstructInterLuma()
+	s.reconstructInterChroma()
+}
+
+func (s *mbEncoder) evaluateInter(c interCandidate, lambda float64) (float64, error) {
+	s.applyInterCandidate(c)
+	ssd := s.mbSSD()
+	n, err := s.trialBits(s.writeInterMB)
+	if err != nil {
+		return 0, err
+	}
+	return rdCost(ssd, n, lambda), nil
+}
+
+func (s *mbEncoder) applySkip(mv [2]int16) {
+	s.reset()
+	s.cur.kind = mbTypePSkip
+	s.cur.Intra = false
+	s.cur.cbpLuma = 0
+	s.cur.cbpChroma = 0
+	s.cur.NzY = [16]uint8{}
+	s.cur.nzCb = [4]uint8{}
+	s.cur.nzCr = [4]uint8{}
+	s.setMotion(mv)
+	s.motionCompensateMB(mv)
+}
+
+func (s *mbEncoder) evaluateSkip(mv [2]int16, lambda float64) float64 {
+	s.applySkip(mv)
+	return rdCost(s.mbSSD(), 1, lambda)
+}
+
+func (s *mbEncoder) evaluateIntra(typeOffset uint32, lambda float64) (float64, error) {
+	s.encodeIntraModes()
+	ssd := s.mbSSD()
+	n, err := s.trialBits(func() error { return s.writeIntraMB(typeOffset) })
+	if err != nil {
+		return 0, err
+	}
+	return rdCost(ssd, n, lambda), nil
+}

@@ -1,6 +1,8 @@
 package encoder
 
 import (
+	"math"
+
 	"github.com/oops1/go.264/internal/mc"
 	"github.com/oops1/go.264/internal/syntax"
 	"github.com/oops1/go.264/internal/transform"
@@ -299,76 +301,63 @@ func (s *mbEncoder) setMotion(mv [2]int16) {
 }
 
 func (s *mbEncoder) encodeInterMB() (bool, error) {
-	lambda := lambdaTable[s.qpY]
-
+	satdLambda := lambdaTable[s.qpY]
+	rdLambda := lambdaRDTable[s.qpY]
 	skipMV := s.skipMV()
-	s.motionCompensateMB(skipMV)
-	skipHasLuma := s.quantiseInterLuma()
-	s.quantiseInterChroma()
-	if !skipHasLuma && s.cur.cbpChroma == 0 {
-		s.cur.kind = mbTypePSkip
-		s.cur.Intra = false
-		s.cur.cbpLuma = 0
-		s.setMotion(skipMV)
-		s.reconstructInterChroma()
-		return true, nil
-	}
 
-	bestKind := mbTypeP16x16
-	interCost, bestParts := s.trySplit(mbTypeP16x16, lambda)
-	var bestSubs []subResult
-	for _, kind := range []int{mbTypeP16x8, mbTypeP8x16} {
-		cost, parts := s.trySplit(kind, lambda)
-		if cost+lambda*20 < interCost {
-			interCost, bestParts, bestKind = cost, parts, kind
+	bestCost := math.Inf(1)
+	var bestCand interCandidate
+	bestChoice := choiceInter
+
+	for _, kind := range []int{mbTypeP16x16, mbTypeP16x8, mbTypeP8x16, mbTypeP8x8} {
+		var c interCandidate
+		if kind == mbTypeP8x8 {
+			_, subs := s.trySplit8x8(satdLambda)
+			c = interCandidate{kind: kind, subs: subs}
+		} else {
+			_, parts := s.trySplit(kind, satdLambda)
+			c = interCandidate{kind: kind, parts: parts}
 		}
-	}
-	if cost, subs := s.trySplit8x8(lambda); cost+lambda*20 < interCost {
-		interCost, bestSubs, bestKind = cost, subs, mbTypeP8x8
-	}
-	intraCost, intraMode := s.searchIntra16x16()
-	if intraCost+lambda*16 < interCost {
-		s.reset()
-		if err := s.encodeIntraMBInP(intraMode); err != nil {
+		j, err := s.evaluateInter(c, rdLambda)
+		if err != nil {
 			return false, err
 		}
-		return false, nil
-	}
-
-	s.reset()
-	s.cur.kind = bestKind
-	s.cur.Intra = false
-	s.parts = bestParts
-	s.subs = bestSubs
-	if bestKind == mbTypeP8x8 {
-		s.applySubMotion(bestSubs)
-		s.compensateSubMBs(bestSubs)
-	} else {
-		s.clearMotion()
-		for i, p := range partitionsFor(bestKind) {
-			s.storePartitionMotion(p, bestParts[i].mv, bestParts[i].ref)
+		if j < bestCost {
+			bestCost, bestCand, bestChoice = j, c, choiceInter
 		}
-		s.compensatePartitions(bestKind, bestParts)
 	}
-	s.quantiseInterLuma()
-	s.quantiseInterChroma()
-	s.reconstructInterLuma()
-	s.reconstructInterChroma()
 
+	if j := s.evaluateSkip(skipMV, rdLambda); j < bestCost {
+		bestCost, bestChoice = j, choiceSkip
+	}
+
+	s.clearMotion()
+	j, err := s.evaluateIntra(5, rdLambda)
+	if err != nil {
+		return false, err
+	}
+	if j < bestCost {
+		bestChoice = choiceIntra
+	}
+
+	switch bestChoice {
+	case choiceSkip:
+		s.applySkip(skipMV)
+		return true, nil
+	case choiceIntra:
+		s.w.WriteUE(s.pendingSkipRun)
+		s.pendingSkipRun = 0
+		return false, s.writeIntraMB(5)
+	}
+
+	s.clearMotion()
+	s.applyInterCandidate(bestCand)
 	s.w.WriteUE(s.pendingSkipRun)
 	s.pendingSkipRun = 0
 	if err := s.writeInterMB(); err != nil {
 		return false, err
 	}
 	return false, nil
-}
-
-func (s *mbEncoder) encodeIntraMBInP(mode16 int) error {
-	s.w.WriteUE(s.pendingSkipRun)
-	s.pendingSkipRun = 0
-	s.clearMotion()
-	_ = mode16
-	return s.encodeIntraMB(5)
 }
 
 func (s *mbEncoder) writeInterMB() error {
@@ -410,3 +399,9 @@ func (s *mbEncoder) writeRefIdx(ref int8) {
 	}
 	s.w.WriteTE(uint32(ref), uint32(s.numRefs-1))
 }
+
+const (
+	choiceInter = iota
+	choiceSkip
+	choiceIntra
+)

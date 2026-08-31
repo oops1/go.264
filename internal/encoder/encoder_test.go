@@ -3,6 +3,7 @@ package encoder
 import (
 	"math"
 	"math/rand"
+	"sort"
 	"testing"
 
 	"github.com/oops1/go.264/internal/decoder"
@@ -490,5 +491,94 @@ func TestRefFramesValidation(t *testing.T) {
 	}
 	if got := e4.PPS().NumRefIdxL0DefaultActiveMinus1; got != 3 {
 		t.Errorf("PPS num_ref_idx_l0_default_active_minus1 = %d, want 3", got)
+	}
+}
+
+func TestModeDecisionUsesEveryKind(t *testing.T) {
+	cfg := Config{Width: 176, Height: 144, FPSNum: 25, FPSDen: 1, GOPSize: 20, QP: 24, RefFrames: 2}
+	enc, err := New(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rng := rand.New(rand.NewSource(17))
+	base := syntheticFrame(cfg.Width, cfg.Height, 0)
+	seen := map[int]bool{}
+	for i := 0; i < 20; i++ {
+		src := make([]byte, len(base))
+		copy(src, base)
+		for y := 0; y < cfg.Height/2; y++ {
+			for x := 0; x < cfg.Width; x++ {
+				src[y*cfg.Width+x] = base[((y+i)%(cfg.Height/2))*cfg.Width+x]
+			}
+		}
+		for j := 0; j < 300; j++ {
+			x := rng.Intn(cfg.Width)
+			y := rng.Intn(cfg.Height / 2)
+			src[y*cfg.Width+x] = byte(rng.Intn(256))
+		}
+		if _, err := enc.Encode(src); err != nil {
+			t.Fatal(err)
+		}
+		for k, n := range kindHistogram(enc) {
+			if n > 0 {
+				seen[k] = true
+			}
+		}
+	}
+	names := map[int]string{
+		mbTypeINxN: "I_NxN", mbTypeI16x16: "I_16x16", mbTypePSkip: "P_Skip",
+		mbTypeP16x16: "P_16x16", mbTypeP16x8: "P_16x8", mbTypeP8x16: "P_8x16",
+		mbTypeP8x8: "P_8x8",
+	}
+	for kind, name := range names {
+		if !seen[kind] {
+			t.Errorf("the mode decision never selected %s", name)
+		}
+	}
+	var got []string
+	for kind, name := range names {
+		if seen[kind] {
+			got = append(got, name)
+		}
+	}
+	sort.Strings(got)
+	t.Logf("selected kinds: %v", got)
+}
+
+func TestRateDistortionStaysWithinBounds(t *testing.T) {
+	bounds := []struct {
+		qp       int
+		maxBytes int
+		minPSNR  float64
+	}{
+		{20, 90000, 41},
+		{26, 55000, 36},
+		{32, 34000, 32},
+	}
+	for _, b := range bounds {
+		cfg := Config{Width: 176, Height: 144, FPSNum: 25, FPSDen: 1, GOPSize: 12, QP: b.qp, RefFrames: 2}
+		var frames [][]byte
+		for i := 0; i < 12; i++ {
+			frames = append(frames, syntheticFrame(cfg.Width, cfg.Height, i))
+		}
+		pics, units, _ := encodeAndDecode(t, cfg, frames)
+		total := 0
+		for _, u := range units {
+			total += len(u)
+		}
+		var sum float64
+		for i := range pics {
+			got := make([]byte, pics[i].Size())
+			pics[i].CopyOut(got)
+			sum += psnr(frames[i], got)
+		}
+		avg := sum / float64(len(pics))
+		t.Logf("qp %d: %d bytes, average PSNR %.2f dB", b.qp, total, avg)
+		if total > b.maxBytes {
+			t.Errorf("qp %d: %d bytes exceeds the %d byte bound", b.qp, total, b.maxBytes)
+		}
+		if avg < b.minPSNR {
+			t.Errorf("qp %d: PSNR %.2f below the %.0f dB bound", b.qp, avg, b.minPSNR)
+		}
 	}
 }

@@ -65,14 +65,16 @@ thirty times faster than Go. Still to cover: transformed differences, the
 six tap interpolation, forward and inverse transforms, quantisation and
 the deblocking edge filters.
 
-## Remaining
-
 ### Phase 9 — Encoder partitions and quality
-All P partitionings are done, including 8x8 sub-macroblocks with their
-four sub types, and the encoder now searches several reference frames.
-Against a single reference and 16x16 only, the inter frames lost about a
-quarter of their size. Still to do: a rate-distortion mode decision to
-replace the current transformed-difference heuristic.
+Done. All P partitionings including 8x8 sub-macroblocks, search across
+several reference frames, and a rate-distortion mode decision that trial
+encodes each candidate and scores it by squared error against the bits it
+actually costs. Motion search still uses transformed differences, which
+is the usual division of labour. Against a single reference, 16x16 only
+and the old heuristic, the inter frames lost about a quarter of their
+size.
+
+## Remaining
 
 ### Phase 10 — Decoder, Main profile
 CABAC, B slices and weighted prediction as decoder side tools, measured

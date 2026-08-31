@@ -117,7 +117,7 @@ func (s *mbEncoder) chromaOffset(blk int) int {
 	return s.e.rec.ChromaOffset(s.mbx*8+chromaBlockX[blk], s.mby*8+chromaBlockY[blk])
 }
 
-func (s *mbEncoder) encodeIntraMB(typeOffset uint32) error {
+func (s *mbEncoder) encodeIntraModes() {
 	cost16, mode16 := s.searchIntra16x16()
 	cost4 := s.encodeIntra4x4()
 	lambda := lambdaTable[s.qpY]
@@ -135,7 +135,10 @@ func (s *mbEncoder) encodeIntraMB(typeOffset uint32) error {
 	chromaMode := s.searchChroma()
 	s.cur.chromaMode = int8(chromaMode)
 	s.encodeChroma(chromaMode)
+}
 
+func (s *mbEncoder) encodeIntraMB(typeOffset uint32) error {
+	s.encodeIntraModes()
 	return s.writeIntraMB(typeOffset)
 }
 
