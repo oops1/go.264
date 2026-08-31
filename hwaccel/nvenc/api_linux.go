@@ -388,7 +388,7 @@ type NvEncLockInputBuffer struct {
 	Version       uint32
 	flags         uint32
 	InputBuffer   uintptr
-	BufferDataPtr uintptr
+	BufferDataPtr unsafe.Pointer
 	Pitch         uint32
 	Reserved1     [251]uint32
 	Reserved2     [64]uintptr
@@ -409,7 +409,7 @@ type NvEncLockBitstream struct {
 	BitstreamSizeInBytes  uint32
 	OutputTimeStamp       uint64
 	OutputDuration        uint64
-	BitstreamBufferPtr    uintptr
+	BitstreamBufferPtr    unsafe.Pointer
 	PictureType           NvEncPicType
 	PictureStruct         NvEncPicStruct
 	FrameAvgQP            uint32
