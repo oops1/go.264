@@ -15,15 +15,14 @@ var (
 
 type mbState struct {
 	loopfilter.MB
-	kind         int
-	nzCb         [4]uint8
-	nzCr         [4]uint8
-	intra4Modes  [16]int8
-	intra16Mode  int8
-	chromaMode   int8
-	cbpLuma      int
-	cbpChroma    int
-	transform8x8 bool
+	kind        int
+	nzCb        [4]uint8
+	nzCr        [4]uint8
+	intra4Modes [16]int8
+	intra16Mode int8
+	chromaMode  int8
+	cbpLuma     int
+	cbpChroma   int
 
 	refIdxL0 [16]int8
 }
@@ -46,12 +45,6 @@ func newMBGrid(widthMBs, heightMBs int) *mbGrid {
 		mbs:       make([]mbState, widthMBs*heightMBs),
 		widthMBs:  widthMBs,
 		heightMBs: heightMBs,
-	}
-}
-
-func (g *mbGrid) reset() {
-	for i := range g.mbs {
-		g.mbs[i] = mbState{}
 	}
 }
 

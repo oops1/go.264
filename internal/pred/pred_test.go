@@ -493,17 +493,39 @@ func TestIntra16x16PlaneExtremes(t *testing.T) {
 	}
 	cases = append(cases, gradient2)
 
+	clipped := 0
 	for ci, plane := range cases {
+		n := extractNeighbours16(plane, offset, avail)
 		Intra16x16(plane, planeStride, offset, I16x16Plane, avail)
+		want := ref16x16(I16x16Plane, n)
 		for y := 0; y < 16; y++ {
 			for x := 0; x < 16; x++ {
-				v := plane[offset+y*planeStride+x]
-				if v > 255 {
-					t.Fatalf("case %d: value out of range at %d,%d: %d", ci, x, y, v)
+				got := int(plane[offset+y*planeStride+x])
+				if got != want[y][x] {
+					t.Fatalf("case %d at %d,%d: got %d, want %d", ci, x, y, got, want[y][x])
+				}
+				if raw := plane16x16Unclipped(n, x, y); raw < 0 || raw > 255 {
+					clipped++
 				}
 			}
 		}
 	}
+	if clipped == 0 {
+		t.Fatal("no sample needed clipping, the test does not exercise Clip1")
+	}
+	t.Logf("%d samples were clipped", clipped)
+}
+
+func plane16x16Unclipped(n neighbours16, x, y int) int {
+	h, v := 0, 0
+	for i := 0; i < 8; i++ {
+		h += (i + 1) * (n.top[8+i] - refTopAt16(n, 6-i))
+		v += (i + 1) * (n.left[8+i] - refLeftAt16(n, 6-i))
+	}
+	a := 16 * (n.left[15] + n.top[15])
+	b := (5*h + 32) >> 6
+	c := (5*v + 32) >> 6
+	return (a + b*(x-7) + c*(y-7) + 16) >> 5
 }
 
 func TestChromaPlaneExtremes(t *testing.T) {
@@ -538,17 +560,50 @@ func TestChromaPlaneExtremes(t *testing.T) {
 	}
 	cases = append(cases, gradient2)
 
+	steep := make([]byte, sizes)
+	for i := range steep {
+		steep[i] = 128
+	}
+	for i := 0; i < 8; i++ {
+		steep[offset-planeStride+i] = byte(i * 36)
+		steep[offset+i*planeStride-1] = byte(255 - i*36)
+	}
+	steep[offset-planeStride-1] = 128
+	cases = append(cases, steep)
+
+	clipped := 0
 	for ci, plane := range cases {
+		n := extractNeighboursChroma(plane, offset, avail)
 		IntraChroma8x8(plane, planeStride, offset, ChromaPlane, avail)
+		want := refChroma(ChromaPlane, n)
 		for y := 0; y < 8; y++ {
 			for x := 0; x < 8; x++ {
-				v := plane[offset+y*planeStride+x]
-				if v > 255 {
-					t.Fatalf("case %d: value out of range at %d,%d: %d", ci, x, y, v)
+				got := int(plane[offset+y*planeStride+x])
+				if got != want[y][x] {
+					t.Fatalf("case %d at %d,%d: got %d, want %d", ci, x, y, got, want[y][x])
+				}
+				if raw := planeChromaUnclipped(n, x, y); raw < 0 || raw > 255 {
+					clipped++
 				}
 			}
 		}
 	}
+	if clipped == 0 {
+		t.Fatal("no sample needed clipping, the test does not exercise Clip1")
+	}
+	t.Logf("%d samples were clipped", clipped)
+}
+
+func planeChromaUnclipped(n neighboursChroma, x, y int) int {
+	h, v := 0, 0
+	for i := 0; i < 4; i++ {
+		h += (i + 1) * (n.top[4+i] - refTopAtC(n, 2-i))
+		v += (i + 1) * (n.left[4+i] - refLeftAtC(n, 2-i))
+	}
+	a := 16 * (n.left[7] + n.top[7])
+	b := (34*h + 32) >> 6
+	c := (34*v + 32) >> 6
+	return (a + b*(x-3) + c*(y-3) + 16) >> 5
 }
 
 type neighboursChroma struct {

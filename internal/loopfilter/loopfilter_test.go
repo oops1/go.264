@@ -44,7 +44,6 @@ type mbConfig struct {
 	alphaOffset    int
 	betaOffset     int
 	chromaOff      [2]int
-	decoded        bool
 }
 
 func makeMB(c mbConfig) *MB {

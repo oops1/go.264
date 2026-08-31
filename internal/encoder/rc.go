@@ -104,10 +104,3 @@ func blend(old, observed, weight float64) float64 {
 	}
 	return old*(1-weight) + observed*weight
 }
-
-func (rc *rateControl) averageBitrate(fps float64) float64 {
-	if rc.framesCoded == 0 {
-		return 0
-	}
-	return rc.bitsProduced / float64(rc.framesCoded) * fps
-}

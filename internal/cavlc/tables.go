@@ -1,15 +1,5 @@
 package cavlc
 
-type code struct {
-	bits   uint32
-	length uint8
-}
-
-type token struct {
-	trailingOnes uint8
-	totalCoeff   uint8
-}
-
 var coeffTokenNC0 = [4][17]string{
 	{
 		"1", "000101", "00000111", "000000111", "0000000111", "00000000111",
