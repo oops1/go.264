@@ -2,6 +2,10 @@ package cabac
 
 const (
 	offMBSkipP          = 11
+	offMBSkipB          = 24
+	offMBTypeB          = 27
+	offMBTypeIinB       = 32
+	offSubMBTypeB       = 36
 	offMBTypeP          = 14
 	offMBTypeIinP       = 17
 	offSubMBTypeP       = 21
@@ -53,12 +57,64 @@ func (d *Decoder) MBSkipFlagP(inc int) bool {
 	return d.DecodeDecision(offMBSkipP+inc) == 1
 }
 
+func (d *Decoder) MBSkipFlagB(inc int) bool {
+	return d.DecodeDecision(offMBSkipB+inc) == 1
+}
+
+func (d *Decoder) intraMBTypeIn(base int) int {
+	if d.DecodeDecision(base) == 0 {
+		return 0
+	}
+	return d.intraMBTypeSuffix(base, 0)
+}
+
+func (d *Decoder) MBTypeB(inc int) (mbType int, intra bool) {
+	if d.DecodeDecision(offMBTypeB+inc) == 0 {
+		return 0, false
+	}
+	if d.DecodeDecision(offMBTypeB+3) == 0 {
+		return 1 + int(d.DecodeDecision(offMBTypeB+5)), false
+	}
+	bits := int(d.DecodeDecision(offMBTypeB+4)) << 3
+	bits += int(d.DecodeDecision(offMBTypeB+5)) << 2
+	bits += int(d.DecodeDecision(offMBTypeB+5)) << 1
+	bits += int(d.DecodeDecision(offMBTypeB + 5))
+	switch {
+	case bits < 8:
+		return bits + 3, false
+	case bits == 13:
+		return d.intraMBTypeIn(offMBTypeIinB), true
+	case bits == 14:
+		return 11, false
+	case bits == 15:
+		return 22, false
+	}
+	bits = bits<<1 + int(d.DecodeDecision(offMBTypeB+5))
+	return bits - 4, false
+}
+
+func (d *Decoder) SubMBTypeB() int {
+	if d.DecodeDecision(offSubMBTypeB) == 0 {
+		return 0
+	}
+	if d.DecodeDecision(offSubMBTypeB+1) == 0 {
+		return 1 + int(d.DecodeDecision(offSubMBTypeB+3))
+	}
+	t := 3
+	if d.DecodeDecision(offSubMBTypeB+2) == 1 {
+		if d.DecodeDecision(offSubMBTypeB+3) == 1 {
+			return 11 + int(d.DecodeDecision(offSubMBTypeB+3))
+		}
+		t += 4
+	}
+	t += 2 * int(d.DecodeDecision(offSubMBTypeB+3))
+	t += int(d.DecodeDecision(offSubMBTypeB + 3))
+	return t
+}
+
 func (d *Decoder) MBTypeP() (mbType int, intra bool) {
 	if d.DecodeDecision(offMBTypeP) == 1 {
-		if d.DecodeDecision(offMBTypeIinP) == 0 {
-			return 0, true
-		}
-		return d.intraMBTypeSuffix(offMBTypeIinP, 0), true
+		return d.intraMBTypeIn(offMBTypeIinP), true
 	}
 	if d.DecodeDecision(offMBTypeP+1) == 0 {
 		return 3 * int(d.DecodeDecision(offMBTypeP+2)), false

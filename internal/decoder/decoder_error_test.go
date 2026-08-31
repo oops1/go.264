@@ -285,7 +285,7 @@ func TestDecodeContinuationSliceWithNoCurrentPictureErrors(t *testing.T) {
 
 func TestRefPictureOutOfRangeAndEmpty(t *testing.T) {
 	sd := &sliceDecoder{}
-	if p := sd.refPicture(0); p != nil {
+	if p := sd.refPictureIn(0, 0); p != nil {
 		t.Fatalf("empty reference list: want nil, got %v", p)
 	}
 
@@ -293,13 +293,13 @@ func TestRefPictureOutOfRangeAndEmpty(t *testing.T) {
 	p1 := frame.NewPicture(1, 1)
 	sd.refList = []*frame.Picture{p0, p1}
 
-	if got := sd.refPicture(5); got != p0 {
+	if got := sd.refPictureIn(0, 5); got != p0 {
 		t.Fatalf("out-of-range index: want fallback to refList[0]")
 	}
-	if got := sd.refPicture(-1); got != p0 {
+	if got := sd.refPictureIn(0, -1); got != p0 {
 		t.Fatalf("negative index: want fallback to refList[0]")
 	}
-	if got := sd.refPicture(1); got != p1 {
+	if got := sd.refPictureIn(0, 1); got != p1 {
 		t.Fatalf("in-range index: want refList[1]")
 	}
 }

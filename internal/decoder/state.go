@@ -3,6 +3,7 @@ package decoder
 import (
 	"errors"
 
+	"github.com/oops1/go.264/internal/frame"
 	"github.com/oops1/go.264/internal/loopfilter"
 	"github.com/oops1/go.264/internal/pred"
 )
@@ -27,7 +28,11 @@ type mbState struct {
 	cbfChromaDC [2]bool
 
 	refIdxL0 [16]int8
+	refIdxL1 [16]int8
 	mvdL0    [16][2]uint8
+	mvdL1    [16][2]uint8
+
+	directBlk [16]bool
 }
 
 var topRightInsideMB = [16]bool{
@@ -80,6 +85,38 @@ func (g *mbGrid) around(mbx, mby, sliceID int) neighbours {
 		topLeft:  g.neighbour(mbx, mby, -1, -1, sliceID),
 		topRight: g.neighbour(mbx, mby, 1, -1, sliceID),
 	}
+}
+
+func (g *mbGrid) motion() *frame.Motion {
+	mo := frame.NewMotion(g.widthMBs, g.heightMBs)
+	for mby := 0; mby < g.heightMBs; mby++ {
+		for mbx := 0; mbx < g.widthMBs; mbx++ {
+			m := g.at(mbx, mby)
+			if m == nil || m.Intra {
+				continue
+			}
+			for blk := 0; blk < 16; blk++ {
+				bx := mbx*4 + blockX[blk]/4
+				by := mby*4 + blockY[blk]/4
+				i := mo.Index(bx, by)
+				if r := m.refIdxL0[blk]; r >= 0 {
+					mo.Mv[0][i] = m.MvL0[blk]
+					mo.RefIdx[0][i] = r
+					if p := m.RefPicL0[blk]; p != nil {
+						mo.RefPOC[0][i] = int32(p.POC)
+					}
+				}
+				if r := m.refIdxL1[blk]; r >= 0 {
+					mo.Mv[1][i] = m.MvL1[blk]
+					mo.RefIdx[1][i] = r
+					if p := m.RefPicL1[blk]; p != nil {
+						mo.RefPOC[1][i] = int32(p.POC)
+					}
+				}
+			}
+		}
+	}
+	return mo
 }
 
 func usableForIntra(m *mbState, constrainedIntraPred bool) bool {

@@ -19,8 +19,18 @@ type sliceDecoder struct {
 	grid *mbGrid
 
 	refList         []*frame.Picture
+	refListL1       []*frame.Picture
 	numRefIdxActive int
+	numRefIdxL1     int
+	directSpatial   bool
+	colocated       *frame.Picture
+	colShortTerm    bool
+	direct8x8       bool
 	weights         *syntax.PredWeightTable
+	weightMode      int
+
+	predA predBuffer
+	predB predBuffer
 
 	cur *mbState
 	nb  neighbours
@@ -54,7 +64,9 @@ func (d *sliceDecoder) startMB(mbAddr int) {
 	}
 	for i := range d.cur.refIdxL0 {
 		d.cur.refIdxL0[i] = -1
+		d.cur.refIdxL1[i] = -1
 	}
+	d.cur.Bipredictive = d.hdr.SliceType.IsB()
 	d.nb = d.grid.around(d.mbx, d.mby, d.sliceID)
 }
 
@@ -84,7 +96,7 @@ func (d *sliceDecoder) run() error {
 			}
 			for i := uint32(0); i < run; i++ {
 				d.startMB(mbAddr)
-				if err := d.decodePSkip(); err != nil {
+				if err := d.decodeSkip(); err != nil {
 					return err
 				}
 				d.cur.Decoded = true
@@ -114,6 +126,13 @@ func (d *sliceDecoder) run() error {
 	}
 }
 
+func (d *sliceDecoder) decodeSkip() error {
+	if d.hdr.SliceType.IsB() {
+		return d.decodeBSkip()
+	}
+	return d.decodePSkip()
+}
+
 func (d *sliceDecoder) decodeMacroblock(res *mbResidual) error {
 	v, err := d.r.ReadUE()
 	if err != nil {
@@ -123,6 +142,16 @@ func (d *sliceDecoder) decodeMacroblock(res *mbResidual) error {
 		info, ok := intraMBType(v)
 		if !ok {
 			return fmt.Errorf("%w: mb_type %d in an I slice", ErrCorrupt, v)
+		}
+		return d.decodeIntraMB(info, res)
+	}
+	if d.hdr.SliceType.IsB() {
+		if v < 23 {
+			return d.decodeInterMBB(bMBTypes[v], res)
+		}
+		info, ok := intraMBType(v - 23)
+		if !ok {
+			return fmt.Errorf("%w: intra mb_type %d in a B slice", ErrCorrupt, v)
 		}
 		return d.decodeIntraMB(info, res)
 	}

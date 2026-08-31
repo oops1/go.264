@@ -38,6 +38,10 @@ clip main_intra_cabac      main "keyint=1:qp=26:cabac=1:ref=1:bframes=0:$mcommon
 clip main_intra_cabac_nodb main "keyint=1:qp=26:cabac=1:ref=1:bframes=0:no-deblock=1:$mcommon"
 clip main_ip_cabac         main "keyint=10:qp=26:cabac=1:ref=1:bframes=0:weightp=0:$mcommon"
 clip main_ipb_cabac        main "keyint=10:qp=26:cabac=1:ref=2:bframes=2:b-pyramid=none:weightp=0:weightb=0:$mcommon"
+clip main_ipb_cavlc        main "keyint=10:qp=26:cabac=0:ref=2:bframes=2:b-pyramid=none:weightp=0:weightb=0:$mcommon"
+clip main_ipb_temporal     main "keyint=10:qp=26:cabac=1:ref=2:bframes=2:b-pyramid=none:weightp=0:weightb=0:direct=temporal:$mcommon"
+clip main_ipb_weightb      main "keyint=10:qp=26:cabac=1:ref=2:bframes=2:b-pyramid=none:weightp=0:weightb=1:$mcommon"
+clip main_ipb_pyramid      main "keyint=25:qp=28:cabac=1:ref=3:bframes=3:b-pyramid=normal:$mcommon"
 clip main_ip_weightp       main "keyint=10:qp=26:cabac=1:ref=2:bframes=0:weightp=2:$mcommon"
 clip main_ip_fade          main "keyint=10:qp=26:cabac=1:ref=2:bframes=0:weightp=2:$mcommon" "$fade"
 

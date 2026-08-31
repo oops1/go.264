@@ -188,6 +188,65 @@ func (b *dpb) buildListP(hdr *syntax.SliceHeader, active int) []*frame.Picture {
 	if hdr.ModificationL0Present {
 		list = b.applyModifications(list, hdr.RefPicListModificationL0, hdr.FrameNum, active)
 	}
+	return truncate(list, active)
+}
+
+func (b *dpb) splitByOrder(currPOC int) (before, after, long []*refFrame) {
+	for _, r := range b.refs {
+		switch {
+		case r.longTerm:
+			long = append(long, r)
+		case r.pic.POC < currPOC:
+			before = append(before, r)
+		default:
+			after = append(after, r)
+		}
+	}
+	sort.SliceStable(before, func(i, j int) bool { return before[i].pic.POC > before[j].pic.POC })
+	sort.SliceStable(after, func(i, j int) bool { return after[i].pic.POC < after[j].pic.POC })
+	sort.SliceStable(long, func(i, j int) bool { return long[i].longTermIdx < long[j].longTermIdx })
+	return before, after, long
+}
+
+func sameFrames(a, b []*refFrame) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
+func (b *dpb) buildListsB(hdr *syntax.SliceHeader, currPOC, activeL0, activeL1 int) ([]*frame.Picture, []*frame.Picture) {
+	before, after, long := b.splitByOrder(currPOC)
+
+	list0 := make([]*refFrame, 0, len(b.refs))
+	list0 = append(list0, before...)
+	list0 = append(list0, after...)
+	list0 = append(list0, long...)
+
+	list1 := make([]*refFrame, 0, len(b.refs))
+	list1 = append(list1, after...)
+	list1 = append(list1, before...)
+	list1 = append(list1, long...)
+
+	if len(list1) > 1 && sameFrames(list0, list1) {
+		list1[0], list1[1] = list1[1], list1[0]
+	}
+
+	if hdr.ModificationL0Present {
+		list0 = b.applyModifications(list0, hdr.RefPicListModificationL0, hdr.FrameNum, activeL0)
+	}
+	if hdr.ModificationL1Present {
+		list1 = b.applyModifications(list1, hdr.RefPicListModificationL1, hdr.FrameNum, activeL1)
+	}
+	return truncate(list0, activeL0), truncate(list1, activeL1)
+}
+
+func truncate(list []*refFrame, active int) []*frame.Picture {
 	out := make([]*frame.Picture, 0, active)
 	for i := 0; i < active && i < len(list); i++ {
 		out = append(out, list[i].pic)
@@ -256,6 +315,7 @@ func (b *dpb) store(pic *frame.Picture, hdr *syntax.SliceHeader) {
 	if hdr.IDR {
 		b.refs = b.refs[:0]
 		entry := &refFrame{pic: pic, frameNum: hdr.FrameNum, longTerm: hdr.LongTermReference}
+		pic.LongTerm = hdr.LongTermReference
 		b.refs = append(b.refs, entry)
 		b.updatePicNums(hdr.FrameNum)
 		return
@@ -286,6 +346,7 @@ func (b *dpb) applyMMCO(hdr *syntax.SliceHeader) {
 			if r := b.shortTermByPicNum(pn); r != nil {
 				r.longTerm = true
 				r.longTermIdx = int(m.LongTermFrameIdx)
+				r.pic.LongTerm = true
 			}
 		case 4:
 			max := int(m.MaxLongTermFrameIdxPlus1) - 1

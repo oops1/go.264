@@ -19,6 +19,9 @@ type Picture struct {
 	POC      int
 	FrameNum uint32
 	IDR      bool
+	LongTerm bool
+
+	Motion *Motion
 }
 
 func NewPicture(widthMBs, heightMBs int) *Picture {
@@ -106,3 +109,28 @@ func (p *Picture) ExtendBorders() {
 	extendPlane(p.Cb, p.StrideC, p.OriginC(), p.Width/2, p.Height/2, ChromaMargin)
 	extendPlane(p.Cr, p.StrideC, p.OriginC(), p.Width/2, p.Height/2, ChromaMargin)
 }
+
+type Motion struct {
+	BlocksWide int
+	BlocksHigh int
+	Mv         [2][][2]int16
+	RefIdx     [2][]int8
+	RefPOC     [2][]int32
+}
+
+func NewMotion(widthMBs, heightMBs int) *Motion {
+	w := widthMBs * 4
+	h := heightMBs * 4
+	m := &Motion{BlocksWide: w, BlocksHigh: h}
+	for l := 0; l < 2; l++ {
+		m.Mv[l] = make([][2]int16, w*h)
+		m.RefIdx[l] = make([]int8, w*h)
+		m.RefPOC[l] = make([]int32, w*h)
+		for i := range m.RefIdx[l] {
+			m.RefIdx[l][i] = -1
+		}
+	}
+	return m
+}
+
+func (m *Motion) Index(bx, by int) int { return by*m.BlocksWide + bx }

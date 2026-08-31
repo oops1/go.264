@@ -106,6 +106,9 @@ func (d *Decoder) finishPicture() []*frame.Picture {
 		})
 	}
 	pic.ExtendBorders()
+	if d.grid != nil {
+		pic.Motion = d.grid.motion()
+	}
 	if d.buffer != nil && d.lastHdr != nil {
 		d.buffer.store(pic, d.lastHdr)
 	}
@@ -201,11 +204,18 @@ func (d *Decoder) decodeSlice(u nal.Unit) ([]*frame.Picture, error) {
 
 	d.buffer.updatePicNums(hdr.FrameNum)
 	active := hdr.NumRefIdxL0Active(pps)
-	var refList []*frame.Picture
-	if hdr.SliceType.IsP() || hdr.SliceType.IsSP() {
+	activeL1 := hdr.NumRefIdxL1Active(pps)
+	var refList, refListL1 []*frame.Picture
+	switch {
+	case hdr.SliceType.IsP() || hdr.SliceType.IsSP():
 		refList = d.buffer.buildListP(hdr, active)
 		if len(refList) == 0 {
 			return out, fmt.Errorf("%w: P slice with an empty reference list", ErrCorrupt)
+		}
+	case hdr.SliceType.IsB():
+		refList, refListL1 = d.buffer.buildListsB(hdr, d.cur.POC, active, activeL1)
+		if len(refList) == 0 || len(refListL1) == 0 {
+			return out, fmt.Errorf("%w: B slice with an empty reference list", ErrCorrupt)
 		}
 	}
 
@@ -217,11 +227,26 @@ func (d *Decoder) decodeSlice(u nal.Unit) ([]*frame.Picture, error) {
 		pic:             d.cur,
 		grid:            d.grid,
 		refList:         refList,
+		refListL1:       refListL1,
 		numRefIdxActive: active,
+		numRefIdxL1:     activeL1,
+		directSpatial:   hdr.DirectSpatialMvPred,
+		direct8x8:       sps.Direct8x8Inference,
 		sliceID:         d.sliceCount,
 	}
-	if weighted {
+	if len(refListL1) != 0 {
+		sd.colocated = refListL1[0]
+		sd.colShortTerm = !refListL1[0].LongTerm
+	}
+	switch {
+	case weighted:
 		sd.weights = &hdr.PredWeight
+		sd.weightMode = weightExplicit
+	case hdr.SliceType.IsB() && pps.WeightedBipredIDC == 1:
+		sd.weights = &hdr.PredWeight
+		sd.weightMode = weightExplicit
+	case hdr.SliceType.IsB() && pps.WeightedBipredIDC == 2:
+		sd.weightMode = weightImplicit
 	}
 	if err := sd.run(); err != nil {
 		return out, err

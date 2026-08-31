@@ -15,6 +15,9 @@ type MB struct {
 	NzY            [16]uint8
 	MvL0           [16][2]int16
 	RefPicL0       [16]*frame.Picture
+	MvL1           [16][2]int16
+	RefPicL1       [16]*frame.Picture
+	Bipredictive   bool
 	ChromaQPOffset [2]int
 	DisableDeblock uint32
 	AlphaOffset    int
@@ -44,6 +47,32 @@ func lumaNonZero(m *MB, blk int) bool {
 	return m.NzY[blk] != 0
 }
 
+func mvApart(a, b [2]int16) bool {
+	dx := int(a[0]) - int(b[0])
+	dy := int(a[1]) - int(b[1])
+	return dx <= -4 || dx >= 4 || dy <= -4 || dy >= 4
+}
+
+func motionDiffers(p, q *MB, pBlk, qBlk int) bool {
+	v := p.RefPicL0[pBlk] != q.RefPicL0[qBlk]
+	if !v && p.RefPicL0[pBlk] != nil {
+		v = mvApart(p.MvL0[pBlk], q.MvL0[qBlk])
+	}
+	if !p.Bipredictive && !q.Bipredictive {
+		return v
+	}
+	if !v {
+		v = p.RefPicL1[pBlk] != q.RefPicL1[qBlk] || mvApart(p.MvL1[pBlk], q.MvL1[qBlk])
+	}
+	if !v {
+		return false
+	}
+	if p.RefPicL0[pBlk] != q.RefPicL1[qBlk] || p.RefPicL1[pBlk] != q.RefPicL0[qBlk] {
+		return true
+	}
+	return mvApart(p.MvL0[pBlk], q.MvL1[qBlk]) || mvApart(p.MvL1[pBlk], q.MvL0[qBlk])
+}
+
 func edgeStrength(p, q *MB, pBlk, qBlk int, mbEdge bool) uint8 {
 	if p.Intra || q.Intra {
 		if mbEdge {
@@ -54,12 +83,7 @@ func edgeStrength(p, q *MB, pBlk, qBlk int, mbEdge bool) uint8 {
 	if lumaNonZero(p, pBlk) || lumaNonZero(q, qBlk) {
 		return 2
 	}
-	if p.RefPicL0[pBlk] != q.RefPicL0[qBlk] {
-		return 1
-	}
-	dx := int(p.MvL0[pBlk][0]) - int(q.MvL0[qBlk][0])
-	dy := int(p.MvL0[pBlk][1]) - int(q.MvL0[qBlk][1])
-	if dx <= -4 || dx >= 4 || dy <= -4 || dy >= 4 {
+	if motionDiffers(p, q, pBlk, qBlk) {
 		return 1
 	}
 	return 0

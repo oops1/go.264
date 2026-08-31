@@ -75,3 +75,86 @@ var blockY = [16]int{0, 0, 4, 4, 0, 0, 4, 4, 8, 8, 12, 12, 8, 8, 12, 12}
 var chromaBlockX = [4]int{0, 4, 0, 4}
 
 var chromaBlockY = [4]int{0, 0, 4, 4}
+
+const (
+	mbTypeBDirect = iota + 16
+	mbTypeB16x16
+	mbTypeB16x8
+	mbTypeB8x16
+	mbTypeB8x8
+	mbTypeBSkip
+)
+
+const (
+	predNone = 0
+	predL0   = 1
+	predL1   = 2
+	predBi   = predL0 | predL1
+)
+
+type bMBTypeInfo struct {
+	kind   int
+	pred   [2]uint8
+	direct bool
+}
+
+var bMBTypes = [23]bMBTypeInfo{
+	{kind: mbTypeBDirect, direct: true},
+	{kind: mbTypeB16x16, pred: [2]uint8{predL0}},
+	{kind: mbTypeB16x16, pred: [2]uint8{predL1}},
+	{kind: mbTypeB16x16, pred: [2]uint8{predBi}},
+	{kind: mbTypeB16x8, pred: [2]uint8{predL0, predL0}},
+	{kind: mbTypeB8x16, pred: [2]uint8{predL0, predL0}},
+	{kind: mbTypeB16x8, pred: [2]uint8{predL1, predL1}},
+	{kind: mbTypeB8x16, pred: [2]uint8{predL1, predL1}},
+	{kind: mbTypeB16x8, pred: [2]uint8{predL0, predL1}},
+	{kind: mbTypeB8x16, pred: [2]uint8{predL0, predL1}},
+	{kind: mbTypeB16x8, pred: [2]uint8{predL1, predL0}},
+	{kind: mbTypeB8x16, pred: [2]uint8{predL1, predL0}},
+	{kind: mbTypeB16x8, pred: [2]uint8{predL0, predBi}},
+	{kind: mbTypeB8x16, pred: [2]uint8{predL0, predBi}},
+	{kind: mbTypeB16x8, pred: [2]uint8{predL1, predBi}},
+	{kind: mbTypeB8x16, pred: [2]uint8{predL1, predBi}},
+	{kind: mbTypeB16x8, pred: [2]uint8{predBi, predL0}},
+	{kind: mbTypeB8x16, pred: [2]uint8{predBi, predL0}},
+	{kind: mbTypeB16x8, pred: [2]uint8{predBi, predL1}},
+	{kind: mbTypeB8x16, pred: [2]uint8{predBi, predL1}},
+	{kind: mbTypeB16x8, pred: [2]uint8{predBi, predBi}},
+	{kind: mbTypeB8x16, pred: [2]uint8{predBi, predBi}},
+	{kind: mbTypeB8x8},
+}
+
+type bSubTypeInfo struct {
+	numParts int
+	w, h     int
+	pred     uint8
+	direct   bool
+}
+
+var bSubTypes = [13]bSubTypeInfo{
+	{numParts: 4, w: 4, h: 4, direct: true},
+	{numParts: 1, w: 8, h: 8, pred: predL0},
+	{numParts: 1, w: 8, h: 8, pred: predL1},
+	{numParts: 1, w: 8, h: 8, pred: predBi},
+	{numParts: 2, w: 8, h: 4, pred: predL0},
+	{numParts: 2, w: 4, h: 8, pred: predL0},
+	{numParts: 2, w: 8, h: 4, pred: predL1},
+	{numParts: 2, w: 4, h: 8, pred: predL1},
+	{numParts: 2, w: 8, h: 4, pred: predBi},
+	{numParts: 2, w: 4, h: 8, pred: predBi},
+	{numParts: 4, w: 4, h: 4, pred: predL0},
+	{numParts: 4, w: 4, h: 4, pred: predL1},
+	{numParts: 4, w: 4, h: 4, pred: predBi},
+}
+
+func bPartitions(kind int) []mbPart {
+	switch kind {
+	case mbTypeB16x16:
+		return []mbPart{{0, 0, 16, 16}}
+	case mbTypeB16x8:
+		return []mbPart{{0, 0, 16, 8}, {0, 8, 16, 8}}
+	case mbTypeB8x16:
+		return []mbPart{{0, 0, 8, 16}, {8, 0, 8, 16}}
+	}
+	return nil
+}

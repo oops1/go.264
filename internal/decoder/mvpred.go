@@ -1,6 +1,9 @@
 package decoder
 
-import "github.com/oops1/go.264/internal/loopfilter"
+import (
+	"github.com/oops1/go.264/internal/frame"
+	"github.com/oops1/go.264/internal/loopfilter"
+)
 
 type motion struct {
 	mv  [2]int16
@@ -14,8 +17,38 @@ var zscanOf = [4][4]int{
 	{10, 11, 14, 15},
 }
 
-func blockMotion(m *mbState, blk int) motion {
-	return motion{mv: m.MvL0[blk], ref: m.refIdxL0[blk]}
+const (
+	shapeOther = iota
+	shape16x8
+	shape8x16
+)
+
+func shapeOf(kind int) int {
+	switch kind {
+	case mbTypeP16x8, mbTypeB16x8:
+		return shape16x8
+	case mbTypeP8x16, mbTypeB8x16:
+		return shape8x16
+	}
+	return shapeOther
+}
+
+func (m *mbState) refIdx(list, blk int) int8 {
+	if list == 0 {
+		return m.refIdxL0[blk]
+	}
+	return m.refIdxL1[blk]
+}
+
+func (m *mbState) mv(list, blk int) [2]int16 {
+	if list == 0 {
+		return m.MvL0[blk]
+	}
+	return m.MvL1[blk]
+}
+
+func blockMotion(m *mbState, list, blk int) motion {
+	return motion{mv: m.mv(list, blk), ref: m.refIdx(list, blk)}
 }
 
 func (d *sliceDecoder) neighbourBlock(x, y, curZ int) (*mbState, int) {
@@ -42,20 +75,23 @@ func (d *sliceDecoder) neighbourBlock(x, y, curZ int) (*mbState, int) {
 	return d.cur, z
 }
 
-func (d *sliceDecoder) neighbourMotion(x, y, curZ int) (motion, bool) {
+func (d *sliceDecoder) neighbourMotion(list, x, y, curZ int) (motion, bool) {
 	m, blk := d.neighbourBlock(x, y, curZ)
 	if m == nil {
 		return motion{ref: -1}, false
 	}
-	return blockMotion(m, blk), true
+	return blockMotion(m, list, blk), true
 }
 
-func (d *sliceDecoder) neighbourMVD(x, y, curZ int) [2]uint8 {
+func (d *sliceDecoder) neighbourMVD(list, x, y, curZ int) [2]uint8 {
 	m, blk := d.neighbourBlock(x, y, curZ)
 	if m == nil || m.Intra {
 		return [2]uint8{}
 	}
-	return m.mvdL0[blk]
+	if list == 0 {
+		return m.mvdL0[blk]
+	}
+	return m.mvdL1[blk]
 }
 
 func median(a, b, c int16) int16 {
@@ -71,26 +107,31 @@ func median(a, b, c int16) int16 {
 	return b
 }
 
-func (d *sliceDecoder) predictMV(x, y, w, h int, refIdx int8, partIdx int, kind int) [2]int16 {
+func (d *sliceDecoder) neighboursFor(list, x, y, w int) (a, b, c motion) {
 	curZ := zscanOf[y>>2][x>>2]
-	a, okA := d.neighbourMotion(x-1, y, curZ)
-	b, okB := d.neighbourMotion(x, y-1, curZ)
-	c, okC := d.neighbourMotion(x+w, y-1, curZ)
+	a, okA := d.neighbourMotion(list, x-1, y, curZ)
+	b, okB := d.neighbourMotion(list, x, y-1, curZ)
+	c, okC := d.neighbourMotion(list, x+w, y-1, curZ)
 	if !okC {
-		c, okC = d.neighbourMotion(x-1, y-1, curZ)
+		c, okC = d.neighbourMotion(list, x-1, y-1, curZ)
 	}
 	if !okB && !okC && okA {
 		b, c = a, a
 	}
+	return a, b, c
+}
 
-	switch {
-	case kind == mbTypeP16x8 && partIdx == 0 && b.ref == refIdx:
+func (d *sliceDecoder) predictMV(list, x, y, w, h int, refIdx int8, partIdx, kind int) [2]int16 {
+	a, b, c := d.neighboursFor(list, x, y, w)
+
+	switch shape := shapeOf(kind); {
+	case shape == shape16x8 && partIdx == 0 && b.ref == refIdx:
 		return b.mv
-	case kind == mbTypeP16x8 && partIdx == 1 && a.ref == refIdx:
+	case shape == shape16x8 && partIdx == 1 && a.ref == refIdx:
 		return a.mv
-	case kind == mbTypeP8x16 && partIdx == 0 && a.ref == refIdx:
+	case shape == shape8x16 && partIdx == 0 && a.ref == refIdx:
 		return a.mv
-	case kind == mbTypeP8x16 && partIdx == 1 && c.ref == refIdx:
+	case shape == shape8x16 && partIdx == 1 && c.ref == refIdx:
 		return c.mv
 	}
 
@@ -121,15 +162,15 @@ func (d *sliceDecoder) skipMV() [2]int16 {
 	if d.nb.left == nil || d.nb.top == nil {
 		return [2]int16{}
 	}
-	a, _ := d.neighbourMotion(-1, 0, 0)
-	b, _ := d.neighbourMotion(0, -1, 0)
+	a, _ := d.neighbourMotion(0, -1, 0, 0)
+	b, _ := d.neighbourMotion(0, 0, -1, 0)
 	if a.ref == 0 && a.mv == [2]int16{} {
 		return [2]int16{}
 	}
 	if b.ref == 0 && b.mv == [2]int16{} {
 		return [2]int16{}
 	}
-	return d.predictMV(0, 0, 16, 16, 0, 0, mbTypeP16x16)
+	return d.predictMV(0, 0, 0, 16, 16, 0, 0, mbTypeP16x16)
 }
 
 func absClip70(v int16) uint8 {
@@ -142,31 +183,50 @@ func absClip70(v int16) uint8 {
 	return uint8(v)
 }
 
-func (d *sliceDecoder) storeMVD(x, y, w, h int, mvd [2]int16) {
+func (d *sliceDecoder) storeMVD(list, x, y, w, h int, mvd [2]int16) {
 	packed := [2]uint8{absClip70(mvd[0]), absClip70(mvd[1])}
 	for by := y; by < y+h; by += 4 {
 		for bx := x; bx < x+w; bx += 4 {
-			d.cur.mvdL0[zscanOf[by>>2][bx>>2]] = packed
+			z := zscanOf[by>>2][bx>>2]
+			if list == 0 {
+				d.cur.mvdL0[z] = packed
+			} else {
+				d.cur.mvdL1[z] = packed
+			}
 		}
 	}
 }
 
-func (d *sliceDecoder) storeRefIdx(x, y, w, h int, ref int8) {
-	for by := y; by < y+h; by += 4 {
-		for bx := x; bx < x+w; bx += 4 {
-			d.cur.refIdxL0[zscanOf[by>>2][bx>>2]] = ref
-		}
-	}
-}
-
-func (d *sliceDecoder) storeMotion(x, y, w, h int, mv [2]int16, ref int8) {
-	pic := d.refPicture(ref)
+func (d *sliceDecoder) storeRefIdx(list, x, y, w, h int, ref int8) {
 	for by := y; by < y+h; by += 4 {
 		for bx := x; bx < x+w; bx += 4 {
 			z := zscanOf[by>>2][bx>>2]
-			d.cur.MvL0[z] = mv
-			d.cur.refIdxL0[z] = ref
-			d.cur.RefPicL0[z] = pic
+			if list == 0 {
+				d.cur.refIdxL0[z] = ref
+			} else {
+				d.cur.refIdxL1[z] = ref
+			}
+		}
+	}
+}
+
+func (d *sliceDecoder) storeMotion(list, x, y, w, h int, mv [2]int16, ref int8) {
+	var pic *frame.Picture
+	if ref >= 0 {
+		pic = d.refPictureIn(list, ref)
+	}
+	for by := y; by < y+h; by += 4 {
+		for bx := x; bx < x+w; bx += 4 {
+			z := zscanOf[by>>2][bx>>2]
+			if list == 0 {
+				d.cur.MvL0[z] = mv
+				d.cur.refIdxL0[z] = ref
+				d.cur.RefPicL0[z] = pic
+			} else {
+				d.cur.MvL1[z] = mv
+				d.cur.refIdxL1[z] = ref
+				d.cur.RefPicL1[z] = pic
+			}
 		}
 	}
 }

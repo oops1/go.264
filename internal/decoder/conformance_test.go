@@ -178,3 +178,28 @@ func TestMainProfileWeightedPFade(t *testing.T) {
 	clip := testutil.MainCorpus[5]
 	runClip(t, clip, clip.Frames)
 }
+
+func TestMainProfileBCAVLC(t *testing.T) {
+	clip := testutil.MainCorpus[6]
+	runClip(t, clip, clip.Frames)
+}
+
+func TestMainProfileBCABAC(t *testing.T) {
+	clip := testutil.MainCorpus[3]
+	runClip(t, clip, clip.Frames)
+}
+
+func TestMainProfileBTemporalDirect(t *testing.T) {
+	clip := testutil.MainCorpus[7]
+	runClip(t, clip, clip.Frames)
+}
+
+func TestMainProfileBImplicitWeights(t *testing.T) {
+	clip := testutil.MainCorpus[8]
+	runClip(t, clip, clip.Frames)
+}
+
+func TestMainProfileBPyramid(t *testing.T) {
+	clip := testutil.MainCorpus[9]
+	runClip(t, clip, clip.Frames)
+}
