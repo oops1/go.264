@@ -56,7 +56,7 @@ func psnr(a, b []byte) float64 {
 	return 10 * math.Log10(255*255/mse)
 }
 
-func (e *Encoder) Reconstruction() *frame.Picture { return e.ref }
+func (e *Encoder) Reconstruction() *frame.Picture { return e.refs[0] }
 
 func encodeAndDecode(t *testing.T, cfg Config, frames [][]byte) ([]*frame.Picture, [][]byte, []*frame.Picture) {
 	t.Helper()
@@ -410,5 +410,85 @@ func TestEveryPartitioningRoundTrips(t *testing.T) {
 				}
 			}
 		}
+	}
+}
+
+func TestMultipleReferenceFrames(t *testing.T) {
+	for _, refs := range []int{1, 2, 3, 4} {
+		cfg := Config{
+			Width: 176, Height: 144, FPSNum: 25, FPSDen: 1,
+			GOPSize: 12, QP: 26, RefFrames: refs,
+		}
+		var frames [][]byte
+		for i := 0; i < 12; i++ {
+			frames = append(frames, syntheticFrame(cfg.Width, cfg.Height, i))
+		}
+		pics, units, recons := encodeAndDecode(t, cfg, frames)
+		if len(pics) != len(frames) {
+			t.Fatalf("refs %d: decoded %d frames, want %d", refs, len(pics), len(frames))
+		}
+		total := 0
+		for _, u := range units {
+			total += len(u)
+		}
+		for i := range pics {
+			got := make([]byte, pics[i].Size())
+			pics[i].CopyOut(got)
+			want := make([]byte, recons[i].Size())
+			recons[i].CopyOut(want)
+			for j := range got {
+				if got[j] != want[j] {
+					t.Fatalf("refs %d frame %d: reconstructions differ at sample %d", refs, i, j)
+				}
+			}
+		}
+		t.Logf("refs %d: %d bytes", refs, total)
+	}
+}
+
+func TestReferenceBuffersAreBounded(t *testing.T) {
+	cfg := Config{Width: 96, Height: 64, FPSNum: 25, FPSDen: 1, GOPSize: 4, QP: 30, RefFrames: 3}
+	enc, err := New(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 40; i++ {
+		if _, err := enc.Encode(syntheticFrame(cfg.Width, cfg.Height, i)); err != nil {
+			t.Fatal(err)
+		}
+		if len(enc.refs) > cfg.RefFrames {
+			t.Fatalf("frame %d: reference list grew to %d", i, len(enc.refs))
+		}
+	}
+	allocated := len(enc.refs) + len(enc.free) + 1
+	if allocated > cfg.RefFrames+2 {
+		t.Errorf("allocated %d pictures for %d references", allocated, cfg.RefFrames)
+	}
+	t.Logf("pictures allocated: %d for %d references", allocated, cfg.RefFrames)
+}
+
+func TestRefFramesValidation(t *testing.T) {
+	if _, err := New(Config{Width: 64, Height: 64, QP: 26, RefFrames: 17}); err == nil {
+		t.Error("New accepted RefFrames above 16")
+	}
+	e, err := New(Config{Width: 64, Height: 64, QP: 26})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if e.cfg.RefFrames != 1 {
+		t.Errorf("default RefFrames = %d, want 1", e.cfg.RefFrames)
+	}
+	if got := e.SPS().MaxNumRefFrames; got != 1 {
+		t.Errorf("SPS max_num_ref_frames = %d, want 1", got)
+	}
+	e4, err := New(Config{Width: 64, Height: 64, QP: 26, RefFrames: 4})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := e4.SPS().MaxNumRefFrames; got != 4 {
+		t.Errorf("SPS max_num_ref_frames = %d, want 4", got)
+	}
+	if got := e4.PPS().NumRefIdxL0DefaultActiveMinus1; got != 3 {
+		t.Errorf("PPS num_ref_idx_l0_default_active_minus1 = %d, want 3", got)
 	}
 }

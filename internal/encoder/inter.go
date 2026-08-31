@@ -69,7 +69,7 @@ func median(a, b, c int16) int16 {
 	return b
 }
 
-func (s *mbEncoder) predictMV(x, y, w int, partIdx, kind int) [2]int16 {
+func (s *mbEncoder) predictMV(x, y, w int, partIdx, kind int, refIdx int8) [2]int16 {
 	curZ := zscanOf[y>>2][x>>2]
 	a, okA := s.neighbourMotion(x-1, y, curZ)
 	b, okB := s.neighbourMotion(x, y-1, curZ)
@@ -81,19 +81,19 @@ func (s *mbEncoder) predictMV(x, y, w int, partIdx, kind int) [2]int16 {
 		b, c = a, a
 	}
 	switch {
-	case kind == mbTypeP16x8 && partIdx == 0 && b.ref == 0:
+	case kind == mbTypeP16x8 && partIdx == 0 && b.ref == refIdx:
 		return b.mv
-	case kind == mbTypeP16x8 && partIdx == 1 && a.ref == 0:
+	case kind == mbTypeP16x8 && partIdx == 1 && a.ref == refIdx:
 		return a.mv
-	case kind == mbTypeP8x16 && partIdx == 0 && a.ref == 0:
+	case kind == mbTypeP8x16 && partIdx == 0 && a.ref == refIdx:
 		return a.mv
-	case kind == mbTypeP8x16 && partIdx == 1 && c.ref == 0:
+	case kind == mbTypeP8x16 && partIdx == 1 && c.ref == refIdx:
 		return c.mv
 	}
 	matches := 0
 	var only motion
 	for _, n := range [3]motion{a, b, c} {
-		if n.ref == 0 {
+		if n.ref == refIdx {
 			matches++
 			only = n
 		}
@@ -108,7 +108,7 @@ func (s *mbEncoder) predictMV(x, y, w int, partIdx, kind int) [2]int16 {
 }
 
 func (s *mbEncoder) predictMV16x16() [2]int16 {
-	return s.predictMV(0, 0, 16, 0, mbTypeP16x16)
+	return s.predictMV(0, 0, 16, 0, mbTypeP16x16, 0)
 }
 
 func (s *mbEncoder) skipMV() [2]int16 {
@@ -151,7 +151,7 @@ func bitsForSE(v int) int {
 }
 
 func (s *mbEncoder) motionCompensateMB(mv [2]int16) {
-	ref := s.e.ref
+	ref := s.refPicture(0)
 	x, y := s.mbx*16, s.mby*16
 	mc.PredictLuma(s.e.rec.Y, s.e.rec.StrideY, s.e.rec.LumaOffset(x, y),
 		ref.Y, ref.StrideY, ref.LumaOffset(x, y), 16, 16, int(mv[0]), int(mv[1]))
@@ -290,10 +290,11 @@ func (s *mbEncoder) reconstructInterChroma() {
 }
 
 func (s *mbEncoder) setMotion(mv [2]int16) {
+	pic := s.refPicture(0)
 	for i := 0; i < 16; i++ {
 		s.cur.MvL0[i] = mv
 		s.cur.refIdx[i] = 0
-		s.cur.RefPicL0[i] = s.e.ref
+		s.cur.RefPicL0[i] = pic
 	}
 }
 
@@ -345,7 +346,7 @@ func (s *mbEncoder) encodeInterMB() (bool, error) {
 	} else {
 		s.clearMotion()
 		for i, p := range partitionsFor(bestKind) {
-			s.storePartitionMotion(p, bestParts[i].mv)
+			s.storePartitionMotion(p, bestParts[i].mv, bestParts[i].ref)
 		}
 		s.compensatePartitions(bestKind, bestParts)
 	}
@@ -385,6 +386,9 @@ func (s *mbEncoder) writeInterMB() error {
 		s.writeSubMBs()
 	} else {
 		for _, r := range s.parts {
+			s.writeRefIdx(r.ref)
+		}
+		for _, r := range s.parts {
 			s.w.WriteSE(int32(r.mvd[0]))
 			s.w.WriteSE(int32(r.mvd[1]))
 		}
@@ -398,4 +402,11 @@ func (s *mbEncoder) writeInterMB() error {
 		}
 	}
 	return s.w.Err()
+}
+
+func (s *mbEncoder) writeRefIdx(ref int8) {
+	if s.numRefs <= 1 {
+		return
+	}
+	s.w.WriteTE(uint32(ref), uint32(s.numRefs-1))
 }

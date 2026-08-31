@@ -24,28 +24,36 @@ func partitionsFor(kind int) []partition {
 type partResult struct {
 	mv   [2]int16
 	mvd  [2]int16
+	ref  int8
 	cost int
+}
+
+func (s *mbEncoder) refPicture(idx int8) *frame.Picture {
+	if int(idx) < 0 || int(idx) >= len(s.e.refs) {
+		if len(s.e.refs) == 0 {
+			return nil
+		}
+		return s.e.refs[0]
+	}
+	return s.e.refs[idx]
 }
 
 func (s *mbEncoder) partLimits(px, py, w, h int) (loX, hiX, loY, hiY int) {
 	x, y := s.mbx*16+px, s.mby*16+py
-	ref := s.e.ref
 	loX = lumaTapBefore - frame.LumaMargin - x
-	hiX = ref.Width + frame.LumaMargin - lumaTapAfter - x - w
+	hiX = s.e.width() + frame.LumaMargin - lumaTapAfter - x - w
 	loY = lumaTapBefore - frame.LumaMargin - y
-	hiY = ref.Height + frame.LumaMargin - lumaTapAfter - y - h
+	hiY = s.e.height() + frame.LumaMargin - lumaTapAfter - y - h
 	return
 }
 
-func (s *mbEncoder) partSAD(px, py, w, h, ix, iy int) int {
-	ref := s.e.ref
+func (s *mbEncoder) partSAD(ref *frame.Picture, px, py, w, h, ix, iy int) int {
 	x, y := s.mbx*16+px, s.mby*16+py
 	return sad(s.e.src.Y, s.e.src.StrideY, s.e.src.LumaOffset(x, y),
 		ref.Y, ref.StrideY, ref.LumaOffset(x+ix, y+iy), w, h)
 }
 
-func (s *mbEncoder) partSubPelCost(px, py, w, h int, mv, mvp [2]int16, lambda int) int {
-	ref := s.e.ref
+func (s *mbEncoder) partSubPelCost(ref *frame.Picture, px, py, w, h int, mv, mvp [2]int16, lambda int) int {
 	x, y := s.mbx*16+px, s.mby*16+py
 	mc.PredictLuma(s.scratch[:], 16, 0, ref.Y, ref.StrideY,
 		ref.LumaOffset(x, y), w, h, int(mv[0]), int(mv[1]))
@@ -55,7 +63,32 @@ func (s *mbEncoder) partSubPelCost(px, py, w, h int, mv, mvp [2]int16, lambda in
 }
 
 func (s *mbEncoder) searchPartition(p partition, partIdx, kind, lambda int) partResult {
-	mvp := s.predictMV(p.x, p.y, p.w, partIdx, kind)
+	best := partResult{ref: -1}
+	for idx := 0; idx < s.numRefs; idx++ {
+		r := s.searchPartitionRef(p, partIdx, kind, lambda, int8(idx))
+		if s.numRefs > 1 {
+			r.cost += lambda * bitsForTE(uint32(idx), uint32(s.numRefs-1))
+		}
+		if best.ref < 0 || r.cost < best.cost {
+			best = r
+		}
+	}
+	return best
+}
+
+func bitsForTE(v, max uint32) int {
+	if max == 0 {
+		return 0
+	}
+	if max == 1 {
+		return 1
+	}
+	return bitsForUE(v)
+}
+
+func (s *mbEncoder) searchPartitionRef(p partition, partIdx, kind, lambda int, refIdx int8) partResult {
+	ref := s.refPicture(refIdx)
+	mvp := s.predictMV(p.x, p.y, p.w, partIdx, kind, refIdx)
 	loX, hiX, loY, hiY := s.partLimits(p.x, p.y, p.w, p.h)
 	clampX := func(v int) int {
 		if v < loX {
@@ -78,7 +111,7 @@ func (s *mbEncoder) searchPartition(p partition, partIdx, kind, lambda int) part
 
 	bestX, bestY := clampX(int(mvp[0])>>2), clampY(int(mvp[1])>>2)
 	cost := func(ix, iy int) int {
-		return s.partSAD(p.x, p.y, p.w, p.h, ix, iy) +
+		return s.partSAD(ref, p.x, p.y, p.w, p.h, ix, iy) +
 			mvBitCost([2]int16{int16(ix << 2), int16(iy << 2)}, mvp, lambda)
 	}
 	best := cost(bestX, bestY)
@@ -107,7 +140,7 @@ func (s *mbEncoder) searchPartition(p partition, partIdx, kind, lambda int) part
 	}
 
 	mv := [2]int16{int16(bestX << 2), int16(bestY << 2)}
-	bestCost := s.partSubPelCost(p.x, p.y, p.w, p.h, mv, mvp, lambda)
+	bestCost := s.partSubPelCost(ref, p.x, p.y, p.w, p.h, mv, mvp, lambda)
 	inRange := func(m [2]int16) bool {
 		return int(m[0])>>2 >= loX && int(m[0])>>2 <= hiX &&
 			int(m[1])>>2 >= loY && int(m[1])>>2 <= hiY
@@ -120,14 +153,19 @@ func (s *mbEncoder) searchPartition(p partition, partIdx, kind, lambda int) part
 				if !inRange(cand) {
 					continue
 				}
-				if c := s.partSubPelCost(p.x, p.y, p.w, p.h, cand, mvp, lambda); c < bestCost {
+				if c := s.partSubPelCost(ref, p.x, p.y, p.w, p.h, cand, mvp, lambda); c < bestCost {
 					bestCost, mv = c, cand
 					improved = true
 				}
 			}
 		}
 	}
-	return partResult{mv: mv, mvd: [2]int16{mv[0] - mvp[0], mv[1] - mvp[1]}, cost: bestCost}
+	return partResult{
+		mv:   mv,
+		mvd:  [2]int16{mv[0] - mvp[0], mv[1] - mvp[1]},
+		ref:  refIdx,
+		cost: bestCost,
+	}
 }
 
 func absInt(v int) int {
@@ -137,13 +175,14 @@ func absInt(v int) int {
 	return v
 }
 
-func (s *mbEncoder) storePartitionMotion(p partition, mv [2]int16) {
+func (s *mbEncoder) storePartitionMotion(p partition, mv [2]int16, ref int8) {
+	pic := s.refPicture(ref)
 	for by := p.y; by < p.y+p.h; by += 4 {
 		for bx := p.x; bx < p.x+p.w; bx += 4 {
 			z := zscanOf[by>>2][bx>>2]
 			s.cur.MvL0[z] = mv
-			s.cur.refIdx[z] = 0
-			s.cur.RefPicL0[z] = s.e.ref
+			s.cur.refIdx[z] = ref
+			s.cur.RefPicL0[z] = pic
 		}
 	}
 }
@@ -163,26 +202,28 @@ func (s *mbEncoder) trySplit(kind, lambda int) (int, []partResult) {
 	total := 0
 	for i, p := range parts {
 		r := s.searchPartition(p, i, kind, lambda)
-		s.storePartitionMotion(p, r.mv)
+		s.storePartitionMotion(p, r.mv, r.ref)
 		results[i] = r
 		total += r.cost
 	}
 	return total, results
 }
 
+func (s *mbEncoder) compensatePartition(p partition, mv [2]int16, refIdx int8) {
+	ref := s.refPicture(refIdx)
+	x, y := s.mbx*16+p.x, s.mby*16+p.y
+	mc.PredictLuma(s.e.rec.Y, s.e.rec.StrideY, s.e.rec.LumaOffset(x, y),
+		ref.Y, ref.StrideY, ref.LumaOffset(x, y), p.w, p.h, int(mv[0]), int(mv[1]))
+	cx, cy := x/2, y/2
+	cw, ch := p.w/2, p.h/2
+	mc.PredictChroma(s.e.rec.Cb, s.e.rec.StrideC, s.e.rec.ChromaOffset(cx, cy),
+		ref.Cb, ref.StrideC, ref.ChromaOffset(cx, cy), cw, ch, int(mv[0]), int(mv[1]))
+	mc.PredictChroma(s.e.rec.Cr, s.e.rec.StrideC, s.e.rec.ChromaOffset(cx, cy),
+		ref.Cr, ref.StrideC, ref.ChromaOffset(cx, cy), cw, ch, int(mv[0]), int(mv[1]))
+}
+
 func (s *mbEncoder) compensatePartitions(kind int, results []partResult) {
-	parts := partitionsFor(kind)
-	ref := s.e.ref
-	for i, p := range parts {
-		mv := results[i].mv
-		x, y := s.mbx*16+p.x, s.mby*16+p.y
-		mc.PredictLuma(s.e.rec.Y, s.e.rec.StrideY, s.e.rec.LumaOffset(x, y),
-			ref.Y, ref.StrideY, ref.LumaOffset(x, y), p.w, p.h, int(mv[0]), int(mv[1]))
-		cx, cy := x/2, y/2
-		cw, ch := p.w/2, p.h/2
-		mc.PredictChroma(s.e.rec.Cb, s.e.rec.StrideC, s.e.rec.ChromaOffset(cx, cy),
-			ref.Cb, ref.StrideC, ref.ChromaOffset(cx, cy), cw, ch, int(mv[0]), int(mv[1]))
-		mc.PredictChroma(s.e.rec.Cr, s.e.rec.StrideC, s.e.rec.ChromaOffset(cx, cy),
-			ref.Cr, ref.StrideC, ref.ChromaOffset(cx, cy), cw, ch, int(mv[0]), int(mv[1]))
+	for i, p := range partitionsFor(kind) {
+		s.compensatePartition(p, results[i].mv, results[i].ref)
 	}
 }

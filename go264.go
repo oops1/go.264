@@ -63,6 +63,7 @@ type EncoderConfig struct {
 	QP      int
 
 	BitrateKbps int
+	RefFrames   int
 
 	ForceSoftware bool
 }
@@ -98,6 +99,7 @@ func NewEncoder(cfg EncoderConfig) (*Encoder, error) {
 		GOPSize:     cfg.GOPSize,
 		QP:          cfg.QP,
 		BitrateKbps: cfg.BitrateKbps,
+		RefFrames:   cfg.RefFrames,
 	})
 	if err != nil {
 		return nil, err

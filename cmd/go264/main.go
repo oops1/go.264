@@ -22,7 +22,7 @@ func main() {
 func usage() string {
 	return strings.Join([]string{
 		"usage:",
-		"  go264 encode -s WxH [-qp N | -b KBPS] [-gop N] [-fps N] [-i in.yuv] [-o out.264]",
+		"  go264 encode -s WxH [-qp N | -b KBPS] [-gop N] [-refs N] [-fps N] [-i in.yuv] [-o out.264]",
 		"  go264 decode [-i in.264] [-o out.yuv]",
 		"  go264 backends",
 	}, "\n")
@@ -76,6 +76,7 @@ func runEncode(args []string) error {
 	qp := fs.Int("qp", 26, "constant quantiser, 0 to 51")
 	bitrate := fs.Int("b", 0, "target bitrate in kbit/s, zero for constant quantiser")
 	gop := fs.Int("gop", 30, "distance between IDR pictures")
+	refs := fs.Int("refs", 1, "number of reference frames, 1 to 16")
 	fps := fs.Int("fps", 25, "frame rate")
 	in := fs.String("i", "-", "raw I420 input, - for standard input")
 	out := fs.String("o", "-", "Annex B output, - for standard output")
@@ -93,7 +94,8 @@ func runEncode(args []string) error {
 
 	enc, err := go264.NewEncoder(go264.EncoderConfig{
 		Width: w, Height: h, FPSNum: *fps, FPSDen: 1,
-		GOPSize: *gop, QP: *qp, BitrateKbps: *bitrate, ForceSoftware: *software,
+		GOPSize: *gop, QP: *qp, BitrateKbps: *bitrate, RefFrames: *refs,
+		ForceSoftware: *software,
 	})
 	if err != nil {
 		return err

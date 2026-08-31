@@ -25,6 +25,7 @@ type Config struct {
 	QP      int
 
 	BitrateKbps int
+	RefFrames   int
 }
 
 func (c *Config) validate() error {
@@ -47,6 +48,12 @@ func (c *Config) validate() error {
 		c.FPSNum = 25
 		c.FPSDen = 1
 	}
+	if c.RefFrames <= 0 {
+		c.RefFrames = 1
+	}
+	if c.RefFrames > 16 {
+		return fmt.Errorf("%w: RefFrames %d exceeds 16", ErrConfig, c.RefFrames)
+	}
 	return nil
 }
 
@@ -58,9 +65,10 @@ type Encoder struct {
 	widthMBs  int
 	heightMBs int
 
-	src *frame.Picture
-	rec *frame.Picture
-	ref *frame.Picture
+	src  *frame.Picture
+	rec  *frame.Picture
+	refs []*frame.Picture
+	free []*frame.Picture
 
 	grid []mbInfo
 
@@ -80,7 +88,6 @@ func New(cfg Config) (*Encoder, error) {
 	e.buildParameterSets()
 	e.src = frame.NewPicture(e.widthMBs, e.heightMBs)
 	e.rec = frame.NewPicture(e.widthMBs, e.heightMBs)
-	e.ref = frame.NewPicture(e.widthMBs, e.heightMBs)
 	e.grid = make([]mbInfo, e.widthMBs*e.heightMBs)
 	e.rc = newRateControl(cfg)
 	return e, nil
@@ -91,32 +98,37 @@ func (e *Encoder) SPS() *syntax.SPS { return e.sps }
 func (e *Encoder) PPS() *syntax.PPS { return e.pps }
 
 var levelLimits = []struct {
-	level  uint8
-	maxMBs int
-	maxMBS int
+	level     uint8
+	maxMBs    int
+	maxMBS    int
+	maxDpbMbs int
 }{
-	{10, 99, 1485},
-	{11, 396, 3000},
-	{12, 396, 6000},
-	{13, 396, 11880},
-	{20, 396, 11880},
-	{21, 792, 19800},
-	{22, 1620, 20250},
-	{30, 1620, 40500},
-	{31, 3600, 108000},
-	{32, 5120, 216000},
-	{40, 8192, 245760},
-	{42, 8704, 522240},
-	{50, 22080, 589824},
-	{51, 36864, 983040},
-	{52, 36864, 2073600},
+	{10, 99, 1485, 396},
+	{11, 396, 3000, 900},
+	{12, 396, 6000, 2376},
+	{13, 396, 11880, 2376},
+	{20, 396, 11880, 2376},
+	{21, 792, 19800, 4752},
+	{22, 1620, 20250, 8100},
+	{30, 1620, 40500, 8100},
+	{31, 3600, 108000, 18000},
+	{32, 5120, 216000, 20480},
+	{40, 8192, 245760, 32768},
+	{42, 8704, 522240, 34816},
+	{50, 22080, 589824, 110400},
+	{51, 36864, 983040, 184320},
+	{52, 36864, 2073600, 184320},
 }
 
 func (e *Encoder) pickLevel() uint8 {
 	frameMBs := e.widthMBs * e.heightMBs
 	rate := frameMBs * e.cfg.FPSNum / e.cfg.FPSDen
 	for _, l := range levelLimits {
-		if frameMBs <= l.maxMBs && rate <= l.maxMBS {
+		dpbFrames := l.maxDpbMbs / frameMBs
+		if dpbFrames > 16 {
+			dpbFrames = 16
+		}
+		if frameMBs <= l.maxMBs && rate <= l.maxMBS && e.cfg.RefFrames <= dpbFrames {
 			return l.level
 		}
 	}
@@ -132,7 +144,7 @@ func (e *Encoder) buildParameterSets() {
 		ChromaFormatIDC:           syntax.Chroma420,
 		Log2MaxFrameNumMinus4:     4,
 		PicOrderCntType:           2,
-		MaxNumRefFrames:           1,
+		MaxNumRefFrames:           uint32(e.cfg.RefFrames),
 		PicWidthInMbsMinus1:       uint32(e.widthMBs - 1),
 		PicHeightInMapUnitsMinus1: uint32(e.heightMBs - 1),
 		FrameMbsOnly:              true,
@@ -154,7 +166,7 @@ func (e *Encoder) buildParameterSets() {
 	pps := &syntax.PPS{
 		ID:                             0,
 		SPSID:                          0,
-		NumRefIdxL0DefaultActiveMinus1: 0,
+		NumRefIdxL0DefaultActiveMinus1: uint32(e.cfg.RefFrames - 1),
 		NumRefIdxL1DefaultActiveMinus1: 0,
 		PicInitQPMinus26:               int32(e.cfg.QP - 26),
 		DeblockingFilterControlPresent: true,
@@ -205,6 +217,8 @@ func (e *Encoder) Encode(yuv []byte) ([]byte, error) {
 		}
 		out = append(out, hdrs...)
 		e.frameNum = 0
+		e.free = append(e.free, e.refs...)
+		e.refs = e.refs[:0]
 	}
 
 	sliceType := syntax.SliceI
@@ -215,6 +229,10 @@ func (e *Encoder) Encode(yuv []byte) ([]byte, error) {
 	}
 
 	qp := e.rc.frameQP(idr)
+	active := e.activeRefs()
+	if active < 1 {
+		active = 1
+	}
 	hdr := &syntax.SliceHeader{
 		FirstMBInSlice:             0,
 		SliceType:                  sliceType + 5,
@@ -225,12 +243,16 @@ func (e *Encoder) Encode(yuv []byte) ([]byte, error) {
 		SliceQPDelta:               int32(qp - e.cfg.QP),
 		DisableDeblockingFilterIDC: 0,
 	}
+	if !idr && active != e.cfg.RefFrames {
+		hdr.NumRefIdxActiveOverride = true
+		hdr.NumRefIdxL0ActiveMinus1 = uint32(active - 1)
+	}
 
 	w := bits.NewWriterSize(e.cfg.Width * e.cfg.Height / 2)
 	if err := syntax.WriteSliceHeader(w, hdr, e.sps, e.pps); err != nil {
 		return nil, err
 	}
-	if err := e.encodeSlice(w, hdr, qp); err != nil {
+	if err := e.encodeSlice(w, hdr, qp, active); err != nil {
 		return nil, err
 	}
 	w.WriteRBSPTrailingBits()
@@ -251,7 +273,7 @@ func (e *Encoder) Encode(yuv []byte) ([]byte, error) {
 		return &m.MB
 	})
 	e.rec.ExtendBorders()
-	e.rec, e.ref = e.ref, e.rec
+	e.rotateReferences()
 	e.rc.update(len(out)*8, qp, idr)
 	e.frameIndex++
 	e.frameNum = (e.frameNum + 1) % e.sps.MaxFrameNum()
@@ -291,3 +313,28 @@ func (e *Encoder) loadSource(yuv []byte) {
 		}
 	}
 }
+
+func (e *Encoder) rotateReferences() {
+	e.refs = append([]*frame.Picture{e.rec}, e.refs...)
+	for len(e.refs) > e.cfg.RefFrames {
+		e.free = append(e.free, e.refs[len(e.refs)-1])
+		e.refs = e.refs[:len(e.refs)-1]
+	}
+	if n := len(e.free); n > 0 {
+		e.rec = e.free[n-1]
+		e.free = e.free[:n-1]
+		return
+	}
+	e.rec = frame.NewPicture(e.widthMBs, e.heightMBs)
+}
+
+func (e *Encoder) activeRefs() int {
+	if len(e.refs) < e.cfg.RefFrames {
+		return len(e.refs)
+	}
+	return e.cfg.RefFrames
+}
+
+func (e *Encoder) width() int { return e.widthMBs * 16 }
+
+func (e *Encoder) height() int { return e.heightMBs * 16 }

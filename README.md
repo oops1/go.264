@@ -25,7 +25,7 @@ Working today:
 | Inter prediction | all P partitions, both directions, including 8x8 sub-macroblocks |
 | CAVLC | complete, both directions |
 | In-loop deblocking filter | complete, shared by encoder and decoder |
-| Reference picture management | sliding window and MMCO |
+| Reference picture management | sliding window and MMCO, up to sixteen references in the encoder |
 | Hardware acceleration | probe and fallback in place, no backend implemented yet |
 | Bitrate targeted rate control | complete, within about a fifth of the request |
 | SIMD kernels | sum of absolute differences on amd64, about thirty times faster |
