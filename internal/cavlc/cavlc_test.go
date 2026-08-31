@@ -1,6 +1,7 @@
 package cavlc
 
 import (
+	"math"
 	"math/rand"
 	"testing"
 
@@ -38,6 +39,8 @@ func roundTrip(t *testing.T, coeffs []int32, nC int) {
 		}
 	}
 }
+
+var nCLumaValues = []int{0, 1, 2, 3, 4, 5, 7, 8, 12, 16, 32}
 
 var nCValues = []int{-1, 0, 1, 2, 3, 4, 5, 7, 8, 12, 16, 32}
 
@@ -311,6 +314,54 @@ func BenchmarkWriteBlock(b *testing.B) {
 		w.Reset()
 		if err := WriteBlock(w, c, 4); err != nil {
 			b.Fatal(err)
+		}
+	}
+}
+
+func TestRoundTripLargeLevelsInEveryPosition(t *testing.T) {
+	levels := []int32{16, 17, 31, 32, 63, 64, 100, 255, 256, 1000, 2062, 2063, 2064,
+		4096, 8191, 8192, 20000, 32767}
+	for _, nC := range nCLumaValues {
+		for _, mag := range levels {
+			for _, sign := range []int32{1, -1} {
+				for pos := 0; pos < 16; pos++ {
+					coeffs := make([]int32, 16)
+					coeffs[pos] = sign * mag
+					roundTrip(t, coeffs, nC)
+				}
+			}
+		}
+	}
+}
+
+func TestRoundTripLargeLevelsBesideSmallOnes(t *testing.T) {
+	for _, nC := range nCLumaValues {
+		for _, mag := range []int32{18, 300, 5000, 32767} {
+			coeffs := []int32{mag, 1, -1, 2, 0, -mag, 3, 0, 1, 0, 0, mag / 2, 0, 0, -1, 1}
+			roundTrip(t, coeffs, nC)
+		}
+	}
+}
+
+func TestRoundTripChromaDCLargeLevels(t *testing.T) {
+	for _, mag := range []int32{16, 64, 2063, 32767} {
+		for pos := 0; pos < 4; pos++ {
+			coeffs := make([]int32, 4)
+			coeffs[pos] = mag
+			roundTrip(t, coeffs, -1)
+			coeffs[pos] = -mag
+			roundTrip(t, coeffs, -1)
+		}
+	}
+}
+
+func TestWriteBlockRefusesLevelsBeyondTheSyntax(t *testing.T) {
+	for _, mag := range []int32{1 << 28, 1 << 30, math.MaxInt32} {
+		coeffs := make([]int32, 16)
+		coeffs[0] = mag
+		w := bits.NewWriter()
+		if err := WriteBlock(w, coeffs, 0); err == nil {
+			t.Fatalf("level %d was accepted, but it cannot be represented", mag)
 		}
 	}
 }

@@ -42,6 +42,43 @@ func writeRunBefore(w *bits.Writer, run, zerosLeft int) error {
 	return nil
 }
 
+func escapedLevelBase(prefix, suffixLength int) int {
+	base := 15 << uint(suffixLength)
+	if suffixLength == 0 {
+		base += 15
+	}
+	if prefix >= 16 {
+		base += 1<<uint(prefix-3) - 4096
+	}
+	return base
+}
+
+func writeEscapedLevel(w *bits.Writer, levelCode, suffixLength int) error {
+	for prefix := 15; prefix <= maxLevelPrefix; prefix++ {
+		suffixSize := prefix - 3
+		if suffixSize > 30 {
+			break
+		}
+		rest := levelCode - escapedLevelBase(prefix, suffixLength)
+		if rest >= 0 && rest < 1<<uint(suffixSize) {
+			w.WriteBits(1, prefix+1)
+			writeWideBits(w, uint32(rest), suffixSize)
+			return nil
+		}
+	}
+	return ErrLevelRange
+}
+
+func writeWideBits(w *bits.Writer, v uint32, n int) {
+	for n > 16 {
+		n -= 16
+		w.WriteBits(v>>uint(n)&0xFFFF, 16)
+	}
+	if n > 0 {
+		w.WriteBits(v&(1<<uint(n)-1), n)
+	}
+}
+
 func writeLevel(w *bits.Writer, levelCode, suffixLength int) error {
 	if levelCode < 0 {
 		return ErrLevelRange
@@ -50,17 +87,13 @@ func writeLevel(w *bits.Writer, levelCode, suffixLength int) error {
 		switch {
 		case levelCode < 14:
 			w.WriteBits(1, levelCode+1)
+			return nil
 		case levelCode < 30:
 			w.WriteBits(1, 15)
 			w.WriteBits(uint32(levelCode-14), 4)
-		default:
-			if levelCode-30 >= 1<<12 {
-				return ErrLevelRange
-			}
-			w.WriteBits(1, 16)
-			w.WriteBits(uint32(levelCode-30), 12)
+			return nil
 		}
-		return nil
+		return writeEscapedLevel(w, levelCode, suffixLength)
 	}
 	prefix := levelCode >> uint(suffixLength)
 	if prefix < 15 {
@@ -68,13 +101,7 @@ func writeLevel(w *bits.Writer, levelCode, suffixLength int) error {
 		w.WriteBits(uint32(levelCode)&(1<<uint(suffixLength)-1), suffixLength)
 		return nil
 	}
-	rest := levelCode - 15<<uint(suffixLength)
-	if rest >= 1<<12 {
-		return ErrLevelRange
-	}
-	w.WriteBits(1, 16)
-	w.WriteBits(uint32(rest), 12)
-	return nil
+	return writeEscapedLevel(w, levelCode, suffixLength)
 }
 
 func WriteBlock(w *bits.Writer, coeffs []int32, nC int) error {
