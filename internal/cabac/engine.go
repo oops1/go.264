@@ -66,6 +66,10 @@ func (d *Decoder) Init(r *bits.Reader, sliceQPY int, intra bool, initIDC uint32)
 		}
 		d.initContexts(contextInitPB[initIDC], sliceQPY)
 	}
+	return d.Restart(r)
+}
+
+func (d *Decoder) Restart(r *bits.Reader) error {
 	d.r = r
 	d.codIRange = 510
 	v, err := r.ReadBits(9)
@@ -145,18 +149,6 @@ func (d *Decoder) DecodeTerminate() uint32 {
 	return 0
 }
 
-func (d *Decoder) BypassBits(n int) uint32 {
-	var v uint32
-	for i := 0; i < n; i++ {
-		v = v<<1 | d.DecodeBypass()
-	}
-	return v
-}
-
 func (d *Decoder) State(ctxIdx int) (state, mps uint8) {
 	return d.ctx[ctxIdx].state, d.ctx[ctxIdx].mps
 }
-
-func (d *Decoder) Range() uint32 { return d.codIRange }
-
-func (d *Decoder) Offset() uint32 { return d.codIOffset }

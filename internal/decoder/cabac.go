@@ -206,7 +206,11 @@ func (d *sliceDecoder) decodeIntraMBCABAC(info mbTypeInfo, res *mbResidual) erro
 
 	switch info.kind {
 	case mbTypeIPCM:
-		return fmt.Errorf("%w: I_PCM under CABAC", ErrUnsupported)
+		if err := d.decodeIPCM(); err != nil {
+			return err
+		}
+		d.prevQPDeltaNonZero = false
+		return d.cb.Restart(d.r)
 
 	case mbTypeINxN:
 		if d.pps.Transform8x8Mode {

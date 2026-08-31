@@ -573,3 +573,52 @@ func TestApplyNilArguments(t *testing.T) {
 		t.Fatalf("Apply with nil at() must not modify the picture")
 	}
 }
+
+func biMB(mv0, mv1 [2]int16, ref0, ref1 *frame.Picture) *MB {
+	m := &MB{Decoded: true, Bipredictive: true}
+	for i := range m.MvL0 {
+		m.MvL0[i] = mv0
+		m.MvL1[i] = mv1
+		m.RefPicL0[i] = ref0
+		m.RefPicL1[i] = ref1
+	}
+	return m
+}
+
+func TestMotionDiffersAcrossTwoLists(t *testing.T) {
+	a := frame.NewPicture(1, 1)
+	b := frame.NewPicture(1, 1)
+	still := [2]int16{}
+	far := [2]int16{8, 0}
+
+	cases := []struct {
+		name string
+		p, q *MB
+		want bool
+	}{
+		{"same vectors and pictures", biMB(still, far, a, b), biMB(still, far, a, b), false},
+		{"lists exchanged", biMB(still, far, a, b), biMB(far, still, b, a), false},
+		{"lists exchanged but vectors apart", biMB(still, far, a, b), biMB(still, far, b, a), true},
+		{"second list points elsewhere", biMB(still, far, a, b), biMB(still, far, a, a), true},
+		{"second list vector apart", biMB(still, still, a, b), biMB(still, far, a, b), true},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := motionDiffers(c.p, c.q, 0, 0); got != c.want {
+				t.Fatalf("motionDiffers = %v, want %v", got, c.want)
+			}
+		})
+	}
+}
+
+func TestMotionDiffersIgnoresTheSecondListWhenNeitherIsBipredictive(t *testing.T) {
+	a := frame.NewPicture(1, 1)
+	b := frame.NewPicture(1, 1)
+	p := biMB([2]int16{}, [2]int16{40, 0}, a, b)
+	q := biMB([2]int16{}, [2]int16{}, a, nil)
+	p.Bipredictive = false
+	q.Bipredictive = false
+	if motionDiffers(p, q, 0, 0) {
+		t.Fatal("the second list was consulted for predictive macroblocks")
+	}
+}

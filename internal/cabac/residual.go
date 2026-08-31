@@ -19,10 +19,7 @@ var (
 	catOffsetCodedBlockFlag = [5]int{0, 4, 8, 12, 16}
 	catOffsetSignificant    = [5]int{0, 15, 29, 44, 47}
 	catOffsetAbsLevel       = [5]int{0, 10, 20, 30, 39}
-	maxCoeffForCat          = [5]int{16, 15, 16, 4, 15}
 )
-
-func MaxCoeff(cat int) int { return maxCoeffForCat[cat] }
 
 func (d *Decoder) CodedBlockFlag(cat, condTermA, condTermB int) bool {
 	inc := condTermA + 2*condTermB

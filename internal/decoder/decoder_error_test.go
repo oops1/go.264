@@ -97,6 +97,7 @@ func TestCheckSupportedRejections(t *testing.T) {
 		{"chroma bit depth above 8", func(s *syntax.SPS) { s.BitDepthChromaMinus8 = 2 }},
 		{"field or MBAFF coding", func(s *syntax.SPS) { s.FrameMbsOnly = false }},
 		{"sequence scaling matrices", func(s *syntax.SPS) { s.SeqScalingMatrixPresent = true }},
+		{"lossless transform bypass", func(s *syntax.SPS) { s.QpprimeYZeroTransformBypass = true }},
 	}
 
 	d := New()
@@ -373,5 +374,78 @@ func TestBumpEmitsInPictureOrder(t *testing.T) {
 	}
 	if len(d.pending) != 0 {
 		t.Fatalf("%d pictures still held after draining", len(d.pending))
+	}
+}
+
+func pcmSamples(seed byte) []byte {
+	out := make([]byte, 384)
+	for i := range out {
+		out[i] = byte(int(seed)*37 + i*11)
+	}
+	return out
+}
+
+func TestDecodeIPCMMacroblocks(t *testing.T) {
+	sps := minimalSPS()
+	pps := minimalPPS(sps.ID, false)
+	spsBytes := mustWriteSPSBytes(t, sps)
+	ppsBytes := mustWritePPSBytes(t, pps, lookupOne(sps))
+
+	hdr := &syntax.SliceHeader{SliceType: syntax.SliceI, PPSID: pps.ID, IDR: true, NalRefIDC: 1}
+	w := bits.NewWriter()
+	if err := syntax.WriteSliceHeader(w, hdr, sps, pps); err != nil {
+		t.Fatalf("WriteSliceHeader: %v", err)
+	}
+	samples := make([][]byte, 4)
+	for mb := 0; mb < 4; mb++ {
+		w.WriteUE(25)
+		w.AlignZero()
+		samples[mb] = pcmSamples(byte(mb))
+		for _, v := range samples[mb] {
+			w.WriteBits(uint32(v), 8)
+		}
+	}
+	w.WriteRBSPTrailingBits()
+	if err := w.Err(); err != nil {
+		t.Fatalf("writer: %v", err)
+	}
+
+	var data []byte
+	data = append(data, annexBUnit(nal.TypeSPS, 3, spsBytes)...)
+	data = append(data, annexBUnit(nal.TypePPS, 3, ppsBytes)...)
+	data = append(data, annexBUnit(nal.TypeSliceIDR, 1, w.Bytes())...)
+
+	d := New()
+	pics, err := decodeWithFlush(d, data)
+	if err != nil {
+		t.Fatalf("Decode: %v", err)
+	}
+	if len(pics) != 1 {
+		t.Fatalf("decoded %d pictures, want 1", len(pics))
+	}
+	pic := pics[0]
+	for mb := 0; mb < 4; mb++ {
+		mbx, mby := mb%2, mb/2
+		want := samples[mb]
+		for y := 0; y < 16; y++ {
+			for x := 0; x < 16; x++ {
+				got := pic.Y[pic.LumaOffset(mbx*16+x, mby*16+y)]
+				if got != want[y*16+x] {
+					t.Fatalf("macroblock %d luma (%d,%d) = %d, want %d", mb, x, y, got, want[y*16+x])
+				}
+			}
+		}
+		for plane, buf := range [][]byte{pic.Cb, pic.Cr} {
+			base := 256 + plane*64
+			for y := 0; y < 8; y++ {
+				for x := 0; x < 8; x++ {
+					got := buf[pic.ChromaOffset(mbx*8+x, mby*8+y)]
+					if got != want[base+y*8+x] {
+						t.Fatalf("macroblock %d chroma %d (%d,%d) = %d, want %d",
+							mb, plane, x, y, got, want[base+y*8+x])
+					}
+				}
+			}
+		}
 	}
 }

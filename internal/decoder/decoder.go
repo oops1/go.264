@@ -157,6 +157,9 @@ func (d *Decoder) checkSupported(sps *syntax.SPS) error {
 	if !sps.FrameMbsOnly {
 		return fmt.Errorf("%w: field or MBAFF coding", ErrUnsupported)
 	}
+	if sps.QpprimeYZeroTransformBypass {
+		return fmt.Errorf("%w: lossless transform bypass", ErrUnsupported)
+	}
 	if sps.SeqScalingMatrixPresent {
 		return fmt.Errorf("%w: sequence scaling matrices", ErrUnsupported)
 	}

@@ -74,11 +74,31 @@ is the usual division of labour. Against a single reference, 16x16 only
 and the old heuristic, the inter frames lost about a quarter of their
 size.
 
-## Remaining
-
 ### Phase 10 — Decoder, Main profile
-CABAC, B slices and weighted prediction as decoder side tools, measured
-against a Main profile corpus generated the same way as the current one.
+Done. `internal/cabac` carries the arithmetic engine, the syntax elements
+and the residual coding, with the range, transition and context
+initialisation tables extracted from the reference source by script and
+checked structurally. The engine and every syntax element round trip
+against a CABAC encoder written from the specification, so a stream
+failure can be blamed on the glue rather than the arithmetic.
+
+The decoder reads intra, predictive and bi predictive slices under both
+entropy coders, applies explicit weights to predictive slices and
+explicit or implicit weights to bi predictive ones, derives both direct
+modes, orders output by picture order count, and compares both reference
+lists when it picks a filtering strength. Ten Main profile clips cover
+that ground, all bit exact against ffmpeg: intra with and without the
+loop filter, predictive, weighted prediction over a fade, bi predictive
+under both entropy coders, spatial and temporal direct, implicit weights,
+and a pyramid where B pictures are themselves references.
+
+Not covered by a clip: explicit weights for bi prediction, which x264
+never emits, and which the unit test of the weighting primitive covers
+instead. Left out of scope as High profile features: the eight by eight
+transform, scaling matrices and lossless transform bypass, all three
+rejected explicitly.
+
+## Remaining
 
 ### Phase 11 — Hardware acceleration
 The probe, backend registry and transparent fallback are in place in

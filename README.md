@@ -19,18 +19,21 @@ Working today:
 
 | Area | State |
 | --- | --- |
-| Decoder, Constrained Baseline | complete, bit-exact against ffmpeg |
+| Decoder, Main profile | complete, bit-exact against ffmpeg |
 | Encoder, Constrained Baseline | complete, bit-exact against ffmpeg |
 | Intra prediction, all block sizes | complete |
 | Inter prediction | all P partitions both directions, 8x8 sub-macroblocks, multiple references |
+| B slices | bi-prediction, spatial and temporal direct, output reordered by picture order count |
+| Weighted prediction | explicit for predictive slices, explicit and implicit for bi-predictive |
 | CAVLC | complete, both directions |
+| CABAC | complete on the decoding side |
 | In-loop deblocking filter | complete, shared by encoder and decoder |
 | Reference picture management | sliding window and MMCO, up to sixteen references in the encoder |
 | Hardware acceleration | probe and fallback in place, no backend implemented yet |
 | Bitrate targeted rate control | complete, within about a fifth of the request |
 | Mode decision | rate-distortion, trial encoding each candidate |
 | SIMD kernels | sum of absolute differences on amd64, about thirty times faster |
-| CABAC, B slices, High profile | not started |
+| High profile | not started; the 8x8 transform, scaling matrices and lossless bypass are rejected explicitly |
 
 See [docs/PLAN.md](docs/PLAN.md) for the phase breakdown and
 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the design.
@@ -112,6 +115,12 @@ The decoder is measured against frames ffmpeg produces from the same
 streams, sample for sample. The encoder is measured the other way: ffmpeg
 must decode its output to exactly what our own decoder produces. Assembly
 kernels are compared against their pure Go twins on randomised inputs.
+
+The arithmetic decoder is held to the same standard from the other side.
+Its tests carry a CABAC encoder written from the specification and round
+trip randomised bin sequences through it, along with every syntax element
+the Main profile needs, so that a stream that fails to decode points at
+the surrounding code rather than at the arithmetic.
 Prediction and interpolation are compared against independent reference
 implementations written from the specification formulas rather than from
 the production code.

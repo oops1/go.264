@@ -217,3 +217,85 @@ func TestRangeTabStructure(t *testing.T) {
 		t.Fatalf("transIdxMPS tail = %d %d", transIdxMPS[62], transIdxMPS[63])
 	}
 }
+
+func (e *refEncoder) restart() {
+	e.low = 0
+	e.rng = 510
+	e.firstBitFlag = true
+	e.bitsOutstand = 0
+}
+
+func TestEngineResumesAfterAPayloadInTheMiddle(t *testing.T) {
+	rng := rand.New(rand.NewSource(20260901))
+	for iter := 0; iter < 50; iter++ {
+		qp := rng.Intn(52)
+		before := make([]op, 1+rng.Intn(40))
+		for i := range before {
+			before[i] = op{kind: 'd', ctx: rng.Intn(NumContexts), bin: uint32(rng.Intn(2))}
+		}
+		payload := make([]byte, 1+rng.Intn(400))
+		for i := range payload {
+			payload[i] = byte(rng.Intn(256))
+		}
+		after := make([]op, 1+rng.Intn(40))
+		for i := range after {
+			after[i] = op{kind: 'd', ctx: rng.Intn(NumContexts), bin: uint32(rng.Intn(2))}
+		}
+
+		enc := newRefEncoder(qp, true, 0)
+		for _, o := range before {
+			enc.encodeDecision(o.ctx, o.bin)
+		}
+		enc.encodeTerminate(1)
+		for _, v := range payload {
+			enc.w.WriteBits(uint32(v), 8)
+		}
+		enc.restart()
+		for _, o := range after {
+			enc.encodeDecision(o.ctx, o.bin)
+		}
+		enc.encodeTerminate(1)
+		if err := enc.w.Err(); err != nil {
+			t.Fatalf("iter %d: encoder: %v", iter, err)
+		}
+
+		var dec Decoder
+		r := bits.NewReader(enc.w.Bytes())
+		if err := dec.Init(r, qp, true, 0); err != nil {
+			t.Fatalf("iter %d: Init: %v", iter, err)
+		}
+		for j, o := range before {
+			if got := dec.DecodeDecision(o.ctx); got != o.bin {
+				t.Fatalf("iter %d: bin %d before the payload decoded %d, want %d", iter, j, got, o.bin)
+			}
+		}
+		if dec.DecodeTerminate() != 1 {
+			t.Fatalf("iter %d: the payload was not announced", iter)
+		}
+		for !r.ByteAligned() {
+			if _, err := r.ReadBit(); err != nil {
+				t.Fatalf("iter %d: alignment: %v", iter, err)
+			}
+		}
+		for j := range payload {
+			v, err := r.ReadBits(8)
+			if err != nil {
+				t.Fatalf("iter %d: payload byte %d: %v", iter, j, err)
+			}
+			if byte(v) != payload[j] {
+				t.Fatalf("iter %d: payload byte %d = %d, want %d", iter, j, v, payload[j])
+			}
+		}
+		if err := dec.Restart(r); err != nil {
+			t.Fatalf("iter %d: Restart: %v", iter, err)
+		}
+		for j, o := range after {
+			if got := dec.DecodeDecision(o.ctx); got != o.bin {
+				t.Fatalf("iter %d: bin %d after the payload decoded %d, want %d", iter, j, got, o.bin)
+			}
+		}
+		if dec.DecodeTerminate() != 1 {
+			t.Fatalf("iter %d: the closing terminate did not fire", iter)
+		}
+	}
+}

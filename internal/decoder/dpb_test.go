@@ -607,3 +607,98 @@ func TestClear(t *testing.T) {
 		t.Fatalf("prev state not reset: %+v", b)
 	}
 }
+
+func newRefAt(poc int, frameNum uint32) *refFrame {
+	r := newRef(frameNum, false, 0)
+	r.pic.POC = poc
+	return r
+}
+
+func assertPicOrder(t *testing.T, label string, got []*frame.Picture, want []*refFrame) {
+	t.Helper()
+	if len(got) != len(want) {
+		t.Fatalf("%s has %d entries, want %d", label, len(got), len(want))
+	}
+	for i := range want {
+		if got[i] != want[i].pic {
+			t.Fatalf("%s index %d holds the picture with count %d, want %d",
+				label, i, got[i].POC, want[i].pic.POC)
+		}
+	}
+}
+
+func TestBuildListsBOrdersAroundTheCurrentPicture(t *testing.T) {
+	b := &dpb{maxFrameNum: 16}
+	past1 := newRefAt(2, 1)
+	past2 := newRefAt(6, 3)
+	future1 := newRefAt(10, 5)
+	future2 := newRefAt(14, 7)
+	long := newRef(9, true, 1)
+	long.pic.POC = 100
+	b.refs = []*refFrame{future2, past1, long, future1, past2}
+
+	l0, l1 := b.buildListsB(newTestHeader(8, false, 1), 8, 5, 5)
+	assertPicOrder(t, "list 0", l0, []*refFrame{past2, past1, future1, future2, long})
+	assertPicOrder(t, "list 1", l1, []*refFrame{future1, future2, past2, past1, long})
+}
+
+func TestBuildListsBSwapsTheFirstTwoWhenBothListsMatch(t *testing.T) {
+	b := &dpb{maxFrameNum: 16}
+	a := newRefAt(2, 1)
+	c := newRefAt(4, 2)
+	b.refs = []*refFrame{a, c}
+
+	l0, l1 := b.buildListsB(newTestHeader(3, false, 1), 6, 2, 2)
+	assertPicOrder(t, "list 0", l0, []*refFrame{c, a})
+	assertPicOrder(t, "list 1", l1, []*refFrame{a, c})
+}
+
+func TestBuildListsBKeepsASingleEntryListUnswapped(t *testing.T) {
+	b := &dpb{maxFrameNum: 16}
+	only := newRefAt(2, 1)
+	b.refs = []*refFrame{only}
+
+	l0, l1 := b.buildListsB(newTestHeader(3, false, 1), 6, 1, 1)
+	assertPicOrder(t, "list 0", l0, []*refFrame{only})
+	assertPicOrder(t, "list 1", l1, []*refFrame{only})
+}
+
+func TestBuildListsBTruncatesToTheActiveCounts(t *testing.T) {
+	b := &dpb{maxFrameNum: 16}
+	past := newRefAt(2, 1)
+	future := newRefAt(10, 5)
+	b.refs = []*refFrame{past, future}
+
+	l0, l1 := b.buildListsB(newTestHeader(6, false, 1), 6, 1, 1)
+	assertPicOrder(t, "list 0", l0, []*refFrame{past})
+	assertPicOrder(t, "list 1", l1, []*refFrame{future})
+}
+
+func TestBuildListsBAppliesEachListsModifications(t *testing.T) {
+	b := &dpb{maxFrameNum: 16}
+	past := newRefAt(2, 1)
+	future := newRefAt(10, 5)
+	b.refs = []*refFrame{past, future}
+	b.updatePicNums(6)
+
+	hdr := newTestHeader(6, false, 1)
+	hdr.ModificationL1Present = true
+	hdr.RefPicListModificationL1 = []syntax.RefPicListModification{{IDC: 0, Value: 4}}
+
+	_, l1 := b.buildListsB(hdr, 6, 2, 2)
+	assertPicOrder(t, "list 1", l1, []*refFrame{past, future})
+}
+
+func TestSameFramesComparesIdentityAndLength(t *testing.T) {
+	a := newRefAt(0, 0)
+	c := newRefAt(2, 1)
+	if !sameFrames([]*refFrame{a, c}, []*refFrame{a, c}) {
+		t.Fatal("identical lists compared unequal")
+	}
+	if sameFrames([]*refFrame{a, c}, []*refFrame{c, a}) {
+		t.Fatal("reordered lists compared equal")
+	}
+	if sameFrames([]*refFrame{a}, []*refFrame{a, c}) {
+		t.Fatal("lists of different length compared equal")
+	}
+}
