@@ -29,7 +29,7 @@ Working today:
 | CABAC | complete on the decoding side |
 | In-loop deblocking filter | complete, shared by encoder and decoder |
 | Reference picture management | sliding window and MMCO, up to sixteen references in the encoder |
-| Hardware acceleration | probe and fallback in place, no backend implemented yet |
+| Hardware acceleration | encoding on Windows through Media Foundation, chosen automatically; Linux not yet |
 | Bitrate targeted rate control | complete, within about a fifth of the request |
 | Mode decision | rate-distortion, trial encoding each candidate |
 | SIMD kernels | sum of absolute differences on amd64, about thirty times faster |

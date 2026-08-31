@@ -101,14 +101,35 @@ rejected explicitly.
 ## Remaining
 
 ### Phase 11 — Hardware acceleration
-The probe, backend registry and transparent fallback are in place in
-`internal/hwaccel`; no backend is implemented yet. Next: Windows Media
-Foundation through `golang.org/x/sys/windows` syscalls into the COM
-interfaces, then Linux VA-API through `purego` dlopen. Both stay CGO-free.
-Cross-validation: any stream a hardware encoder emits must decode with the
-CPU decoder, and hardware decoder output is compared against CPU decoder
-output on the same stream. CI has no GPU, so the registry and fallback get
-mock-based tests and a `go264 selftest` command covers real hardware.
+Windows is done, Linux is not. `internal/hwaccel/mf` reaches Media
+Foundation through `syscall.NewLazyDLL` and `SyscallN` from the standard
+library, so the promise of a dependency free go.mod survives; no part of
+this needed `golang.org/x/sys`.
+
+Encoding runs on the adapter. The transforms that matter announce
+themselves as asynchronous, so input is granted by an event rather than
+taken at will, and the synchronous path is kept only for the software
+transform. The public encoder picks the hardware up on its own and falls
+back without complaint when it refuses a picture size.
+
+Decoding does not, and the measurements are the reason. The only decoder
+transform this platform offers is Microsoft's software one, which takes
+about four times as long as our own decoder on the same clip. It is kept
+and tested as an oracle rather than registered as a backend: it agrees
+with our decoder on every clip in the corpus, sample for sample, which
+makes three implementations in agreement counting ffmpeg. Real hardware
+decoding here means handing that transform a direct3d device and copying
+the resulting textures back, which is separate work.
+
+Two faults cost real time and are worth remembering. A goroutine does not
+stay on one operating system thread and the component object model
+requires that it does, so each codec owns a locked thread. And an
+asynchronous transform must be drained before release, or the adapter
+driver faults; closing now drains on its own.
+
+Still to do: Linux VA-API through `purego` dlopen, which needs its own
+module so the core stays dependency free, and the direct3d path for
+hardware decoding on Windows.
 
 ### Phase 12 — Release
 API review and freeze, godoc pass, benchmarks in the README, coverage
