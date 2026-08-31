@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"testing"
 
 	"github.com/oops1/go.264/internal/decoder"
@@ -257,4 +258,102 @@ func TestOurDecoderAgreesWithFFmpegOnAHardwareStream(t *testing.T) {
 		}
 	}
 	t.Logf("%s: %d pictures decode identically in ffmpeg and in our decoder", name, len(pics))
+}
+
+func TestEncodersClosedWithoutDrainingSurviveBeingCycled(t *testing.T) {
+	if !Loaded() {
+		t.Skip("Media Foundation is not present on this machine")
+	}
+	sizes := [][2]int{{176, 144}, {1280, 720}}
+	for round := 0; round < 12; round++ {
+		w, h := sizes[round%len(sizes)][0], sizes[round%len(sizes)][1]
+		f := EncoderFormat{Width: w, Height: h, FPSNum: 25, FPSDen: 1,
+			BitrateBitsPerSecond: 2000000, Profile: AVEncH264VProfileMain}
+		enc, err := OpenEncoder(f, true)
+		if err != nil {
+			t.Skipf("round %d: no hardware encoder could be opened: %v", round, err)
+		}
+		frame := make([]byte, I420Size(w, h))
+		for n := 0; n < 6; n++ {
+			for j := range frame {
+				frame[j] = byte(j + n)
+			}
+			if _, err := enc.Encode(frame); err != nil {
+				enc.Close()
+				t.Fatalf("round %d frame %d: %v", round, n, err)
+			}
+		}
+		if err := enc.Close(); err != nil {
+			t.Fatalf("round %d: Close: %v", round, err)
+		}
+		runtime.GC()
+	}
+}
+
+func TestEncodingSurvivesCollectionBetweenFrames(t *testing.T) {
+	if !Loaded() {
+		t.Skip("Media Foundation is not present on this machine")
+	}
+	const w, h = 1280, 720
+	f := EncoderFormat{Width: w, Height: h, FPSNum: 25, FPSDen: 1,
+		BitrateBitsPerSecond: 4000000, Profile: AVEncH264VProfileMain}
+	enc, err := OpenEncoder(f, true)
+	if err != nil {
+		t.Skipf("no hardware encoder could be opened: %v", err)
+	}
+	defer enc.Close()
+	frame := make([]byte, I420Size(w, h))
+	produced := 0
+	for i := 0; i < 24; i++ {
+		for j := range frame {
+			frame[j] = byte(j*3 + i)
+		}
+		out, err := enc.Encode(frame)
+		if err != nil {
+			t.Fatalf("frame %d: %v", i, err)
+		}
+		produced += len(out)
+		runtime.GC()
+	}
+	if produced == 0 {
+		t.Fatal("no packet came back from twenty four frames")
+	}
+}
+
+func TestDrainingTwiceIsHarmless(t *testing.T) {
+	if !Loaded() {
+		t.Skip("Media Foundation is not present on this machine")
+	}
+	enc, err := OpenEncoder(probeFormat(), false)
+	if err != nil {
+		t.Skipf("no encoder transform could be opened: %v", err)
+	}
+	defer enc.Close()
+	frame := make([]byte, I420Size(probeWidth, probeHeight))
+	if _, err := enc.Encode(frame); err != nil {
+		t.Fatalf("Encode: %v", err)
+	}
+	if _, err := enc.Drain(); err != nil {
+		t.Fatalf("first Drain: %v", err)
+	}
+	second, err := enc.Drain()
+	if err != nil {
+		t.Fatalf("second Drain: %v", err)
+	}
+	if len(second) != 0 {
+		t.Fatalf("the second drain produced %d packets", len(second))
+	}
+}
+
+func TestOpeningAtASizeTheHardwareRefusesFailsCleanly(t *testing.T) {
+	if !Loaded() {
+		t.Skip("Media Foundation is not present on this machine")
+	}
+	f := EncoderFormat{Width: 64, Height: 64, FPSNum: 25, FPSDen: 1,
+		BitrateBitsPerSecond: 100000, Profile: AVEncH264VProfileMain}
+	enc, err := OpenEncoder(f, true)
+	if err == nil {
+		enc.Close()
+		t.Skip("this machine's hardware encoder accepts a sixty four square picture")
+	}
 }

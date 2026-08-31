@@ -24,9 +24,12 @@ type Encoder struct {
 	frameDuration int64
 	nextTime      int64
 
-	credit  int
-	ready   [][]byte
-	drained bool
+	credit            int
+	ready             [][]byte
+	drained           bool
+	drainAcknowledged bool
+
+	thread *comThread
 }
 
 func (e *Encoder) Name() string { return e.name }
@@ -40,6 +43,19 @@ func OpenEncoder(f EncoderFormat, wantHardware bool) (*Encoder, error) {
 	if f.FPSNum <= 0 || f.FPSDen <= 0 {
 		return nil, &Error{Op: "OpenEncoder needs a positive frame rate", Code: sOK}
 	}
+	thread := newCOMThread()
+	var enc *Encoder
+	var err error
+	thread.run(func() { enc, err = openEncoderHere(f, wantHardware) })
+	if err != nil {
+		thread.stop()
+		return nil, err
+	}
+	enc.thread = thread
+	return enc, nil
+}
+
+func openEncoderHere(f EncoderFormat, wantHardware bool) (*Encoder, error) {
 	if err := Startup(); err != nil {
 		return nil, err
 	}
@@ -61,7 +77,7 @@ func OpenEncoder(f EncoderFormat, wantHardware bool) (*Encoder, error) {
 		stride:    f.Width,
 	}
 	if err := e.configure(f); err != nil {
-		e.Close()
+		e.closeHere()
 		return nil, err
 	}
 	return e, nil
@@ -250,7 +266,7 @@ func (e *Encoder) pumpEvent(wait bool) (bool, error) {
 			return false, err
 		}
 	case transformEventDrainComplete:
-		e.drained = true
+		e.drainAcknowledged = true
 	}
 	return true, nil
 }
@@ -270,7 +286,7 @@ func (e *Encoder) take() [][]byte {
 	return out
 }
 
-func (e *Encoder) Encode(i420 []byte) ([][]byte, error) {
+func (e *Encoder) encodeHere(i420 []byte) ([][]byte, error) {
 	if e.transform == nil {
 		return nil, &Error{Op: "Encode on a closed encoder", Code: sOK}
 	}
@@ -308,10 +324,14 @@ func (e *Encoder) Encode(i420 []byte) ([][]byte, error) {
 	return e.take(), nil
 }
 
-func (e *Encoder) Drain() ([][]byte, error) {
-	if e.transform == nil {
+func (e *Encoder) drainHere() ([][]byte, error) {
+	if e.transform == nil || e.drained {
 		return nil, nil
 	}
+	if e.async && e.gen == nil {
+		return nil, nil
+	}
+	e.drained = true
 	if err := e.transform.ProcessMessage(MFTMessageNotifyEndOfStream, 0); err != nil {
 		return nil, err
 	}
@@ -330,7 +350,7 @@ func (e *Encoder) Drain() ([][]byte, error) {
 		}
 		return e.take(), nil
 	}
-	for !e.drained {
+	for !e.drainAcknowledged {
 		more, err := e.pumpEvent(true)
 		if err != nil {
 			return nil, err
@@ -342,14 +362,50 @@ func (e *Encoder) Drain() ([][]byte, error) {
 	return e.take(), nil
 }
 
-func (e *Encoder) Close() error {
+func (e *Encoder) discardPendingEvents() {
+	if e.gen == nil {
+		return
+	}
+	for i := 0; i < 1024; i++ {
+		if _, ok, err := e.gen.next(false); err != nil || !ok {
+			return
+		}
+	}
+}
+
+func (e *Encoder) closeHere() error {
 	if e.transform == nil {
 		return nil
 	}
+	if _, err := e.drainHere(); err != nil {
+		return err
+	}
+	e.transform.ProcessMessage(MFTMessageCommandFlush, 0)
+	e.discardPendingEvents()
+	e.transform.ProcessMessage(MFTMessageNotifyEndOfStream, 0)
 	e.transform.ProcessMessage(MFTMessageNotifyEndStreaming, 0)
 	e.gen.release()
 	e.gen = nil
+	e.ready = nil
 	e.transform.Release()
 	e.transform = nil
 	return Shutdown()
+}
+
+func (e *Encoder) Encode(i420 []byte) (out [][]byte, err error) {
+	e.thread.run(func() { out, err = e.encodeHere(i420) })
+	return out, err
+}
+
+func (e *Encoder) Drain() (out [][]byte, err error) {
+	e.thread.run(func() { out, err = e.drainHere() })
+	return out, err
+}
+
+func (e *Encoder) Close() error {
+	var err error
+	e.thread.run(func() { err = e.closeHere() })
+	e.thread.stop()
+	e.thread = nil
+	return err
 }

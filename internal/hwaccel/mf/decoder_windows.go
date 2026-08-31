@@ -26,7 +26,10 @@ type Decoder struct {
 	ready []*DecodedPicture
 
 	started bool
+	drained bool
 	time    int64
+
+	thread *comThread
 }
 
 func (d *Decoder) Name() string { return d.name }
@@ -34,6 +37,19 @@ func (d *Decoder) Name() string { return d.name }
 func (d *Decoder) Hardware() bool { return d.hardware }
 
 func OpenDecoder(hardwareOnly bool) (*Decoder, error) {
+	thread := newCOMThread()
+	var dec *Decoder
+	var err error
+	thread.run(func() { dec, err = openDecoderHere(hardwareOnly) })
+	if err != nil {
+		thread.stop()
+		return nil, err
+	}
+	dec.thread = thread
+	return dec, nil
+}
+
+func openDecoderHere(hardwareOnly bool) (*Decoder, error) {
 	if err := Startup(); err != nil {
 		return nil, err
 	}
@@ -46,7 +62,7 @@ func OpenDecoder(hardwareOnly bool) (*Decoder, error) {
 	}
 	d := &Decoder{name: chosen.Name, hardware: chosen.Hardware, transform: transform}
 	if err := d.configure(); err != nil {
-		d.Close()
+		d.closeHere()
 		return nil, err
 	}
 	return d, nil
@@ -269,7 +285,7 @@ func (d *Decoder) take() []*DecodedPicture {
 	return out
 }
 
-func (d *Decoder) Decode(annexB []byte) ([]*DecodedPicture, error) {
+func (d *Decoder) decodeHere(annexB []byte) ([]*DecodedPicture, error) {
 	if d.transform == nil {
 		return nil, &Error{Op: "Decode on a closed decoder", Code: sOK}
 	}
@@ -291,10 +307,11 @@ func (d *Decoder) Decode(annexB []byte) ([]*DecodedPicture, error) {
 	return d.take(), nil
 }
 
-func (d *Decoder) Flush() ([]*DecodedPicture, error) {
-	if d.transform == nil {
+func (d *Decoder) flushHere() ([]*DecodedPicture, error) {
+	if d.transform == nil || d.drained {
 		return nil, nil
 	}
+	d.drained = true
 	if err := d.transform.ProcessMessage(MFTMessageNotifyEndOfStream, 0); err != nil {
 		return nil, err
 	}
@@ -307,12 +324,34 @@ func (d *Decoder) Flush() ([]*DecodedPicture, error) {
 	return d.take(), nil
 }
 
-func (d *Decoder) Close() error {
+func (d *Decoder) closeHere() error {
 	if d.transform == nil {
 		return nil
 	}
+	if _, err := d.flushHere(); err != nil {
+		return err
+	}
+	d.transform.ProcessMessage(MFTMessageCommandFlush, 0)
 	d.transform.ProcessMessage(MFTMessageNotifyEndStreaming, 0)
 	d.transform.Release()
 	d.transform = nil
 	return Shutdown()
+}
+
+func (d *Decoder) Decode(annexB []byte) (out []*DecodedPicture, err error) {
+	d.thread.run(func() { out, err = d.decodeHere(annexB) })
+	return out, err
+}
+
+func (d *Decoder) Flush() (out []*DecodedPicture, err error) {
+	d.thread.run(func() { out, err = d.flushHere() })
+	return out, err
+}
+
+func (d *Decoder) Close() error {
+	var err error
+	d.thread.run(func() { err = d.closeHere() })
+	d.thread.stop()
+	d.thread = nil
+	return err
 }
