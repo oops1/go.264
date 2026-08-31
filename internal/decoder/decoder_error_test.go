@@ -345,3 +345,33 @@ func TestReadMVDRejectsOutOfRange(t *testing.T) {
 		})
 	}
 }
+
+func TestBumpEmitsInPictureOrder(t *testing.T) {
+	d := New()
+	d.maxReorder = 2
+	for _, poc := range []int{4, 0, 2, 6, 8} {
+		d.pending = append(d.pending, &frame.Picture{POC: poc})
+	}
+	var got []int
+	for _, p := range d.bump(false) {
+		got = append(got, p.POC)
+	}
+	want := []int{0, 2, 4}
+	if len(got) != len(want) {
+		t.Fatalf("bump released %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("bump released %v, want %v", got, want)
+		}
+	}
+	for _, p := range d.bump(true) {
+		got = append(got, p.POC)
+	}
+	if len(got) != 5 || got[3] != 6 || got[4] != 8 {
+		t.Fatalf("draining released %v", got)
+	}
+	if len(d.pending) != 0 {
+		t.Fatalf("%d pictures still held after draining", len(d.pending))
+	}
+}

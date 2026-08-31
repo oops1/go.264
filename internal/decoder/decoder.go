@@ -21,6 +21,9 @@ type Decoder struct {
 	buffer  *dpb
 	lastHdr *syntax.SliceHeader
 
+	pending    []*frame.Picture
+	maxReorder int
+
 	sliceCount int
 }
 
@@ -62,13 +65,32 @@ func (d *Decoder) Flush() ([]*frame.Picture, error) {
 			return out, err
 		}
 	}
-	if p := d.finishPicture(); p != nil {
-		out = append(out, p)
-	}
+	out = append(out, d.finishPicture()...)
+	out = append(out, d.bump(true)...)
 	return out, nil
 }
 
-func (d *Decoder) finishPicture() *frame.Picture {
+func minPOCIndex(pics []*frame.Picture) int {
+	best := 0
+	for i, p := range pics {
+		if p.POC < pics[best].POC {
+			best = i
+		}
+	}
+	return best
+}
+
+func (d *Decoder) bump(drain bool) []*frame.Picture {
+	var out []*frame.Picture
+	for len(d.pending) > 0 && (drain || len(d.pending) > d.maxReorder) {
+		i := minPOCIndex(d.pending)
+		out = append(out, d.pending[i])
+		d.pending = append(d.pending[:i], d.pending[i+1:]...)
+	}
+	return out
+}
+
+func (d *Decoder) finishPicture() []*frame.Picture {
 	if d.cur == nil {
 		return nil
 	}
@@ -87,7 +109,8 @@ func (d *Decoder) finishPicture() *frame.Picture {
 	if d.buffer != nil && d.lastHdr != nil {
 		d.buffer.store(pic, d.lastHdr)
 	}
-	return pic
+	d.pending = append(d.pending, pic)
+	return d.bump(false)
 }
 
 func (d *Decoder) handleUnit(ebsp []byte) ([]*frame.Picture, error) {
@@ -149,9 +172,11 @@ func (d *Decoder) decodeSlice(u nal.Unit) ([]*frame.Picture, error) {
 	weighted := pps.WeightedPred && (hdr.SliceType.IsP() || hdr.SliceType.IsSP())
 	var out []*frame.Picture
 	if hdr.FirstMBInSlice == 0 {
-		if p := d.finishPicture(); p != nil {
-			out = append(out, p)
+		out = append(out, d.finishPicture()...)
+		if hdr.IDR {
+			out = append(out, d.bump(true)...)
 		}
+		d.maxReorder = sps.MaxNumReorder()
 		if d.sps != sps || d.buffer == nil {
 			d.buffer = newDPB(sps)
 		}

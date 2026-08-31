@@ -513,3 +513,67 @@ func WriteSPS(s *SPS) ([]byte, error) {
 	}
 	return w.Bytes(), nil
 }
+
+var maxDpbMbsByLevel = [...]struct {
+	levelIDC    uint8
+	constraint3 bool
+	maxDpbMbs   int
+}{
+	{10, false, 396},
+	{11, true, 396},
+	{9, false, 396},
+	{11, false, 900},
+	{12, false, 2376},
+	{13, false, 2376},
+	{20, false, 2376},
+	{21, false, 4752},
+	{22, false, 8100},
+	{30, false, 8100},
+	{31, false, 18000},
+	{32, false, 20480},
+	{40, false, 32768},
+	{41, false, 32768},
+	{42, false, 34816},
+	{50, false, 110400},
+	{51, false, 184320},
+	{52, false, 184320},
+	{60, false, 696320},
+	{61, false, 696320},
+	{62, false, 696320},
+}
+
+func (s *SPS) maxDpbMbs() int {
+	constraint3 := s.ConstraintSet&0x10 != 0
+	best := 0
+	for _, e := range maxDpbMbsByLevel {
+		if e.levelIDC == s.LevelIDC && e.constraint3 == constraint3 {
+			return e.maxDpbMbs
+		}
+		if e.maxDpbMbs > best {
+			best = e.maxDpbMbs
+		}
+	}
+	return best
+}
+
+func (s *SPS) MaxDpbFrames() int {
+	frameMbs := s.PicWidthInMbs() * s.FrameHeightInMbs()
+	if frameMbs <= 0 {
+		return 16
+	}
+	n := s.maxDpbMbs() / frameMbs
+	if n > 16 {
+		n = 16
+	}
+	if n < 1 {
+		n = 1
+	}
+	return n
+}
+
+func (s *SPS) MaxNumReorder() int {
+	if s.VUIPresent && s.VUI.BitstreamRestriction {
+		return int(s.VUI.MaxNumReorderFrames)
+	}
+	return s.MaxDpbFrames()
+}
