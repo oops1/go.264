@@ -1,9 +1,9 @@
 package encoder
 
 import (
-	"github.com/oops1/go264/internal/mc"
-	"github.com/oops1/go264/internal/syntax"
-	"github.com/oops1/go264/internal/transform"
+	"github.com/oops1/go.264/internal/mc"
+	"github.com/oops1/go.264/internal/syntax"
+	"github.com/oops1/go.264/internal/transform"
 )
 
 var zscanOf = [4][4]int{

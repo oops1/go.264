@@ -5,8 +5,8 @@ import (
 	"math/rand"
 	"testing"
 
-	"github.com/oops1/go264/internal/decoder"
-	"github.com/oops1/go264/internal/frame"
+	"github.com/oops1/go.264/internal/decoder"
+	"github.com/oops1/go.264/internal/frame"
 )
 
 func syntheticFrame(w, h, t int) []byte {

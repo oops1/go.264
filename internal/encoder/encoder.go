@@ -4,11 +4,11 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/oops1/go264/internal/bits"
-	"github.com/oops1/go264/internal/frame"
-	"github.com/oops1/go264/internal/loopfilter"
-	"github.com/oops1/go264/internal/nal"
-	"github.com/oops1/go264/internal/syntax"
+	"github.com/oops1/go.264/internal/bits"
+	"github.com/oops1/go.264/internal/frame"
+	"github.com/oops1/go.264/internal/loopfilter"
+	"github.com/oops1/go.264/internal/nal"
+	"github.com/oops1/go.264/internal/syntax"
 )
 
 var (

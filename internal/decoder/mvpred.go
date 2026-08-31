@@ -1,6 +1,6 @@
 package decoder
 
-import "github.com/oops1/go264/internal/loopfilter"
+import "github.com/oops1/go.264/internal/loopfilter"
 
 type motion struct {
 	mv  [2]int16

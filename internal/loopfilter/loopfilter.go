@@ -1,9 +1,9 @@
 package loopfilter
 
 import (
-	"github.com/oops1/go264/internal/deblock"
-	"github.com/oops1/go264/internal/frame"
-	"github.com/oops1/go264/internal/syntax"
+	"github.com/oops1/go.264/internal/deblock"
+	"github.com/oops1/go.264/internal/frame"
+	"github.com/oops1/go.264/internal/syntax"
 )
 
 type MB struct {

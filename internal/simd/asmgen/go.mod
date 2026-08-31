@@ -1,4 +1,4 @@
-module github.com/oops1/go264/internal/simd/asmgen
+module github.com/oops1/go.264/internal/simd/asmgen
 
 go 1.25.0
 

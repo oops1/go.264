@@ -1,8 +1,8 @@
 package encoder
 
 import (
-	"github.com/oops1/go264/internal/loopfilter"
-	"github.com/oops1/go264/internal/pred"
+	"github.com/oops1/go.264/internal/loopfilter"
+	"github.com/oops1/go.264/internal/pred"
 )
 
 const (

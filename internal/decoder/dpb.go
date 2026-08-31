@@ -3,8 +3,8 @@ package decoder
 import (
 	"sort"
 
-	"github.com/oops1/go264/internal/frame"
-	"github.com/oops1/go264/internal/syntax"
+	"github.com/oops1/go.264/internal/frame"
+	"github.com/oops1/go.264/internal/syntax"
 )
 
 type refFrame struct {

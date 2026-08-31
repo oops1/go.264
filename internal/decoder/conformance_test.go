@@ -5,8 +5,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/oops1/go264/internal/frame"
-	"github.com/oops1/go264/internal/testutil"
+	"github.com/oops1/go.264/internal/frame"
+	"github.com/oops1/go.264/internal/testutil"
 )
 
 func decodeAll(t *testing.T, stream []byte) []*frame.Picture {

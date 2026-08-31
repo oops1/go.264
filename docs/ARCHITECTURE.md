@@ -34,7 +34,7 @@ GitHub repository.
 ## Package layout
 
     go264/
-      go.mod                     module github.com/oops1/go264
+      go.mod                     module github.com/oops1/go.264
       go264.go                   public API: Encoder, Decoder, Frame, params
       internal/bits/             bit reader/writer, Exp-Golomb (ue/se/te)
       internal/nal/              NAL unit framing, RBSP emulation prevention

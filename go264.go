@@ -3,10 +3,10 @@ package go264
 import (
 	"errors"
 
-	"github.com/oops1/go264/internal/decoder"
-	"github.com/oops1/go264/internal/encoder"
-	"github.com/oops1/go264/internal/frame"
-	"github.com/oops1/go264/internal/hwaccel"
+	"github.com/oops1/go.264/internal/decoder"
+	"github.com/oops1/go.264/internal/encoder"
+	"github.com/oops1/go.264/internal/frame"
+	"github.com/oops1/go.264/internal/hwaccel"
 )
 
 var ErrClosed = errors.New("go264: use of a closed codec")

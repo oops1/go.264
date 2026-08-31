@@ -4,7 +4,7 @@ import (
 	"bytes"
 	"testing"
 
-	"github.com/oops1/go264/internal/frame"
+	"github.com/oops1/go.264/internal/frame"
 )
 
 func TestBlkIdxAt(t *testing.T) {

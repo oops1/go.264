@@ -3,12 +3,12 @@ package encoder
 import (
 	"fmt"
 
-	"github.com/oops1/go264/internal/bits"
-	"github.com/oops1/go264/internal/cavlc"
-	"github.com/oops1/go264/internal/loopfilter"
-	"github.com/oops1/go264/internal/pred"
-	"github.com/oops1/go264/internal/syntax"
-	"github.com/oops1/go264/internal/transform"
+	"github.com/oops1/go.264/internal/bits"
+	"github.com/oops1/go.264/internal/cavlc"
+	"github.com/oops1/go.264/internal/loopfilter"
+	"github.com/oops1/go.264/internal/pred"
+	"github.com/oops1/go.264/internal/syntax"
+	"github.com/oops1/go.264/internal/transform"
 )
 
 var golombToIntraCBP = [48]uint8{

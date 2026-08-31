@@ -3,9 +3,9 @@ package decoder
 import (
 	"fmt"
 
-	"github.com/oops1/go264/internal/frame"
-	"github.com/oops1/go264/internal/mc"
-	"github.com/oops1/go264/internal/transform"
+	"github.com/oops1/go.264/internal/frame"
+	"github.com/oops1/go.264/internal/mc"
+	"github.com/oops1/go.264/internal/transform"
 )
 
 type subMbInfo struct {

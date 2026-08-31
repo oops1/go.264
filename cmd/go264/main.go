@@ -9,7 +9,7 @@ import (
 	"os"
 	"strings"
 
-	"github.com/oops1/go264"
+	"github.com/oops1/go.264"
 )
 
 func main() {

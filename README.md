@@ -37,7 +37,7 @@ See [docs/PLAN.md](docs/PLAN.md) for the phase breakdown and
 ## Install
 
 ```
-go get github.com/oops1/go264
+go get github.com/oops1/go.264
 ```
 
 ## Library
@@ -74,7 +74,7 @@ actually in use, and `ForceSoftware` pins the CPU path for reproducibility.
 ## Command line
 
 ```bash
-go install github.com/oops1/go264/cmd/go264@latest
+go install github.com/oops1/go.264/cmd/go264@latest
 ```
 
 ```bash

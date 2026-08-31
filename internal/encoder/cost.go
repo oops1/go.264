@@ -3,7 +3,7 @@ package encoder
 import (
 	"math"
 
-	"github.com/oops1/go264/internal/simd"
+	"github.com/oops1/go.264/internal/simd"
 )
 
 var lambdaTable [52]int

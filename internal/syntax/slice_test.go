@@ -6,8 +6,8 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/oops1/go264/internal/bits"
-	"github.com/oops1/go264/internal/nal"
+	"github.com/oops1/go.264/internal/bits"
+	"github.com/oops1/go.264/internal/nal"
 )
 
 func TestSliceTypeHelpers(t *testing.T) {

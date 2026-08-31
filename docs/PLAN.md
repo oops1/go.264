@@ -8,7 +8,7 @@ trailers. Status below reflects what is actually merged and measured.
 ## Done
 
 ### Phase 0 — Bootstrap
-Module `github.com/oops1/go264`, BSD-2-Clause, GitHub Actions running
+Module `github.com/oops1/go.264`, BSD-2-Clause, GitHub Actions running
 gofmt, vet, staticcheck, race tests, coverage, a cgo-import rejection
 check and cross-target `CGO_ENABLED=0` builds.
 

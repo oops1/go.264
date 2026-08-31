@@ -3,7 +3,7 @@ package syntax
 import (
 	"fmt"
 
-	"github.com/oops1/go264/internal/bits"
+	"github.com/oops1/go.264/internal/bits"
 )
 
 func WriteSliceHeader(w *bits.Writer, h *SliceHeader, sps *SPS, pps *PPS) error {

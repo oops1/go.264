@@ -4,7 +4,7 @@ import (
 	"math/rand"
 	"testing"
 
-	"github.com/oops1/go264/internal/bits"
+	"github.com/oops1/go.264/internal/bits"
 )
 
 func roundTrip(t *testing.T, coeffs []int32, nC int) {
