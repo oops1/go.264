@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"github.com/oops1/go.264/internal/bits"
+	"github.com/oops1/go.264/internal/cabac"
 	"github.com/oops1/go.264/internal/frame"
 	"github.com/oops1/go.264/internal/loopfilter"
 	"github.com/oops1/go.264/internal/syntax"
@@ -29,6 +30,9 @@ type sliceDecoder struct {
 	qpY         int
 	sliceID     int
 	constrained bool
+
+	cb                 *cabac.Decoder
+	prevQPDeltaNonZero bool
 }
 
 func (d *sliceDecoder) totalMBs() int { return d.grid.widthMBs * d.grid.heightMBs }
@@ -56,6 +60,10 @@ func (d *sliceDecoder) startMB(mbAddr int) {
 func (d *sliceDecoder) run() error {
 	d.qpY = d.hdr.QPY(d.pps)
 	d.constrained = d.pps.ConstrainedIntraPred
+	if d.pps.CABAC {
+		d.cb = &cabac.Decoder{}
+		return d.runCABAC()
+	}
 	var res mbResidual
 
 	mbAddr := int(d.hdr.FirstMBInSlice)

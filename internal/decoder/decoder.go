@@ -112,9 +112,6 @@ func (d *Decoder) handleUnit(ebsp []byte) ([]*frame.Picture, error) {
 		if err != nil {
 			return nil, err
 		}
-		if pps.CABAC {
-			return nil, fmt.Errorf("%w: CABAC entropy coding", ErrUnsupported)
-		}
 		d.ppsMap[pps.ID] = pps
 		return nil, nil
 

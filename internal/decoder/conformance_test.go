@@ -154,3 +154,12 @@ func FuzzDecoderNeverPanics(f *testing.F) {
 		}
 	})
 }
+
+func TestMainProfileIntraCABAC(t *testing.T) {
+	runClip(t, testutil.MainCorpus[0], testutil.MainCorpus[0].Frames)
+}
+
+func TestMainProfileIntraCABACNoDeblock(t *testing.T) {
+	clip := testutil.MainCorpus[1]
+	runClip(t, clip, clip.Frames)
+}

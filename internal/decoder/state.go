@@ -23,6 +23,8 @@ type mbState struct {
 	chromaMode  int8
 	cbpLuma     int
 	cbpChroma   int
+	cbfLumaDC   bool
+	cbfChromaDC [2]bool
 
 	refIdxL0 [16]int8
 }

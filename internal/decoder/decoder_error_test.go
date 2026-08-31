@@ -118,7 +118,7 @@ func TestCheckSupportedRejections(t *testing.T) {
 	})
 }
 
-func TestDecodeCABACPPSIsUnsupported(t *testing.T) {
+func TestDecodeCABACPPSIsAccepted(t *testing.T) {
 	sps := minimalSPS()
 	spsBytes := mustWriteSPSBytes(t, sps)
 	pps := minimalPPS(sps.ID, true)
@@ -129,9 +129,11 @@ func TestDecodeCABACPPSIsUnsupported(t *testing.T) {
 	data = append(data, annexBUnit(nal.TypePPS, 3, ppsBytes)...)
 
 	d := New()
-	_, err := decodeWithFlush(d, data)
-	if !errors.Is(err, ErrUnsupported) {
-		t.Fatalf("Decode() = %v, want ErrUnsupported", err)
+	if _, err := decodeWithFlush(d, data); err != nil {
+		t.Fatalf("Decode() = %v, want a CABAC parameter set to be accepted", err)
+	}
+	if got := d.PPS(pps.ID); got == nil || !got.CABAC {
+		t.Fatal("the CABAC parameter set was not stored")
 	}
 }
 
