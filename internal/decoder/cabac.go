@@ -405,7 +405,11 @@ func (d *sliceDecoder) decodeB8x8CABAC(res *mbResidual) error {
 		maxRef := int(d.maxRefFor(list))
 		for i := 0; i < 4; i++ {
 			refs[list][i] = -1
-			if sub[i].direct || sub[i].pred&(1<<uint(list)) == 0 {
+			if sub[i].direct {
+				continue
+			}
+			if sub[i].pred&(1<<uint(list)) == 0 {
+				d.storeRefIdx(list, i%2*8, i/2*8, 8, 8, -1)
 				continue
 			}
 			r, err := d.cabacRefIdx(list, i%2*8, i/2*8, 8, 8, maxRef)

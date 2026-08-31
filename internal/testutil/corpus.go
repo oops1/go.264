@@ -37,6 +37,7 @@ var MainCorpus = []Clip{
 	{Name: "main_ipb_temporal", Width: 176, Height: 144, Frames: 10},
 	{Name: "main_ipb_weightb", Width: 176, Height: 144, Frames: 10},
 	{Name: "main_ipb_pyramid", Width: 176, Height: 144, Frames: 10},
+	{Name: "main_cif_pyramid", Width: 352, Height: 288, Frames: 8},
 }
 
 func (c Clip) FrameSize() int { return c.Width * c.Height * 3 / 2 }

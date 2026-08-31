@@ -322,9 +322,11 @@ func (b *dpb) store(pic *frame.Picture, hdr *syntax.SliceHeader) {
 	}
 	if hdr.AdaptiveRefPicMarking {
 		b.applyMMCO(hdr)
+		b.refs = append(b.refs, &refFrame{pic: pic, frameNum: hdr.FrameNum})
+		b.updatePicNums(hdr.FrameNum)
+		return
 	}
-	entry := &refFrame{pic: pic, frameNum: hdr.FrameNum}
-	b.refs = append(b.refs, entry)
+	b.refs = append(b.refs, &refFrame{pic: pic, frameNum: hdr.FrameNum})
 	b.updatePicNums(hdr.FrameNum)
 	b.slidingWindow()
 }

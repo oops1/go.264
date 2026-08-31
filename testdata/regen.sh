@@ -10,11 +10,23 @@ mkdir -p "$out"
 
 W=176
 H=144
+CW=352
+CH=288
 src="$tmp/src.yuv"
+cif="$tmp/cif.yuv"
 fade="$tmp/fade.yuv"
 
 ffmpeg -hide_banner -loglevel error -y -f lavfi -i "testsrc2=size=${W}x${H}:rate=10:duration=1" -pix_fmt yuv420p -f rawvideo "$src"
 ffmpeg -hide_banner -loglevel error -y -f lavfi -i "testsrc2=size=${W}x${H}:rate=10:duration=1,fade=t=out:st=0:d=1" -pix_fmt yuv420p -f rawvideo "$fade"
+
+ffmpeg -hide_banner -loglevel error -y -f lavfi -i "testsrc2=size=${CW}x${CH}:rate=25:duration=0.32" -pix_fmt yuv420p -f rawvideo "$cif"
+
+cifclip() {
+  local name=$1 params=$2
+  ffmpeg -hide_banner -loglevel error -y -f rawvideo -pix_fmt yuv420p -s "${CW}x${CH}" -r 25 -i "$cif" -c:v libx264 -profile:v main -x264-params "$params" -f h264 "$out/$name.264"
+  ffmpeg -hide_banner -loglevel error -y -i "$out/$name.264" -pix_fmt yuv420p -f rawvideo "$tmp/$name.yuv"
+  gzip -9 -c "$tmp/$name.yuv" > "$out/$name.yuv.gz"
+}
 
 clip() {
   local name=$1 profile=$2 params=$3 input=${4:-$src}
@@ -44,5 +56,7 @@ clip main_ipb_weightb      main "keyint=10:qp=26:cabac=1:ref=2:bframes=2:b-pyram
 clip main_ipb_pyramid      main "keyint=25:qp=28:cabac=1:ref=3:bframes=3:b-pyramid=normal:$mcommon"
 clip main_ip_weightp       main "keyint=10:qp=26:cabac=1:ref=2:bframes=0:weightp=2:$mcommon"
 clip main_ip_fade          main "keyint=10:qp=26:cabac=1:ref=2:bframes=0:weightp=2:$mcommon" "$fade"
+
+cifclip main_cif_pyramid "keyint=10:qp=26:cabac=1:ref=2:bframes=2:b-pyramid=normal:direct=temporal:$mcommon"
 
 echo "regenerated $(ls -1 "$out" | wc -l) files in $out"

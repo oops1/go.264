@@ -203,3 +203,8 @@ func TestMainProfileBPyramid(t *testing.T) {
 	clip := testutil.MainCorpus[9]
 	runClip(t, clip, clip.Frames)
 }
+
+func TestMainProfilePyramidAtCommonIntermediateFormat(t *testing.T) {
+	clip := testutil.MainCorpus[10]
+	runClip(t, clip, clip.Frames)
+}

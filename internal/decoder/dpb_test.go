@@ -702,3 +702,40 @@ func TestSameFramesComparesIdentityAndLength(t *testing.T) {
 		t.Fatal("lists of different length compared equal")
 	}
 }
+
+func TestAdaptiveMarkingReplacesTheSlidingWindow(t *testing.T) {
+	b := &dpb{maxNumRefs: 2, maxFrameNum: 16}
+	first := newRef(0, false, 0)
+	second := newRef(1, false, 0)
+	b.refs = []*refFrame{first, second}
+	b.updatePicNums(2)
+
+	hdr := newTestHeader(2, false, 1)
+	hdr.AdaptiveRefPicMarking = true
+	b.store(frame.NewPicture(1, 1), hdr)
+
+	if len(b.refs) != 3 {
+		t.Fatalf("adaptive marking left %d references, want 3: the sliding window ran as well", len(b.refs))
+	}
+	if b.refs[0] != first || b.refs[1] != second {
+		t.Fatal("adaptive marking evicted a reference the stream never asked to evict")
+	}
+}
+
+func TestSlidingWindowStillAppliesWithoutAdaptiveMarking(t *testing.T) {
+	b := &dpb{maxNumRefs: 2, maxFrameNum: 16}
+	oldest := newRef(0, false, 0)
+	b.refs = []*refFrame{oldest, newRef(1, false, 0)}
+	b.updatePicNums(2)
+
+	b.store(frame.NewPicture(1, 1), newTestHeader(2, false, 1))
+
+	if len(b.refs) != 2 {
+		t.Fatalf("the sliding window left %d references, want 2", len(b.refs))
+	}
+	for _, r := range b.refs {
+		if r == oldest {
+			t.Fatal("the sliding window kept the oldest reference")
+		}
+	}
+}
