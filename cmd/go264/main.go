@@ -25,6 +25,7 @@ func usage() string {
 		"  go264 encode -s WxH [-qp N | -b KBPS] [-gop N] [-refs N] [-fps N] [-i in.yuv] [-o out.264]",
 		"  go264 decode [-i in.264] [-o out.yuv]",
 		"  go264 backends",
+		"  go264 hwinfo",
 	}, "\n")
 }
 
@@ -40,8 +41,15 @@ func run(args []string) error {
 	case "backends":
 		fmt.Println(strings.Join(go264.Backends(), "\n"))
 		return nil
+	case "hwinfo":
+		return runHardwareInfo(os.Stdout)
 	}
 	return fmt.Errorf("unknown command %q\n%s", args[0], usage())
+}
+
+func runHardwareInfo(w io.Writer) error {
+	fmt.Fprintln(w, "backends:", strings.Join(go264.Backends(), " "))
+	return reportPlatformTransforms(w)
 }
 
 func parseSize(s string) (int, int, error) {
