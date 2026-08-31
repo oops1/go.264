@@ -9,6 +9,10 @@ on:
 env:
   CGO_ENABLED: "0"
 
+defaults:
+  run:
+    shell: bash
+
 jobs:
   test:
     strategy:
@@ -29,7 +33,6 @@ jobs:
       - name: Test
         run: go test -count=1 -coverprofile=coverage.txt -covermode=atomic ./...
       - name: Coverage summary
-        shell: bash
         run: go tool cover -func=coverage.txt | tail -n 1
 
   race:
@@ -105,7 +108,6 @@ jobs:
         with:
           go-version: '1.24'
       - name: Fuzz smoke
-        shell: bash
         run: |
           for pkg in $(go list ./...); do
             for target in $(go test -list 'Fuzz.*' "$pkg" 2>/dev/null | grep '^Fuzz' || true); do
