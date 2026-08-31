@@ -569,3 +569,88 @@ func BenchmarkPredictChroma8x8(b *testing.B) {
 		PredictChroma(dst, 8, 0, p.buf, p.stride, p.off(0, 0), 8, 8, 4, 4)
 	}
 }
+
+func refWeightUni(v, weight, offset, logWD int) int {
+	if logWD >= 1 {
+		return clip1(((v*weight + 1<<uint(logWD-1)) >> uint(logWD)) + offset)
+	}
+	return clip1(v*weight + offset)
+}
+
+func TestWeightUniMatchesTheSpecFormula(t *testing.T) {
+	src := make([]byte, 8*8)
+	for i := range src {
+		src[i] = byte(i * 251 % 256)
+	}
+	for logWD := 0; logWD <= 7; logWD++ {
+		for _, weight := range []int{-128, -1, 0, 1, 47, 127} {
+			for _, offset := range []int{-128, -1, 0, 5, 127} {
+				got := append([]byte(nil), src...)
+				WeightUni(got, 8, 0, 8, 8, weight, offset, logWD)
+				for i := range src {
+					want := refWeightUni(int(src[i]), weight, offset, logWD)
+					if int(got[i]) != want {
+						t.Fatalf("WeightUni(logWD %d weight %d offset %d) sample %d = %d, want %d",
+							logWD, weight, offset, i, got[i], want)
+					}
+				}
+			}
+		}
+	}
+}
+
+func TestWeightUniLeavesTheRestOfThePlaneAlone(t *testing.T) {
+	plane := make([]byte, 16*16)
+	for i := range plane {
+		plane[i] = 100
+	}
+	WeightUni(plane, 16, 16*4+4, 8, 8, 1, 7, 0)
+	for y := 0; y < 16; y++ {
+		for x := 0; x < 16; x++ {
+			inside := y >= 4 && y < 12 && x >= 4 && x < 12
+			if inside != (plane[y*16+x] == 100) {
+				continue
+			}
+			t.Fatalf("sample (%d,%d) = %d, inside %v", x, y, plane[y*16+x], inside)
+		}
+	}
+}
+
+func TestWeightBiMatchesTheSpecFormula(t *testing.T) {
+	a := make([]byte, 8*8)
+	b := make([]byte, 8*8)
+	for i := range a {
+		a[i] = byte(i * 7 % 256)
+		b[i] = byte(255 - i*5%256)
+	}
+	dst := make([]byte, 8*8)
+	for logWD := 0; logWD <= 7; logWD++ {
+		for _, w := range [][2]int{{1, 1}, {64, 64}, {-32, 96}, {127, -128}} {
+			for _, o := range [][2]int{{0, 0}, {3, -4}, {127, 127}} {
+				WeightBi(dst, 8, 0, a, 8, 0, b, 8, 0, 8, 8, w[0], w[1], o[0], o[1], logWD)
+				for i := range dst {
+					want := clip1(((int(a[i])*w[0] + int(b[i])*w[1] + 1<<uint(logWD)) >> uint(logWD+1)) +
+						(o[0]+o[1]+1)>>1)
+					if int(dst[i]) != want {
+						t.Fatalf("WeightBi(logWD %d w %v o %v) sample %d = %d, want %d",
+							logWD, w, o, i, dst[i], want)
+					}
+				}
+			}
+		}
+	}
+}
+
+func TestWeightUniWithUnitWeightIsIdentity(t *testing.T) {
+	src := make([]byte, 64)
+	for i := range src {
+		src[i] = byte(i * 3 % 256)
+	}
+	got := append([]byte(nil), src...)
+	WeightUni(got, 8, 0, 8, 8, 32, 0, 5)
+	for i := range src {
+		if got[i] != src[i] {
+			t.Fatalf("sample %d = %d, want %d", i, got[i], src[i])
+		}
+	}
+}

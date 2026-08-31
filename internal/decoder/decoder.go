@@ -146,10 +146,7 @@ func (d *Decoder) decodeSlice(u nal.Unit) ([]*frame.Picture, error) {
 	if pps.PicScalingMatrixPresent {
 		return nil, fmt.Errorf("%w: picture scaling matrices", ErrUnsupported)
 	}
-	if pps.WeightedPred && (hdr.SliceType.IsP() || hdr.SliceType.IsSP()) {
-		return nil, fmt.Errorf("%w: weighted prediction", ErrUnsupported)
-	}
-
+	weighted := pps.WeightedPred && (hdr.SliceType.IsP() || hdr.SliceType.IsSP())
 	var out []*frame.Picture
 	if hdr.FirstMBInSlice == 0 {
 		if p := d.finishPicture(); p != nil {
@@ -197,6 +194,9 @@ func (d *Decoder) decodeSlice(u nal.Unit) ([]*frame.Picture, error) {
 		refList:         refList,
 		numRefIdxActive: active,
 		sliceID:         d.sliceCount,
+	}
+	if weighted {
+		sd.weights = &hdr.PredWeight
 	}
 	if err := sd.run(); err != nil {
 		return out, err

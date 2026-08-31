@@ -32,6 +32,7 @@ var MainCorpus = []Clip{
 	{Name: "main_ip_cabac", Width: 176, Height: 144, Frames: 10},
 	{Name: "main_ipb_cabac", Width: 176, Height: 144, Frames: 10},
 	{Name: "main_ip_weightp", Width: 176, Height: 144, Frames: 10},
+	{Name: "main_ip_fade", Width: 176, Height: 144, Frames: 10},
 }
 
 func (c Clip) FrameSize() int { return c.Width * c.Height * 3 / 2 }

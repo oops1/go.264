@@ -168,3 +168,13 @@ func TestMainProfilePCABAC(t *testing.T) {
 	clip := testutil.MainCorpus[2]
 	runClip(t, clip, clip.Frames)
 }
+
+func TestMainProfileWeightedP(t *testing.T) {
+	clip := testutil.MainCorpus[4]
+	runClip(t, clip, clip.Frames)
+}
+
+func TestMainProfileWeightedPFade(t *testing.T) {
+	clip := testutil.MainCorpus[5]
+	runClip(t, clip, clip.Frames)
+}

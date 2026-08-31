@@ -145,3 +145,35 @@ func Average(dst []byte, dstStride, dstOff int, a []byte, aStride, aOff int, b [
 		}
 	}
 }
+
+func WeightUni(dst []byte, stride, off, w, h, weight, offset, logWD int) {
+	round := 0
+	if logWD >= 1 {
+		round = 1 << uint(logWD-1)
+	}
+	for y := 0; y < h; y++ {
+		row := off + y*stride
+		for x := 0; x < w; x++ {
+			v := int(dst[row+x]) * weight
+			if logWD >= 1 {
+				v = (v + round) >> uint(logWD)
+			}
+			dst[row+x] = byte(clip1(v + offset))
+		}
+	}
+}
+
+func WeightBi(dst []byte, dstStride, dstOff int, a []byte, aStride, aOff int, b []byte, bStride, bOff int, w, h, w0, w1, o0, o1, logWD int) {
+	round := 1 << uint(logWD)
+	shift := uint(logWD + 1)
+	offset := (o0 + o1 + 1) >> 1
+	for y := 0; y < h; y++ {
+		da := dstOff + y*dstStride
+		aa := aOff + y*aStride
+		bb := bOff + y*bStride
+		for x := 0; x < w; x++ {
+			v := int(a[aa+x])*w0 + int(b[bb+x])*w1 + round
+			dst[da+x] = byte(clip1(v>>shift + offset))
+		}
+	}
+}

@@ -229,6 +229,18 @@ func (d *sliceDecoder) motionCompensate() {
 			ref.Cb, ref.StrideC, ref.ChromaOffset(cx, cy), cw, ch, cmvx, cmvy)
 		mc.PredictChroma(d.pic.Cr, d.pic.StrideC, d.pic.ChromaOffset(cx, cy),
 			ref.Cr, ref.StrideC, ref.ChromaOffset(cx, cy), cw, ch, cmvx, cmvy)
+
+		if d.weights == nil || int(seg.ref) < 0 || int(seg.ref) >= len(d.weights.L0) {
+			continue
+		}
+		e := &d.weights.L0[seg.ref]
+		mc.WeightUni(d.pic.Y, d.pic.StrideY, d.pic.LumaOffset(x, y), seg.w, seg.h,
+			int(e.LumaWeight), int(e.LumaOffset), int(d.weights.LumaLog2WeightDenom))
+		logWDC := int(d.weights.ChromaLog2WeightDenom)
+		mc.WeightUni(d.pic.Cb, d.pic.StrideC, d.pic.ChromaOffset(cx, cy), cw, ch,
+			int(e.ChromaWeight[0]), int(e.ChromaOffset[0]), logWDC)
+		mc.WeightUni(d.pic.Cr, d.pic.StrideC, d.pic.ChromaOffset(cx, cy), cw, ch,
+			int(e.ChromaWeight[1]), int(e.ChromaOffset[1]), logWDC)
 	}
 }
 

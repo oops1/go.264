@@ -258,10 +258,10 @@ func (d *sliceDecoder) skipFlagInc() int {
 	return inc
 }
 
-func (d *sliceDecoder) cabacRefIdx(x, y, w, h int, maxRef int) int8 {
+func (d *sliceDecoder) cabacRefIdx(x, y, w, h int, maxRef int) (int8, error) {
 	if maxRef == 0 {
 		d.storeRefIdx(x, y, w, h, 0)
-		return 0
+		return 0, nil
 	}
 	curZ := zscanOf[y>>2][x>>2]
 	inc := 0
@@ -271,9 +271,12 @@ func (d *sliceDecoder) cabacRefIdx(x, y, w, h int, maxRef int) int8 {
 	if b, _ := d.neighbourMotion(x, y-1, curZ); b.ref > 0 {
 		inc += 2
 	}
-	ref := int8(d.cb.RefIdx(inc))
-	d.storeRefIdx(x, y, w, h, ref)
-	return ref
+	ref := d.cb.RefIdx(inc)
+	if ref > maxRef {
+		return 0, fmt.Errorf("%w: ref_idx_l0 %d", ErrCorrupt, ref)
+	}
+	d.storeRefIdx(x, y, w, h, int8(ref))
+	return int8(ref), nil
 }
 
 func (d *sliceDecoder) cabacMVD(x, y, w, h int) [2]int16 {
@@ -294,7 +297,11 @@ func (d *sliceDecoder) decodeP8x8CABAC(maxRef int) error {
 	}
 	var refs [4]int8
 	for i := 0; i < 4; i++ {
-		refs[i] = d.cabacRefIdx(i%2*8, i/2*8, 8, 8, maxRef)
+		r, err := d.cabacRefIdx(i%2*8, i/2*8, 8, 8, maxRef)
+		if err != nil {
+			return err
+		}
+		refs[i] = r
 	}
 	for i := 0; i < 4; i++ {
 		ox, oy := i%2*8, i/2*8
@@ -324,7 +331,11 @@ func (d *sliceDecoder) decodeInterMBCABAC(kind int, res *mbResidual) error {
 		parts := partitionsOf(kind)
 		var refs [2]int8
 		for i, p := range parts {
-			refs[i] = d.cabacRefIdx(p.x, p.y, p.w, p.h, maxRef)
+			r, err := d.cabacRefIdx(p.x, p.y, p.w, p.h, maxRef)
+			if err != nil {
+				return err
+			}
+			refs[i] = r
 		}
 		for i, p := range parts {
 			mvd := d.cabacMVD(p.x, p.y, p.w, p.h)

@@ -20,6 +20,7 @@ type sliceDecoder struct {
 
 	refList         []*frame.Picture
 	numRefIdxActive int
+	weights         *syntax.PredWeightTable
 
 	cur *mbState
 	nb  neighbours

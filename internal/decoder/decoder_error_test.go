@@ -239,7 +239,7 @@ func TestDecodeSlicePicScalingMatrixIsUnsupported(t *testing.T) {
 	}
 }
 
-func TestDecodeSliceWeightedPredIsUnsupported(t *testing.T) {
+func TestDecodeWeightedPredIsAccepted(t *testing.T) {
 	sps := minimalSPS()
 	pps := minimalPPS(sps.ID, false)
 	pps.WeightedPred = true
@@ -257,8 +257,8 @@ func TestDecodeSliceWeightedPredIsUnsupported(t *testing.T) {
 
 	d := New()
 	_, err := decodeWithFlush(d, data)
-	if !errors.Is(err, ErrUnsupported) {
-		t.Fatalf("Decode() = %v, want ErrUnsupported (weighted prediction)", err)
+	if errors.Is(err, ErrUnsupported) {
+		t.Fatalf("Decode() = %v, want weighted prediction to be understood", err)
 	}
 }
 
