@@ -20,22 +20,23 @@ Working today:
 | Area | State |
 | --- | --- |
 | Decoder, Main profile | complete, bit-exact against ffmpeg |
-| Encoder, Constrained Baseline | complete, bit-exact against ffmpeg |
+| Encoder, Main profile | complete but for B slices, bit-exact against ffmpeg |
 | Intra prediction, all block sizes | complete |
 | Inter prediction | all P partitions both directions, 8x8 sub-macroblocks, multiple references |
-| B slices | bi-prediction, spatial and temporal direct, output reordered by picture order count |
+| B slices | decoded: bi-prediction, spatial and temporal direct, output reordered by picture order count; not yet written by the encoder |
 | Weighted prediction | explicit for predictive slices, explicit and implicit for bi-predictive |
 | CAVLC | complete, both directions |
-| CABAC | complete on the decoding side |
+| CABAC | complete in both directions; streams are 18 to 30 per cent smaller than CAVLC |
 | In-loop deblocking filter | complete, shared by encoder and decoder |
 | Reference picture management | sliding window and MMCO, up to sixteen references in the encoder |
-| Hardware acceleration | encoding on Windows through Media Foundation, chosen automatically; Linux not yet |
+| Hardware acceleration | encoding on Windows through Media Foundation and on Linux through NVENC, chosen automatically, no cgo on either path |
 | Bitrate targeted rate control | complete, within about a fifth of the request |
 | Mode decision | rate-distortion, trial encoding each candidate |
-| SIMD kernels | sum of absolute differences on amd64, about thirty times faster |
+| SIMD kernels | sum of absolute differences, the 4x4 transform, quantisation and residual add on amd64 |
 | High profile | not started; the 8x8 transform, scaling matrices and lossless bypass are rejected explicitly |
 
-See [docs/PLAN.md](docs/PLAN.md) for the phase breakdown and
+See [docs/ROADMAP.md](docs/ROADMAP.md) for what comes next and why in that
+order, [docs/PLAN.md](docs/PLAN.md) for the phase breakdown and
 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the design.
 
 ## Install
