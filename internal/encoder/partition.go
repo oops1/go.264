@@ -28,15 +28,25 @@ type partResult struct {
 	cost int
 }
 
-func (s *mbEncoder) refPicture(idx int8) *frame.Picture {
-	if int(idx) < 0 || int(idx) >= len(s.e.refs) {
-		if len(s.e.refs) == 0 {
-			return nil
-		}
-		return s.e.refs[0]
+func (e *Encoder) listFor(list int) []*frame.Picture {
+	if list == 0 {
+		return e.refL0
 	}
-	return s.e.refs[idx]
+	return e.refL1
 }
+
+func (s *mbEncoder) refPictureIn(list int, idx int8) *frame.Picture {
+	l := s.e.listFor(list)
+	if len(l) == 0 {
+		return nil
+	}
+	if int(idx) < 0 || int(idx) >= len(l) {
+		return l[0]
+	}
+	return l[idx]
+}
+
+func (s *mbEncoder) refPicture(idx int8) *frame.Picture { return s.refPictureIn(0, idx) }
 
 func (s *mbEncoder) partLimits(px, py, w, h int) (loX, hiX, loY, hiY int) {
 	x, y := s.mbx*16+px, s.mby*16+py
@@ -65,7 +75,7 @@ func (s *mbEncoder) partSubPelCost(ref *frame.Picture, px, py, w, h int, mv, mvp
 func (s *mbEncoder) searchPartition(p partition, partIdx, kind, lambda int) partResult {
 	best := partResult{ref: -1}
 	for idx := 0; idx < s.numRefs; idx++ {
-		r := s.searchPartitionRef(p, partIdx, kind, lambda, int8(idx))
+		r := s.searchPartitionRef(0, p, partIdx, kind, lambda, int8(idx))
 		if s.numRefs > 1 {
 			r.cost += lambda * bitsForTE(uint32(idx), uint32(s.numRefs-1))
 		}
@@ -86,9 +96,9 @@ func bitsForTE(v, max uint32) int {
 	return bitsForUE(v)
 }
 
-func (s *mbEncoder) searchPartitionRef(p partition, partIdx, kind, lambda int, refIdx int8) partResult {
-	ref := s.refPicture(refIdx)
-	mvp := s.predictMV(p.x, p.y, p.w, partIdx, kind, refIdx)
+func (s *mbEncoder) searchPartitionRef(list int, p partition, partIdx, kind, lambda int, refIdx int8) partResult {
+	ref := s.refPictureIn(list, refIdx)
+	mvp := s.predictMV(list, p.x, p.y, p.w, p.h, refIdx, partIdx, kind)
 	loX, hiX, loY, hiY := s.partLimits(p.x, p.y, p.w, p.h)
 	clampX := func(v int) int {
 		if v < loX {
@@ -175,16 +185,42 @@ func absInt(v int) int {
 	return v
 }
 
-func (s *mbEncoder) storePartitionMotion(p partition, mv [2]int16, ref int8) {
-	pic := s.refPicture(ref)
-	for by := p.y; by < p.y+p.h; by += 4 {
-		for bx := p.x; bx < p.x+p.w; bx += 4 {
+func (s *mbEncoder) storeMotionIn(list, x, y, w, h int, mv [2]int16, ref int8) {
+	var pic *frame.Picture
+	if ref >= 0 {
+		pic = s.refPictureIn(list, ref)
+	}
+	for by := y; by < y+h; by += 4 {
+		for bx := x; bx < x+w; bx += 4 {
 			z := zscanOf[by>>2][bx>>2]
-			s.cur.MvL0[z] = mv
-			s.cur.refIdx[z] = ref
-			s.cur.RefPicL0[z] = pic
+			if list == 0 {
+				s.cur.MvL0[z] = mv
+				s.cur.refIdx[z] = ref
+				s.cur.RefPicL0[z] = pic
+			} else {
+				s.cur.MvL1[z] = mv
+				s.cur.refIdxL1[z] = ref
+				s.cur.RefPicL1[z] = pic
+			}
 		}
 	}
+}
+
+func (s *mbEncoder) storeRefIdxIn(list, x, y, w, h int, ref int8) {
+	for by := y; by < y+h; by += 4 {
+		for bx := x; bx < x+w; bx += 4 {
+			z := zscanOf[by>>2][bx>>2]
+			if list == 0 {
+				s.cur.refIdx[z] = ref
+			} else {
+				s.cur.refIdxL1[z] = ref
+			}
+		}
+	}
+}
+
+func (s *mbEncoder) storePartitionMotion(p partition, mv [2]int16, ref int8) {
+	s.storeMotionIn(0, p.x, p.y, p.w, p.h, mv, ref)
 }
 
 func (s *mbEncoder) clearMotion() {
@@ -193,6 +229,11 @@ func (s *mbEncoder) clearMotion() {
 		s.cur.refIdx[i] = -1
 		s.cur.RefPicL0[i] = nil
 		s.cur.mvdL0[i] = [2]uint8{}
+		s.cur.MvL1[i] = [2]int16{}
+		s.cur.refIdxL1[i] = -1
+		s.cur.RefPicL1[i] = nil
+		s.cur.mvdL1[i] = [2]uint8{}
+		s.cur.directBlk[i] = false
 	}
 }
 

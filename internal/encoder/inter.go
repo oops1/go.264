@@ -20,42 +20,12 @@ type motion struct {
 	ref int8
 }
 
-func (s *mbEncoder) neighbourMotion(x, y, curZ int) (motion, bool) {
-	unavailable := motion{ref: -1}
-	switch {
-	case x < 0 && y < 0:
-		if s.nb.topLeft == nil {
-			return unavailable, false
-		}
-		return motionOf(s.nb.topLeft, blkIdxAt(12, 12)), true
-	case x < 0:
-		if y >= 16 || s.nb.left == nil {
-			return unavailable, false
-		}
-		return motionOf(s.nb.left, blkIdxAt(12, y&^3)), true
-	case y < 0:
-		if x < 16 {
-			if s.nb.top == nil {
-				return unavailable, false
-			}
-			return motionOf(s.nb.top, blkIdxAt(x&^3, 12)), true
-		}
-		if s.nb.topRight == nil {
-			return unavailable, false
-		}
-		return motionOf(s.nb.topRight, blkIdxAt(0, 12)), true
-	case x >= 16 || y >= 16:
-		return unavailable, false
+func (s *mbEncoder) neighbourMotion(list, x, y, curZ int) (motion, bool) {
+	m, blk := s.neighbourBlock(x, y, curZ)
+	if m == nil {
+		return motion{ref: -1}, false
 	}
-	z := zscanOf[y>>2][x>>2]
-	if z >= curZ {
-		return unavailable, false
-	}
-	return motionOf(s.cur, z), true
-}
-
-func motionOf(m *mbInfo, blk int) motion {
-	return motion{mv: m.MvL0[blk], ref: m.refIdx[blk]}
+	return motion{mv: m.mvOf(list, blk), ref: m.refIdxOf(list, blk)}, true
 }
 
 func median(a, b, c int16) int16 {
@@ -71,25 +41,47 @@ func median(a, b, c int16) int16 {
 	return b
 }
 
-func (s *mbEncoder) predictMV(x, y, w int, partIdx, kind int, refIdx int8) [2]int16 {
+const (
+	shapeOther = iota
+	shape16x8
+	shape8x16
+)
+
+func shapeOf(kind int) int {
+	switch kind {
+	case mbTypeP16x8, mbTypeB16x8:
+		return shape16x8
+	case mbTypeP8x16, mbTypeB8x16:
+		return shape8x16
+	}
+	return shapeOther
+}
+
+func (s *mbEncoder) neighboursFor(list, x, y, w int) (a, b, c motion) {
 	curZ := zscanOf[y>>2][x>>2]
-	a, okA := s.neighbourMotion(x-1, y, curZ)
-	b, okB := s.neighbourMotion(x, y-1, curZ)
-	c, okC := s.neighbourMotion(x+w, y-1, curZ)
+	a, okA := s.neighbourMotion(list, x-1, y, curZ)
+	b, okB := s.neighbourMotion(list, x, y-1, curZ)
+	c, okC := s.neighbourMotion(list, x+w, y-1, curZ)
 	if !okC {
-		c, okC = s.neighbourMotion(x-1, y-1, curZ)
+		c, okC = s.neighbourMotion(list, x-1, y-1, curZ)
 	}
 	if !okB && !okC && okA {
 		b, c = a, a
 	}
-	switch {
-	case kind == mbTypeP16x8 && partIdx == 0 && b.ref == refIdx:
+	return a, b, c
+}
+
+func (s *mbEncoder) predictMV(list, x, y, w, h int, refIdx int8, partIdx, kind int) [2]int16 {
+	a, b, c := s.neighboursFor(list, x, y, w)
+
+	switch shape := shapeOf(kind); {
+	case shape == shape16x8 && partIdx == 0 && b.ref == refIdx:
 		return b.mv
-	case kind == mbTypeP16x8 && partIdx == 1 && a.ref == refIdx:
+	case shape == shape16x8 && partIdx == 1 && a.ref == refIdx:
 		return a.mv
-	case kind == mbTypeP8x16 && partIdx == 0 && a.ref == refIdx:
+	case shape == shape8x16 && partIdx == 0 && a.ref == refIdx:
 		return a.mv
-	case kind == mbTypeP8x16 && partIdx == 1 && c.ref == refIdx:
+	case shape == shape8x16 && partIdx == 1 && c.ref == refIdx:
 		return c.mv
 	}
 	matches := 0
@@ -110,15 +102,15 @@ func (s *mbEncoder) predictMV(x, y, w int, partIdx, kind int, refIdx int8) [2]in
 }
 
 func (s *mbEncoder) predictMV16x16() [2]int16 {
-	return s.predictMV(0, 0, 16, 0, mbTypeP16x16, 0)
+	return s.predictMV(0, 0, 0, 16, 16, 0, 0, mbTypeP16x16)
 }
 
 func (s *mbEncoder) skipMV() [2]int16 {
 	if s.nb.left == nil || s.nb.top == nil {
 		return [2]int16{}
 	}
-	a, _ := s.neighbourMotion(-1, 0, 0)
-	b, _ := s.neighbourMotion(0, -1, 0)
+	a, _ := s.neighbourMotion(0, -1, 0, 0)
+	b, _ := s.neighbourMotion(0, 0, -1, 0)
 	if a.ref == 0 && a.mv == [2]int16{} {
 		return [2]int16{}
 	}
@@ -471,6 +463,7 @@ const (
 	choiceInter = iota
 	choiceSkip
 	choiceIntra
+	choiceDirect
 )
 
 func (s *mbEncoder) applyUnchanged() bool {
@@ -510,7 +503,7 @@ func (s *mbEncoder) zeroMotionParts(kind int) []partResult {
 	parts := partitionsFor(kind)
 	out := make([]partResult, 0, len(parts))
 	for i, p := range parts {
-		mvp := s.predictMV(p.x, p.y, p.w, i, kind, 0)
+		mvp := s.predictMV(0, p.x, p.y, p.w, p.h, 0, i, kind)
 		out = append(out, partResult{mvd: [2]int16{-mvp[0], -mvp[1]}})
 	}
 	return out

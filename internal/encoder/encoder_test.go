@@ -57,7 +57,7 @@ func psnr(a, b []byte) float64 {
 	return 10 * math.Log10(255*255/mse)
 }
 
-func (e *Encoder) Reconstruction() *frame.Picture { return e.refs[0] }
+func (e *Encoder) Reconstruction() *frame.Picture { return e.lastRec }
 
 func encodeAndDecode(t *testing.T, cfg Config, frames [][]byte) ([]*frame.Picture, [][]byte, []*frame.Picture) {
 	t.Helper()

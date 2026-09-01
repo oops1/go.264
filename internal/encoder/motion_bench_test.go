@@ -15,7 +15,8 @@ func motionBenchEncoder(b *testing.B) *Encoder {
 	if _, err := e.Encode(syntheticFrame(cfg.Width, cfg.Height, 0)); err != nil {
 		b.Fatalf("Encode reference frame: %v", err)
 	}
-	e.loadSource(syntheticFrame(cfg.Width, cfg.Height, 1))
+	e.loadSourceInto(e.src, syntheticFrame(cfg.Width, cfg.Height, 1))
+	e.refL0 = append(e.refL0[:0], e.refs...)
 	return e
 }
 

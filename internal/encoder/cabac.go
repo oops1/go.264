@@ -143,28 +143,37 @@ func (s *mbEncoder) neighbourBlock(x, y, curZ int) (*mbInfo, int) {
 	return s.cur, z
 }
 
-func (s *mbEncoder) refIdxInc(x, y int) int {
+func (s *mbEncoder) refIdxCondTerm(list, x, y, curZ int) bool {
+	m, blk := s.neighbourBlock(x, y, curZ)
+	if m == nil || m.refIdxOf(list, blk) <= 0 {
+		return false
+	}
+	return !m.directBlk[blk]
+}
+
+func (s *mbEncoder) refIdxInc(list, x, y int) int {
 	curZ := zscanOf[y>>2][x>>2]
 	inc := 0
-	if m, blk := s.neighbourBlock(x-1, y, curZ); m != nil && m.refIdx[blk] > 0 {
+	if s.refIdxCondTerm(list, x-1, y, curZ) {
 		inc++
 	}
-	if m, blk := s.neighbourBlock(x, y-1, curZ); m != nil && m.refIdx[blk] > 0 {
+	if s.refIdxCondTerm(list, x, y-1, curZ) {
 		inc += 2
 	}
 	return inc
 }
 
-func (s *mbEncoder) mvdNeighbourSum(x, y int) (int, int) {
+func (s *mbEncoder) mvdNeighbourSum(list, x, y int) (int, int) {
 	curZ := zscanOf[y>>2][x>>2]
 	var sumX, sumY int
-	if m, blk := s.neighbourBlock(x-1, y, curZ); m != nil && !m.Intra {
-		sumX += int(m.mvdL0[blk][0])
-		sumY += int(m.mvdL0[blk][1])
-	}
-	if m, blk := s.neighbourBlock(x, y-1, curZ); m != nil && !m.Intra {
-		sumX += int(m.mvdL0[blk][0])
-		sumY += int(m.mvdL0[blk][1])
+	for _, d := range [2][2]int{{x - 1, y}, {x, y - 1}} {
+		m, blk := s.neighbourBlock(d[0], d[1], curZ)
+		if m == nil || m.Intra {
+			continue
+		}
+		mvd := m.mvdOf(list, blk)
+		sumX += int(mvd[0])
+		sumY += int(mvd[1])
 	}
 	return sumX, sumY
 }
@@ -179,11 +188,20 @@ func absClip70(v int16) uint8 {
 	return uint8(v)
 }
 
-func (s *mbEncoder) storeMVD(x, y, w, h int, mvd [2]int16) {
+func (s *mbEncoder) storeMVDIn(list, x, y, w, h int, mvd [2]int16) {
 	packed := [2]uint8{absClip70(mvd[0]), absClip70(mvd[1])}
 	for by := y; by < y+h; by += 4 {
 		for bx := x; bx < x+w; bx += 4 {
-			s.cur.mvdL0[zscanOf[by>>2][bx>>2]] = packed
+			z := zscanOf[by>>2][bx>>2]
+			if list == 0 {
+				s.cur.mvdL0[z] = packed
+			} else {
+				s.cur.mvdL1[z] = packed
+			}
 		}
 	}
+}
+
+func (s *mbEncoder) storeMVD(x, y, w, h int, mvd [2]int16) {
+	s.storeMVDIn(0, x, y, w, h, mvd)
 }

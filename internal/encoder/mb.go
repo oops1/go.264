@@ -49,7 +49,9 @@ type mbEncoder struct {
 	qpY int
 
 	isP            bool
+	isB            bool
 	numRefs        int
+	numRefsL1      int
 	hints          *frameHints
 	span           sliceRange
 	sliceQP        int
@@ -60,8 +62,14 @@ type mbEncoder struct {
 	prevQPDeltaNonZero bool
 
 	scratch    [256]byte
+	scratchB   [256]byte
+	segs       []motionSegment
+	predA      predBuffer
+	predB      predBuffer
 	parts      []partResult
 	subs       []subResult
+	bparts     []bPartResult
+	bsubs      []bSubResult
 	lumaScan   [16][16]int32
 	lumaDCScan [16]int32
 	chromaDC   [2]transform.ChromaDC
@@ -75,17 +83,19 @@ func (s *mbEncoder) reset() {
 	s.chromaScan = [2][4][16]int32{}
 }
 
-func (e *Encoder) encodeSlice(w *bits.Writer, hdr *syntax.SliceHeader, qp, numRefs int, hints *frameHints, firstMB, endMB int) error {
-	span := sliceRange{firstMB: firstMB, endMB: endMB}
-	s := &mbEncoder{e: e, w: w, qpY: qp, isP: hdr.SliceType.IsP(), numRefs: numRefs,
+func (e *Encoder) encodeSlice(w *bits.Writer, hdr *syntax.SliceHeader, p sliceJob, hints *frameHints) error {
+	qp := p.qp
+	span := sliceRange{firstMB: p.firstMB, endMB: p.endMB}
+	s := &mbEncoder{e: e, w: w, qpY: qp, isP: hdr.SliceType.IsP(), isB: hdr.SliceType.IsB(),
+		numRefs: p.active, numRefsL1: p.activeL1,
 		hints: hints, sliceQP: qp, prevQP: qp, span: span}
 	if e.pps.CABAC {
 		s.cb = &cabac.Encoder{}
-		if err := s.cb.Init(w, qp, !s.isP, hdr.CABACInitIDC); err != nil {
+		if err := s.cb.Init(w, qp, hdr.SliceType.IsI(), hdr.CABACInitIDC); err != nil {
 			return err
 		}
 	}
-	for addr := firstMB; addr < endMB; addr++ {
+	for addr := p.firstMB; addr < p.endMB; addr++ {
 		mbx, mby := addr%e.widthMBs, addr/e.widthMBs
 		s.mbx = mbx
 		s.mby = mby
@@ -94,9 +104,11 @@ func (e *Encoder) encodeSlice(w *bits.Writer, hdr *syntax.SliceHeader, qp, numRe
 		*s.cur = mbInfo{MB: loopfilter.MB{
 			QPY:            s.qpY,
 			ChromaQPOffset: [2]int{int(e.pps.ChromaQPIndexOffset), int(e.pps.SecondChromaQPIndexOffset)},
+			Bipredictive:   s.isB,
 		}}
 		for i := range s.cur.refIdx {
 			s.cur.refIdx[i] = -1
+			s.cur.refIdxL1[i] = -1
 		}
 		s.nb = e.around(mbx, mby, span)
 		s.reset()
@@ -106,39 +118,52 @@ func (e *Encoder) encodeSlice(w *bits.Writer, hdr *syntax.SliceHeader, qp, numRe
 		}
 		s.cur.Decoded = true
 		if s.cb != nil {
-			s.cb.EndOfSlice(addr == endMB-1)
+			s.cb.EndOfSlice(addr == p.endMB-1)
 		}
 	}
 	if s.cb != nil {
 		s.cb.Finish()
 		return w.Err()
 	}
-	if s.isP && s.pendingSkipRun > 0 {
+	if (s.isP || s.isB) && s.pendingSkipRun > 0 {
 		w.WriteUE(s.pendingSkipRun)
 	}
 	return w.Err()
 }
 
 func (s *mbEncoder) encodeMB() error {
-	if !s.isP {
+	switch {
+	case s.isB:
 		if s.cb != nil {
-			s.encodeIntraModes()
-			s.writeIntraMBCABAC(false)
-			return s.w.Err()
+			return s.encodeBMBCABAC()
 		}
-		return s.encodeIntraMB(0)
+		skipped, err := s.encodeBMB()
+		if err != nil {
+			return err
+		}
+		if skipped {
+			s.pendingSkipRun++
+		}
+		return nil
+	case s.isP:
+		if s.cb != nil {
+			return s.encodeInterMBCABAC()
+		}
+		skipped, err := s.encodeInterMB()
+		if err != nil {
+			return err
+		}
+		if skipped {
+			s.pendingSkipRun++
+		}
+		return nil
 	}
 	if s.cb != nil {
-		return s.encodeInterMBCABAC()
+		s.encodeIntraModes()
+		s.writeIntraMBCABAC(false)
+		return s.w.Err()
 	}
-	skipped, err := s.encodeInterMB()
-	if err != nil {
-		return err
-	}
-	if skipped {
-		s.pendingSkipRun++
-	}
-	return nil
+	return s.encodeIntraMB(0)
 }
 
 func (s *mbEncoder) lumaOffset(blk int) int {

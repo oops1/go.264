@@ -65,6 +65,7 @@ type EncoderConfig struct {
 
 	BitrateKbps int
 	RefFrames   int
+	BFrames     int
 
 	CABAC         bool
 	MotionSearch  MotionSearch
@@ -132,6 +133,7 @@ func NewEncoder(cfg EncoderConfig) (*Encoder, error) {
 		QP:           cfg.QP,
 		BitrateKbps:  cfg.BitrateKbps,
 		RefFrames:    cfg.RefFrames,
+		BFrames:      cfg.BFrames,
 		CABAC:        cfg.CABAC,
 		MotionSearch: cfg.MotionSearch,
 		ModeDecision: cfg.ModeDecision,
@@ -193,7 +195,7 @@ func (e *Encoder) Flush() ([]byte, error) {
 	if e.hw != nil {
 		return e.hw.Drain()
 	}
-	return nil, nil
+	return e.cpu.Flush()
 }
 
 func (e *Encoder) Close() error {

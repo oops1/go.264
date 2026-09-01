@@ -81,7 +81,15 @@ func (s *mbEncoder) writeIntraMBCABAC(inP bool) {
 	} else {
 		s.cb.IntraMBType(s.intraMBTypeInc(), mbType)
 	}
+	s.writeIntraMBBodyCABAC()
+}
 
+func (s *mbEncoder) writeIntraMBCABACInB() {
+	s.cb.MBTypeB(s.bMBTypeInc(), s.intraMBTypeValue(), true)
+	s.writeIntraMBBodyCABAC()
+}
+
+func (s *mbEncoder) writeIntraMBBodyCABAC() {
 	if s.cur.kind == mbTypeINxN {
 		s.writeIntraModesCABAC()
 		s.cb.IntraChromaPredMode(s.chromaPredInc(), int(s.cur.chromaMode))
@@ -118,11 +126,11 @@ func (s *mbEncoder) writeRefIdxCABAC(x, y int, ref int8) {
 	if s.numRefs <= 1 {
 		return
 	}
-	s.cb.RefIdx(s.refIdxInc(x, y), int(ref))
+	s.cb.RefIdx(s.refIdxInc(0, x, y), int(ref))
 }
 
 func (s *mbEncoder) writeMVDCABAC(x, y int, mvd [2]int16) {
-	sumX, sumY := s.mvdNeighbourSum(x, y)
+	sumX, sumY := s.mvdNeighbourSum(0, x, y)
 	s.cb.MVD(cabac.MVDHorizontal, sumX, int(mvd[0]))
 	s.cb.MVD(cabac.MVDVertical, sumY, int(mvd[1]))
 }

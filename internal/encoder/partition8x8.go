@@ -78,7 +78,7 @@ func (s *mbEncoder) searchSubMB(ox, oy, lambda int) subResult {
 			results := make([]partResult, len(parts))
 			cost := lambda*bitsForUE(uint32(subType)) + refCost
 			for i, p := range parts {
-				r := s.searchPartitionRef(p, i, mbTypeP8x8, lambda, int8(refIdx))
+				r := s.searchPartitionRef(0, p, i, mbTypeP8x8, lambda, int8(refIdx))
 				s.storePartitionMotion(p, r.mv, r.ref)
 				results[i] = r
 				cost += r.cost

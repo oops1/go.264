@@ -309,3 +309,53 @@ func TestSlicesTradeBitsForThreads(t *testing.T) {
 	}
 	t.Logf("one slice %d bytes, 68 slices %d bytes, %.1f%% more", sizes[1], sizes[68], overhead)
 }
+
+func TestRoundTripWithBFrames(t *testing.T) {
+	const w, h = 176, 144
+	cfg := EncoderConfig{Width: w, Height: h, FPSNum: 25, FPSDen: 1, GOPSize: 8, QP: 26,
+		BFrames: 2, RefFrames: 2, CABAC: true, ForceSoftware: true}
+	enc, err := NewEncoder(cfg)
+	if err != nil {
+		t.Fatalf("NewEncoder: %v", err)
+	}
+	defer enc.Close()
+
+	var stream []byte
+	var sources [][]byte
+	for i := 0; i < 10; i++ {
+		src := pattern(w, h, i)
+		sources = append(sources, src)
+		pkt, err := enc.Encode(src)
+		if err != nil {
+			t.Fatalf("frame %d: %v", i, err)
+		}
+		stream = append(stream, pkt...)
+	}
+	tail, err := enc.Flush()
+	if err != nil {
+		t.Fatalf("Flush: %v", err)
+	}
+	stream = append(stream, tail...)
+
+	dec := NewDecoderWithConfig(DecoderConfig{ForceSoftware: true})
+	defer dec.Close()
+	frames, err := dec.Decode(stream)
+	if err != nil {
+		t.Fatalf("Decode: %v", err)
+	}
+	rest, err := dec.Flush()
+	if err != nil {
+		t.Fatalf("decoder Flush: %v", err)
+	}
+	frames = append(frames, rest...)
+
+	if len(frames) != len(sources) {
+		t.Fatalf("decoded %d frames from %d sources", len(frames), len(sources))
+	}
+	for i, f := range frames {
+		got := f.AppendI420(make([]byte, 0, f.I420Size()))
+		if p := psnr(sources[i], got); p < 30 {
+			t.Errorf("frame %d came back at %.1f dB, which is below the 30 dB floor", i, p)
+		}
+	}
+}

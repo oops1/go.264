@@ -26,11 +26,36 @@ type mbInfo struct {
 	cbpLuma     int
 	cbpChroma   int
 	refIdx      [16]int8
+	refIdxL1    [16]int8
 
 	mvdL0       [16][2]uint8
+	mvdL1       [16][2]uint8
+	directBlk   [16]bool
+	bTypeIdx    int
 	cbfLumaDC   bool
 	cbfChromaDC [2]bool
 	skipped     bool
+}
+
+func (m *mbInfo) refIdxOf(list, blk int) int8 {
+	if list == 0 {
+		return m.refIdx[blk]
+	}
+	return m.refIdxL1[blk]
+}
+
+func (m *mbInfo) mvOf(list, blk int) [2]int16 {
+	if list == 0 {
+		return m.MvL0[blk]
+	}
+	return m.MvL1[blk]
+}
+
+func (m *mbInfo) mvdOf(list, blk int) [2]uint8 {
+	if list == 0 {
+		return m.mvdL0[blk]
+	}
+	return m.mvdL1[blk]
 }
 
 var blockX = [16]int{0, 4, 0, 4, 8, 12, 8, 12, 0, 4, 0, 4, 8, 12, 8, 12}
