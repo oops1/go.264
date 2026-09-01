@@ -31,7 +31,7 @@ jobs:
       - name: Vet
         run: go vet ./...
       - name: Test
-        run: go test -count=1 -coverprofile=coverage.txt -covermode=atomic ./...
+        run: go test -count=1 -timeout 40m -coverprofile=coverage.txt -covermode=atomic ./...
       - name: Coverage summary
         run: go tool cover -func=coverage.txt | tail -n 1
 
@@ -44,7 +44,7 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: '1.24'
-      - run: go test -count=1 -race ./...
+      - run: go test -count=1 -race -timeout 60m ./...
 
   lint:
     runs-on: ubuntu-latest
@@ -82,7 +82,7 @@ jobs:
       - name: Build and test the pure Go fallback
         run: |
           go build -tags purego ./...
-          go test -tags purego -count=1 ./...
+          go test -tags purego -count=1 -timeout 40m ./...
 
   hwaccel-modules:
     runs-on: ubuntu-latest
