@@ -8,6 +8,7 @@ import (
 	"github.com/oops1/go.264/internal/frame"
 	"github.com/oops1/go.264/internal/nal"
 	"github.com/oops1/go.264/internal/syntax"
+	"github.com/oops1/go.264/internal/testutil"
 )
 
 func minimalSPS() *syntax.SPS {
@@ -465,3 +466,67 @@ func TestDecodeIPCMMacroblocks(t *testing.T) {
 		}
 	}
 }
+
+func TestRepeatedParameterSetsDoNotResetTheBuffer(t *testing.T) {
+	for _, c := range append(append([]testutil.Clip{}, testutil.Corpus...), testutil.MainCorpus...) {
+		if c.Frames < 3 {
+			continue
+		}
+		stream := testutil.LoadStream(t, c)
+		units := nal.SplitAnnexB(stream)
+
+		var headers [][]byte
+		var rest [][]byte
+		for _, ebsp := range units {
+			u, err := nal.Parse(ebsp)
+			if err != nil {
+				t.Fatalf("%s: %v", c.Name, err)
+			}
+			if u.Type == nal.TypeSPS || u.Type == nal.TypePPS {
+				headers = append(headers, ebsp)
+				continue
+			}
+			rest = append(rest, ebsp)
+		}
+		if len(headers) == 0 {
+			continue
+		}
+
+		var repeated []byte
+		for _, ebsp := range rest {
+			u, err := nal.Parse(ebsp)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if u.Type == nal.TypeSliceIDR || u.Type == nal.TypeSliceNonIDR {
+				for _, h := range headers {
+					repeated = append(repeated, annexBPrefix...)
+					repeated = append(repeated, h...)
+				}
+			}
+			repeated = append(repeated, annexBPrefix...)
+			repeated = append(repeated, ebsp...)
+		}
+
+		want := decodeAll(t, stream)
+		got := decodeAll(t, repeated)
+		if len(got) != len(want) {
+			t.Fatalf("%s: repeating the parameter sets gave %d pictures against %d",
+				c.Name, len(got), len(want))
+		}
+		for i := range want {
+			a := make([]byte, want[i].Size())
+			want[i].CopyOut(a)
+			b := make([]byte, got[i].Size())
+			got[i].CopyOut(b)
+			for j := range a {
+				if a[j] != b[j] {
+					t.Fatalf("%s: repeating the parameter sets changed picture %d at sample %d, %d against %d",
+						c.Name, i, j, b[j], a[j])
+				}
+			}
+		}
+	}
+}
+
+var annexBPrefix = []byte{0, 0, 1}

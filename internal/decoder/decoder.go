@@ -2,6 +2,7 @@ package decoder
 
 import (
 	"fmt"
+	"reflect"
 
 	"github.com/oops1/go.264/internal/bits"
 	"github.com/oops1/go.264/internal/frame"
@@ -134,6 +135,9 @@ func (d *Decoder) handleUnit(ebsp []byte) ([]*frame.Picture, error) {
 		if err := d.checkSupported(sps); err != nil {
 			return nil, err
 		}
+		if old, ok := d.spsMap[sps.ID]; ok && reflect.DeepEqual(old, sps) {
+			return nil, nil
+		}
 		d.spsMap[sps.ID] = sps
 		return nil, nil
 
@@ -141,6 +145,9 @@ func (d *Decoder) handleUnit(ebsp []byte) ([]*frame.Picture, error) {
 		pps, err := syntax.ParsePPS(u.RBSP, d.SPS)
 		if err != nil {
 			return nil, err
+		}
+		if old, ok := d.ppsMap[pps.ID]; ok && reflect.DeepEqual(old, pps) {
+			return nil, nil
 		}
 		d.ppsMap[pps.ID] = pps
 		return nil, nil
