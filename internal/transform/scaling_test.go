@@ -259,3 +259,20 @@ func TestBuildLevelScale8x8RandomWeightIsMonotoneInWeight(t *testing.T) {
 		}
 	}
 }
+
+func TestFlatBuilders4x4MatchTheUnweightedTables(t *testing.T) {
+	ls := BuildLevelScale4x4(FlatWeightScale4x4)
+	qs := BuildQuantScale4x4(FlatWeightScale4x4)
+	for m := 0; m < 6; m++ {
+		for i := 0; i < 16; i++ {
+			if ls[m][i] != levelScale[m][i] {
+				t.Fatalf("level scale at m %d position %d is %d, want %d",
+					m, i, ls[m][i], levelScale[m][i])
+			}
+			if qs[m][i] != levelQuant[m][i] {
+				t.Fatalf("quant scale at m %d position %d is %d, want %d",
+					m, i, qs[m][i], levelQuant[m][i])
+			}
+		}
+	}
+}

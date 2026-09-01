@@ -21,50 +21,14 @@ const (
 	scaleInterV = 5
 )
 
-type scale4x4 [6][16]int32
-
-var (
-	flatLevel4x4 scale4x4
-	flatQuant4x4 scale4x4
-)
-
-func init() {
-	for m := 0; m < 6; m++ {
-		var b transform.Block
-		for i := range b {
-			b[i] = 1
-		}
-		transform.Dequant4x4(&b, 24+m, false)
-		flatLevel4x4[m] = b
-
-		var q transform.Block
-		for i := range q {
-			q[i] = 1 << 15
-		}
-		transform.Quant4x4(&q, m, false)
-		flatQuant4x4[m] = q
-	}
-}
+type scale4x4 = transform.LevelScale4x4
 
 func buildLevelScale4x4(weight [16]uint8) scale4x4 {
-	var out scale4x4
-	for m := 0; m < 6; m++ {
-		for i := 0; i < 16; i++ {
-			out[m][i] = flatLevel4x4[m][i] / 16 * int32(weight[i])
-		}
-	}
-	return out
+	return transform.BuildLevelScale4x4(weight)
 }
 
 func buildQuantScale4x4(weight [16]uint8) scale4x4 {
-	var out scale4x4
-	for m := 0; m < 6; m++ {
-		for i := 0; i < 16; i++ {
-			w := int32(weight[i])
-			out[m][i] = (flatQuant4x4[m][i]*16 + w/2) / w
-		}
-	}
-	return out
+	return scale4x4(transform.BuildQuantScale4x4(weight))
 }
 
 func rasterOrder4x4(scan [16]uint8) [16]uint8 {

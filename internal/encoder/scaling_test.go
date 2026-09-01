@@ -15,7 +15,7 @@ func flatScale4x4() (*scale4x4, *scale4x4) {
 	return &ls, &qs
 }
 
-func TestDerivedFlatTablesMatchTheTransformPackage(t *testing.T) {
+func TestTheFlatMatrixPathMatchesTheTransformPackage(t *testing.T) {
 	ls, qs := flatScale4x4()
 	rng := rand.New(rand.NewSource(9))
 	for qp := 0; qp <= 51; qp++ {
@@ -29,7 +29,7 @@ func TestDerivedFlatTablesMatchTheTransformPackage(t *testing.T) {
 				transform.Quant4x4(&a, qp, intra)
 				quant4x4(&b, qp, qs, intra)
 				if a != b {
-					t.Fatalf("qp %d intra %v: the derived quantiser differs from the transform package\n%v\n%v",
+					t.Fatalf("qp %d intra %v: the weighted quantiser differs from the transform package\n%v\n%v",
 						qp, intra, a, b)
 				}
 
@@ -42,12 +42,12 @@ func TestDerivedFlatTablesMatchTheTransformPackage(t *testing.T) {
 				transform.Dequant4x4(&a, qp, false)
 				dequant4x4(&b, qp, ls, false)
 				if a != b {
-					t.Fatalf("qp %d: the derived dequantiser differs from the transform package\n%v\n%v", qp, a, b)
+					t.Fatalf("qp %d: the weighted dequantiser differs from the transform package\n%v\n%v", qp, a, b)
 				}
 				transform.Dequant4x4(&c, qp, true)
 				dequant4x4(&d, qp, ls, true)
 				if c != d {
-					t.Fatalf("qp %d: the derived dequantiser differs when the DC is held\n%v\n%v", qp, c, d)
+					t.Fatalf("qp %d: the weighted dequantiser differs when the DC is held\n%v\n%v", qp, c, d)
 				}
 
 				for i := range a {
@@ -57,12 +57,12 @@ func TestDerivedFlatTablesMatchTheTransformPackage(t *testing.T) {
 				transform.QuantLumaDC(&a, qp, intra)
 				quantLumaDC(&b, qp, qs, intra)
 				if a != b {
-					t.Fatalf("qp %d intra %v: the derived luma DC quantiser differs\n%v\n%v", qp, intra, a, b)
+					t.Fatalf("qp %d intra %v: the weighted luma DC quantiser differs\n%v\n%v", qp, intra, a, b)
 				}
 				transform.DequantLumaDC(&a, qp)
 				dequantLumaDC(&b, qp, ls)
 				if a != b {
-					t.Fatalf("qp %d: the derived luma DC dequantiser differs\n%v\n%v", qp, a, b)
+					t.Fatalf("qp %d: the weighted luma DC dequantiser differs\n%v\n%v", qp, a, b)
 				}
 
 				var ca, cb transform.ChromaDC

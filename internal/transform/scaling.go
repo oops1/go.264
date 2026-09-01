@@ -156,3 +156,29 @@ func Quant8x8(b *Block8x8, qp int, qs *QuantScale8x8, intra bool) {
 		}
 	}
 }
+
+type LevelScale4x4 [6][16]int32
+
+type QuantScale4x4 [6][16]int32
+
+func BuildLevelScale4x4(weightScale [16]uint8) LevelScale4x4 {
+	var ls LevelScale4x4
+	for m := 0; m < 6; m++ {
+		for pos := 0; pos < 16; pos++ {
+			ls[m][pos] = normAdjust[m][posClass[pos]] * int32(weightScale[pos])
+		}
+	}
+	return ls
+}
+
+func BuildQuantScale4x4(weightScale [16]uint8) QuantScale4x4 {
+	var qs QuantScale4x4
+	for m := 0; m < 6; m++ {
+		for pos := 0; pos < 16; pos++ {
+			base := quantCoef[m][posClass[pos]] * 16
+			w := int32(weightScale[pos])
+			qs[m][pos] = (base + w/2) / w
+		}
+	}
+	return qs
+}
