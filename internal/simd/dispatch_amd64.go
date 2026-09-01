@@ -25,7 +25,7 @@ func sadDispatch(src []byte, srcStride int, ref []byte, refStride, w, h int) int
 	return sadGeneric(src, srcStride, ref, refStride, w, h)
 }
 
-func Accelerated() bool { return true }
+func Accelerated() bool { return hasSSE41 }
 
 func Forward4x4(b *[16]int32) {
 	forward4x4(b)
