@@ -23,56 +23,69 @@ than absent.
 | Hardware encoding | Media Foundation on Windows, NVENC on Linux, both without cgo |
 | Hardware decoding | none; the platform transform is kept as an oracle, not a backend |
 | Screen content interface | changed rectangles, typed regions, forced key frames, switchable motion search |
-| Slices | one per picture, single threaded |
+| Slices | any count on macroblock row boundaries, encoded in parallel |
 
-Measured on the development machine, 20 threads, one frame per operation:
+Measured on the development machine, 20 threads, one frame per operation.
+The desktop figure is a 1080p screen with one moving video window, which
+is the picture winline actually sends:
 
-| Path | 176x144 | 1280x720 | 1920x1080 |
+| Path | 176x144 | 1280x720 | 1080p desktop |
 | --- | --- | --- | --- |
-| Encoder, CPU | 48.1 f/s | 1.08 f/s | not measured |
-| Encoder, adapter | 1914 f/s | 606 f/s | 324 f/s |
+| CPU, exhaustive search, one slice | 48.1 f/s | 1.08 f/s | 0.37 f/s |
+| CPU, early skip, one slice | 74.9 f/s | 1.06 f/s | 2.19 f/s |
+| CPU, early skip, one slice per row | | | 19.9 f/s |
+| Adapter | 1914 f/s | 606 f/s | 324 f/s |
 
 CABAC costs 18 to 30 per cent fewer bits than CAVLC at the same
-quantiser. A still screen with change hints costs about ten bytes a
+quantiser. Cutting the 1080p desktop into 68 slices costs 1.8 per cent
+more bits. A still screen with change hints costs about ten bytes a
 frame against two seconds of work without them.
 
 ## The number that sets the order
 
-One frame a second at 720p on the processor, against six hundred on the
-adapter. The whole reason winline commissioned this codec is the machine
-that has no adapter, so on the machine that matters most the encoder is
-three orders of magnitude short of real time, and no feature closes that
-gap. Speed comes first.
+The first version of this document opened on one frame a second at 720p
+against six hundred on the adapter, and argued that speed had to come
+before features because the machine winline cares about has no adapter.
+That argument still holds; the first two pieces of it are now done.
 
 The production machine sharpens the point: eighteen cores and thirty-six
 threads, and one video card whose driver does not expose an encoder. The
-processor there is wide and idle. The encoder does not use it.
+processor there is wide. Until this milestone the encoder used one lane
+of it.
 
 ## 1.2 — Speed
 
-Three pieces, in this order.
+**Done: stop paying for easy content.** The mode decision tested every
+candidate for every macroblock, so a still desktop cost the same as
+moving video. It now tries the skip candidate first and takes it when
+the residual quantises to nothing. On the 1080p desktop that is 0.37
+frames a second against 2.19, a factor of six, and it is switchable off
+through `ModeDecision`.
 
-**Stop paying for easy content.** The mode decision trial-encodes every
-candidate for every macroblock, so a still desktop costs the same as a
-moving picture. An early skip test — accept the skip when its distortion
-is already below the threshold the other candidates would have to beat —
-cuts the common case without touching the search that finds hard blocks.
+**Done: cut the picture into slices and encode them at once.** Slices
+split on macroblock row boundaries; prediction stops at a boundary,
+which is what makes them independent, and the neighbour lookup decides
+by macroblock address rather than reading a structure another goroutine
+owns. One slice per macroblock row reaches 19.9 frames a second on the
+same picture with twenty threads, ten times the single slice figure, for
+1.8 per cent more bits. `Slices` negative means one per processor.
 
-**Cut the picture into slices and encode them at once.** One slice per
-picture today, so one core. Slices are independent by construction:
-prediction does not cross a slice boundary and the entropy coder restarts
-at each one. The cost is a little compression, because context and
-prediction are lost at every boundary; the count must therefore be a
-setting, not a constant.
+The scaling is not linear and the numbers say why: two and four slices
+barely help, because the moving window falls inside one of them and that
+slice does all the work. Static partitioning cannot fix that; more
+slices than threads can, and that is what the automatic setting does.
 
-**Profile, and write the numbers here.** Before and after each change,
-in this document, so a later change that undoes a gain is visible.
+**Still to do: profile what is left and write the numbers here.** The
+next measurement to take is where the remaining time goes now that the
+easy macroblocks are free — motion search, the intra mode search, or the
+entropy coder — and whether the SIMD kernels reach the functions that
+now dominate.
 
-Acceptance: a typical 1080p desktop frame inside the budget winline's
-`GFX_PLAN.md` records for its planar path, so go264 is no worse than what
-that project already has; near-linear scaling to the core count on
-1080p; ffmpeg still decodes every stream to exactly what our decoder
-produces, multi-slice included.
+Acceptance for the milestone: a typical 1080p desktop frame inside the
+budget winline's `GFX_PLAN.md` records for its planar path; ffmpeg
+decodes every stream to exactly what our decoder produces, multi-slice
+and both entropy coders included. The second half is measured and holds
+today.
 
 ## 1.3 — Acceptance by a real client
 
