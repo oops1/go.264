@@ -30,6 +30,8 @@ func main() {
 	genAddResidual4x4()
 	genSATD4x4()
 	genSATD4x4AVX2()
+	genSATD8x8()
+	genSATD8x8AVX2()
 
 	for _, size := range lumaMCSizes {
 		genSixTapHoriz(size[0], size[1])
@@ -467,25 +469,17 @@ func horizontalSum4(v reg.VecVirtual) reg.VecVirtual {
 	return acc
 }
 
-func genSATD4x4() {
-	TEXT("satd4x4", NOSPLIT, "func(src []byte, srcStride int, ref []byte, refStride int) int")
-	Pragma("noescape")
-	Doc("")
-	src := Load(Param("src").Base(), GP64())
-	srcStride := Load(Param("srcStride"), GP64())
-	ref := Load(Param("ref").Base(), GP64())
-	refStride := Load(Param("refStride"), GP64())
-
-	r0 := loadDiffRow4(src, ref)
-	ADDQ(srcStride, src)
-	ADDQ(refStride, ref)
-	r1 := loadDiffRow4(src, ref)
-	ADDQ(srcStride, src)
-	ADDQ(refStride, ref)
-	r2 := loadDiffRow4(src, ref)
-	ADDQ(srcStride, src)
-	ADDQ(refStride, ref)
-	r3 := loadDiffRow4(src, ref)
+func satd4x4RawSSE(srcPtr, srcStride, refPtr, refStride reg.Register) reg.Register {
+	r0 := loadDiffRow4(srcPtr, refPtr)
+	ADDQ(srcStride, srcPtr)
+	ADDQ(refStride, refPtr)
+	r1 := loadDiffRow4(srcPtr, refPtr)
+	ADDQ(srcStride, srcPtr)
+	ADDQ(refStride, refPtr)
+	r2 := loadDiffRow4(srcPtr, refPtr)
+	ADDQ(srcStride, srcPtr)
+	ADDQ(refStride, refPtr)
+	r3 := loadDiffRow4(srcPtr, refPtr)
 
 	c0, c1, c2, c3 := transpose4x4(r0, r1, r2, r3)
 	o0, o1, o2, o3 := hadamardButterfly(c0, c1, c2, c3)
@@ -505,8 +499,67 @@ func genSATD4x4() {
 	MOVD(sum, sumGP)
 	ADDL(Imm(1), sumGP)
 	SARL(Imm(1), sumGP)
+	return out
+}
+
+func genSATD4x4() {
+	TEXT("satd4x4", NOSPLIT, "func(src []byte, srcStride int, ref []byte, refStride int) int")
+	Pragma("noescape")
+	Doc("")
+	src := Load(Param("src").Base(), GP64())
+	srcStride := Load(Param("srcStride"), GP64())
+	ref := Load(Param("ref").Base(), GP64())
+	refStride := Load(Param("refStride"), GP64())
+
+	out := satd4x4RawSSE(src, srcStride, ref, refStride)
 
 	Store(out, ReturnIndex(0))
+	RET()
+}
+
+func blockOffsetPtr(base, stride4 reg.Register, xOff, yOff int) reg.Register {
+	p := GP64()
+	MOVQ(base, p)
+	if xOff != 0 {
+		ADDQ(Imm(uint64(xOff)), p)
+	}
+	if yOff != 0 {
+		ADDQ(stride4, p)
+	}
+	return p
+}
+
+var satd8x8Blocks = [][2]int{{0, 0}, {4, 0}, {0, 4}, {4, 4}}
+
+func genSATD8x8() {
+	TEXT("satd8x8", NOSPLIT, "func(src []byte, srcStride int, ref []byte, refStride int) int")
+	Pragma("noescape")
+	Doc("")
+	srcBase := Load(Param("src").Base(), GP64())
+	srcStride := Load(Param("srcStride"), GP64())
+	refBase := Load(Param("ref").Base(), GP64())
+	refStride := Load(Param("refStride"), GP64())
+
+	srcStride4 := GP64()
+	MOVQ(srcStride, srcStride4)
+	SHLQ(Imm(2), srcStride4)
+	refStride4 := GP64()
+	MOVQ(refStride, refStride4)
+	SHLQ(Imm(2), refStride4)
+
+	total := GP64()
+	for i, blk := range satd8x8Blocks {
+		srcPtr := blockOffsetPtr(srcBase, srcStride4, blk[0], blk[1])
+		refPtr := blockOffsetPtr(refBase, refStride4, blk[0], blk[1])
+		res := satd4x4RawSSE(srcPtr, srcStride, refPtr, refStride)
+		if i == 0 {
+			MOVQ(res, total)
+		} else {
+			ADDQ(res, total)
+		}
+	}
+
+	Store(total, ReturnIndex(0))
 	RET()
 }
 
@@ -541,17 +594,19 @@ func butterflyBlend(v, swapped reg.VecVirtual, blend func(a, b, d reg.VecVirtual
 	return d
 }
 
-func genSATD4x4AVX2() {
-	TEXT("satd4x4AVX2", NOSPLIT, "func(src []byte, srcStride int, ref []byte, refStride int) int")
-	Pragma("noescape")
-	Doc("")
-	src := Load(Param("src").Base(), GP64())
-	srcStride := Load(Param("srcStride"), GP64())
-	ref := Load(Param("ref").Base(), GP64())
-	refStride := Load(Param("refStride"), GP64())
+func avx2SatdOnes() reg.VecVirtual {
+	oneGP := GP32()
+	MOVL(U32(1|1<<16), oneGP)
+	oneX := XMM()
+	VMOVD(oneGP, oneX)
+	ones := YMM()
+	VPBROADCASTD(oneX, ones)
+	return ones
+}
 
-	sBytes := packFourRows(src, srcStride)
-	rBytes := packFourRows(ref, refStride)
+func satd4x4RawAVX2(srcPtr, srcStride, refPtr, refStride reg.Register, ones reg.VecVirtual) reg.VecVirtual {
+	sBytes := packFourRows(srcPtr, srcStride)
+	rBytes := packFourRows(refPtr, refStride)
 
 	sw := YMM()
 	VPMOVZXBW(sBytes, sw)
@@ -593,13 +648,6 @@ func genSATD4x4AVX2() {
 	tot := YMM()
 	VPADDW(aDiff, aSum, tot)
 
-	oneGP := GP32()
-	MOVL(U32(1|1<<16), oneGP)
-	oneX := XMM()
-	VMOVD(oneGP, oneX)
-	ones := YMM()
-	VPBROADCASTD(oneX, ones)
-
 	wide := YMM()
 	VPMADDWD(ones, tot, wide)
 
@@ -612,6 +660,20 @@ func genSATD4x4AVX2() {
 	VPADDD(sh, acc, acc)
 	VPSHUFD(Imm(0x01), acc, sh)
 	VPADDD(sh, acc, acc)
+	return acc
+}
+
+func genSATD4x4AVX2() {
+	TEXT("satd4x4AVX2", NOSPLIT, "func(src []byte, srcStride int, ref []byte, refStride int) int")
+	Pragma("noescape")
+	Doc("")
+	src := Load(Param("src").Base(), GP64())
+	srcStride := Load(Param("srcStride"), GP64())
+	ref := Load(Param("ref").Base(), GP64())
+	refStride := Load(Param("refStride"), GP64())
+
+	ones := avx2SatdOnes()
+	acc := satd4x4RawAVX2(src, srcStride, ref, refStride, ones)
 
 	out := GP64()
 	sumGP := out.As32()
@@ -622,6 +684,51 @@ func genSATD4x4AVX2() {
 	SARL(Imm(1), sumGP)
 
 	Store(out, ReturnIndex(0))
+	RET()
+}
+
+func genSATD8x8AVX2() {
+	TEXT("satd8x8AVX2", NOSPLIT, "func(src []byte, srcStride int, ref []byte, refStride int) int")
+	Pragma("noescape")
+	Doc("")
+	srcBase := Load(Param("src").Base(), GP64())
+	srcStride := Load(Param("srcStride"), GP64())
+	refBase := Load(Param("ref").Base(), GP64())
+	refStride := Load(Param("refStride"), GP64())
+
+	srcStride4 := GP64()
+	MOVQ(srcStride, srcStride4)
+	SHLQ(Imm(2), srcStride4)
+	refStride4 := GP64()
+	MOVQ(refStride, refStride4)
+	SHLQ(Imm(2), refStride4)
+
+	ones := avx2SatdOnes()
+
+	accs := make([]reg.VecVirtual, len(satd8x8Blocks))
+	for i, blk := range satd8x8Blocks {
+		srcPtr := blockOffsetPtr(srcBase, srcStride4, blk[0], blk[1])
+		refPtr := blockOffsetPtr(refBase, refStride4, blk[0], blk[1])
+		accs[i] = satd4x4RawAVX2(srcPtr, srcStride, refPtr, refStride, ones)
+	}
+
+	total := GP64()
+	for i, acc := range accs {
+		g := GP64()
+		gLow := g.As32()
+		VMOVD(acc, gLow)
+		SHRL(Imm(1), gLow)
+		ADDL(Imm(1), gLow)
+		SARL(Imm(1), gLow)
+		if i == 0 {
+			MOVQ(g, total)
+		} else {
+			ADDQ(g, total)
+		}
+	}
+	VZEROUPPER()
+
+	Store(total, ReturnIndex(0))
 	RET()
 }
 

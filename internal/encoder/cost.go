@@ -28,8 +28,19 @@ func satd4x4(src []byte, srcStride, srcOff int, ref []byte, refStride, refOff in
 
 func satdBlock(src []byte, srcStride, srcOff int, ref []byte, refStride, refOff, w, h int) int {
 	total := 0
-	for y := 0; y < h; y += 4 {
-		for x := 0; x < w; x += 4 {
+	y := 0
+	for ; y+8 <= h; y += 8 {
+		x := 0
+		for ; x+8 <= w; x += 8 {
+			total += simd.SATD8x8(src, srcStride, srcOff+y*srcStride+x, ref, refStride, refOff+y*refStride+x)
+		}
+		for ; x+4 <= w; x += 4 {
+			total += satd4x4(src, srcStride, srcOff+y*srcStride+x, ref, refStride, refOff+y*refStride+x)
+			total += satd4x4(src, srcStride, srcOff+(y+4)*srcStride+x, ref, refStride, refOff+(y+4)*refStride+x)
+		}
+	}
+	for ; y+4 <= h; y += 4 {
+		for x := 0; x+4 <= w; x += 4 {
 			total += satd4x4(src, srcStride, srcOff+y*srcStride+x, ref, refStride, refOff+y*refStride+x)
 		}
 	}

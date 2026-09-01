@@ -40,6 +40,14 @@ func satd4x4AVX2(src []byte, srcStride int, ref []byte, refStride int) int
 
 //
 //go:noescape
+func satd8x8(src []byte, srcStride int, ref []byte, refStride int) int
+
+//
+//go:noescape
+func satd8x8AVX2(src []byte, srcStride int, ref []byte, refStride int) int
+
+//
+//go:noescape
 func sixTapHoriz16x16(dst []byte, dstStride int, src []byte, srcStride int)
 
 //

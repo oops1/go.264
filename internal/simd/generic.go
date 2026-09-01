@@ -180,6 +180,20 @@ func SATD4x4(src []byte, srcStride, srcOff int, ref []byte, refStride, refOff in
 	return satd4x4Dispatch(src[srcOff:], srcStride, ref[refOff:], refStride)
 }
 
+var satd8x8Offsets = [4][2]int{{0, 0}, {4, 0}, {0, 4}, {4, 4}}
+
+func satd8x8Generic(src []byte, srcStride int, ref []byte, refStride int) int {
+	total := 0
+	for _, o := range satd8x8Offsets {
+		total += satd4x4Generic(src[o[1]*srcStride+o[0]:], srcStride, ref[o[1]*refStride+o[0]:], refStride)
+	}
+	return total
+}
+
+func SATD8x8(src []byte, srcStride, srcOff int, ref []byte, refStride, refOff int) int {
+	return satd8x8Dispatch(src[srcOff:], srcStride, ref[refOff:], refStride)
+}
+
 func hFilter1(src []byte, off int) int {
 	return int(src[off-2]) -
 		5*int(src[off-1]) +

@@ -71,6 +71,10 @@ func TestEveryPathAgreesWhateverTheProcessorOffers(t *testing.T) {
 					satd4x4Generic(src[off:], stride, ref[off:], stride); got != want {
 					t.Fatalf("SATD4x4 gave %d, want %d", got, want)
 				}
+				if got, want := SATD8x8(src, stride, off, ref, stride, off),
+					satd8x8Generic(src[off:], stride, ref[off:], stride); got != want {
+					t.Fatalf("SATD8x8 gave %d, want %d", got, want)
+				}
 
 				for _, s := range sizes {
 					w, h := s[0], s[1]

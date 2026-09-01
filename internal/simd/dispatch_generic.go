@@ -32,6 +32,10 @@ func satd4x4Dispatch(src []byte, srcStride int, ref []byte, refStride int) int {
 	return satd4x4Generic(src, srcStride, ref, refStride)
 }
 
+func satd8x8Dispatch(src []byte, srcStride int, ref []byte, refStride int) int {
+	return satd8x8Generic(src, srcStride, ref, refStride)
+}
+
 func sixTapHorizDispatch(dst []byte, dstStride, dstOff int, src []byte, srcStride, srcOff, w, h int) {
 	sixTapHorizGeneric(dst, dstStride, dstOff, src, srcStride, srcOff, w, h)
 }

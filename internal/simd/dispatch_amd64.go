@@ -72,6 +72,16 @@ func satd4x4Dispatch(src []byte, srcStride int, ref []byte, refStride int) int {
 	return satd4x4(src, srcStride, ref, refStride)
 }
 
+func satd8x8Dispatch(src []byte, srcStride int, ref []byte, refStride int) int {
+	if !hasSSE41 || !spanFits(src, srcStride, 8, 8) || !spanFits(ref, refStride, 8, 8) {
+		return satd8x8Generic(src, srcStride, ref, refStride)
+	}
+	if hasAVX2 {
+		return satd8x8AVX2(src, srcStride, ref, refStride)
+	}
+	return satd8x8(src, srcStride, ref, refStride)
+}
+
 type sixTapFn func(dst []byte, dstStride int, src []byte, srcStride int)
 
 func sixTapHorizKernel(w, h int) sixTapFn {

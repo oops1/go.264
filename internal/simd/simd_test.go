@@ -767,6 +767,161 @@ func BenchmarkSATD4x4Generic(b *testing.B) {
 	}
 }
 
+func TestSATD8x8MatchesGenericOnRandomInput(t *testing.T) {
+	rng := rand.New(rand.NewSource(20260902))
+	const stride = 32
+	const rows = 32
+	for iter := 0; iter < 8000; iter++ {
+		src := randomPlane(rng, stride*rows)
+		ref := randomPlane(rng, stride*rows)
+		srcOff := rng.Intn(stride-8) + rng.Intn(rows-8)*stride
+		refOff := rng.Intn(stride-8) + rng.Intn(rows-8)*stride
+		got := SATD8x8(src, stride, srcOff, ref, stride, refOff)
+		want := satd8x8Generic(src[srcOff:], stride, ref[refOff:], stride)
+		if got != want {
+			t.Fatalf("iter %d: SATD8x8 = %d, generic = %d", iter, got, want)
+		}
+	}
+}
+
+func TestSATD8x8MatchesFourSATD4x4(t *testing.T) {
+	rng := rand.New(rand.NewSource(20260903))
+	const stride = 32
+	const rows = 32
+	for iter := 0; iter < 4000; iter++ {
+		src := randomPlane(rng, stride*rows)
+		ref := randomPlane(rng, stride*rows)
+		srcOff := rng.Intn(stride-8) + rng.Intn(rows-8)*stride
+		refOff := rng.Intn(stride-8) + rng.Intn(rows-8)*stride
+		got := SATD8x8(src, stride, srcOff, ref, stride, refOff)
+		want := 0
+		for _, o := range [4][2]int{{0, 0}, {4, 0}, {0, 4}, {4, 4}} {
+			want += SATD4x4(src, stride, srcOff+o[1]*stride+o[0], ref, stride, refOff+o[1]*stride+o[0])
+		}
+		if got != want {
+			t.Fatalf("iter %d: SATD8x8 = %d, sum of four SATD4x4 = %d", iter, got, want)
+		}
+	}
+}
+
+func TestSATD8x8Extremes(t *testing.T) {
+	const stride = 24
+	cases := []struct {
+		srcFill, refFill byte
+	}{
+		{128, 128}, {255, 0}, {0, 255}, {100, 101}, {0, 0}, {255, 255},
+	}
+	for _, c := range cases {
+		src := make([]byte, stride*16)
+		ref := make([]byte, stride*16)
+		for i := range src {
+			src[i] = c.srcFill
+			ref[i] = c.refFill
+		}
+		got := SATD8x8(src, stride, 0, ref, stride, 0)
+		want := satd8x8Generic(src, stride, ref, stride)
+		if got != want {
+			t.Errorf("fill %d/%d: SATD8x8 = %d, generic = %d", c.srcFill, c.refFill, got, want)
+		}
+	}
+	rng := rand.New(rand.NewSource(7))
+	src := make([]byte, stride*16)
+	ref := make([]byte, stride*16)
+	for i := range src {
+		if rng.Intn(2) == 0 {
+			src[i] = 0
+		} else {
+			src[i] = 255
+		}
+		if rng.Intn(2) == 0 {
+			ref[i] = 0
+		} else {
+			ref[i] = 255
+		}
+	}
+	got := SATD8x8(src, stride, 0, ref, stride, 0)
+	want := satd8x8Generic(src, stride, ref, stride)
+	if got != want {
+		t.Errorf("checkerboard extremes: SATD8x8 = %d, generic = %d", got, want)
+	}
+}
+
+func TestSATD8x8NonNegative(t *testing.T) {
+	rng := rand.New(rand.NewSource(8))
+	const stride = 24
+	for i := 0; i < 2000; i++ {
+		src := randomPlane(rng, stride*16)
+		ref := randomPlane(rng, stride*16)
+		got := SATD8x8(src, stride, 0, ref, stride, 0)
+		if got < 0 {
+			t.Fatalf("SATD8x8 returned negative value: %d", got)
+		}
+	}
+}
+
+func FuzzSATD8x8AgainstGeneric(f *testing.F) {
+	f.Add(int64(1), 0, 0)
+	f.Add(int64(500), 5, 3)
+	f.Fuzz(func(t *testing.T, seed int64, srcOffIdx, refOffIdx int) {
+		const stride = 32
+		const rows = 32
+		rng := rand.New(rand.NewSource(seed))
+		src := randomPlane(rng, stride*rows)
+		ref := randomPlane(rng, stride*rows)
+		max := (rows-8)*stride - 8
+		if max <= 0 {
+			return
+		}
+		srcOffIdx %= max
+		if srcOffIdx < 0 {
+			srcOffIdx = -srcOffIdx
+		}
+		refOffIdx %= max
+		if refOffIdx < 0 {
+			refOffIdx = -refOffIdx
+		}
+		got := SATD8x8(src, stride, srcOffIdx, ref, stride, refOffIdx)
+		want := satd8x8Generic(src[srcOffIdx:], stride, ref[refOffIdx:], stride)
+		if got != want {
+			t.Fatalf("SATD8x8 = %d, generic = %d", got, want)
+		}
+	})
+}
+
+func BenchmarkSATD8x8(b *testing.B) {
+	rng := rand.New(rand.NewSource(1))
+	src := randomPlane(rng, 16*16)
+	ref := randomPlane(rng, 16*16)
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		SATD8x8(src, 16, 0, ref, 16, 0)
+	}
+}
+
+func BenchmarkSATD8x8AsFourSATD4x4(b *testing.B) {
+	rng := rand.New(rand.NewSource(1))
+	src := randomPlane(rng, 16*16)
+	ref := randomPlane(rng, 16*16)
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		total := 0
+		for _, o := range [4][2]int{{0, 0}, {4, 0}, {0, 4}, {4, 4}} {
+			total += SATD4x4(src, 16, o[1]*16+o[0], ref, 16, o[1]*16+o[0])
+		}
+		_ = total
+	}
+}
+
+func BenchmarkSATD8x8Generic(b *testing.B) {
+	rng := rand.New(rand.NewSource(1))
+	src := randomPlane(rng, 16*16)
+	ref := randomPlane(rng, 16*16)
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		satd8x8Generic(src, 16, ref, 16)
+	}
+}
+
 func mcPlane(rng *rand.Rand, w, h, margin int, fill func(x, y int) int) ([]byte, int, int) {
 	stride := w + 2*margin
 	rows := h + 2*margin
