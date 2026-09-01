@@ -39,7 +39,11 @@ type Config struct {
 	Transform8x8  bool
 	ScalingMatrix ScalingMatrix
 
-	IntraRefresh int
+	WeightedPrediction WeightedPrediction
+	DirectMode         DirectMode
+
+	IntraRefresh        int
+	RepeatParameterSets bool
 
 	Deblocking         DeblockMode
 	DeblockAlphaOffset int
@@ -102,6 +106,12 @@ func (c *Config) validate() error {
 	}
 	if c.IntraRefresh > 0 && c.BFrames > 0 {
 		return fmt.Errorf("%w: IntraRefresh cannot be combined with BFrames", ErrConfig)
+	}
+	if c.WeightedPrediction > WeightedPredictionImplicit {
+		return fmt.Errorf("%w: WeightedPrediction %d outside 0..2", ErrConfig, c.WeightedPrediction)
+	}
+	if c.DirectMode > DirectTemporal {
+		return fmt.Errorf("%w: DirectMode %d outside 0..1", ErrConfig, c.DirectMode)
 	}
 	if c.Deblocking > DeblockingNotAcrossSlices {
 		return fmt.Errorf("%w: Deblocking %d outside 0..2", ErrConfig, c.Deblocking)
@@ -255,7 +265,7 @@ func (e *Encoder) pickLevel() uint8 {
 func (e *Encoder) buildParameterSets() {
 	profile := uint8(syntax.ProfileBaseline)
 	constraints := uint8(0xC0)
-	if e.cfg.CABAC || e.cfg.BFrames > 0 {
+	if e.cfg.CABAC || e.cfg.BFrames > 0 || e.cfg.WeightedPrediction != WeightedPredictionOff {
 		profile = syntax.ProfileMain
 		constraints = 0x40
 	}
@@ -303,6 +313,15 @@ func (e *Encoder) buildParameterSets() {
 		PicInitQPMinus26:               int32(e.cfg.QP - 26),
 		DeblockingFilterControlPresent: true,
 		CABAC:                          e.cfg.CABAC,
+	}
+	switch e.cfg.WeightedPrediction {
+	case WeightedPredictionExplicit:
+		pps.WeightedPred = true
+	case WeightedPredictionImplicit:
+		pps.WeightedPred = true
+		if e.cfg.BFrames > 0 {
+			pps.WeightedBipredIDC = 2
+		}
 	}
 	if sps.ProfileIDC == syntax.ProfileHigh {
 		sps.BitDepthLumaMinus8 = 0
@@ -563,13 +582,7 @@ func (e *Encoder) motionField() *frame.Motion {
 
 func (e *Encoder) encodePicture(p picture) ([]byte, error) {
 	e.src = p.src
-	var prefix []byte
 	if p.idr {
-		hdrs, err := e.parameterSetBytes()
-		if err != nil {
-			return nil, err
-		}
-		prefix = append(prefix, hdrs...)
 		e.frameNum = 0
 		e.free = append(e.free, e.refs...)
 		e.refs = e.refs[:0]
@@ -577,6 +590,14 @@ func (e *Encoder) encodePicture(p picture) ([]byte, error) {
 	e.refresh = e.planRefresh(p.idr)
 	if e.refresh.sweep {
 		e.openSweep()
+	}
+	var prefix []byte
+	if p.idr || (e.cfg.RepeatParameterSets && e.refresh.sweep) {
+		hdrs, err := e.parameterSetBytes()
+		if err != nil {
+			return nil, err
+		}
+		prefix = append(prefix, hdrs...)
 	}
 	sei, err := e.pictureSEI(p.idr || e.refresh.sweep, e.refresh.sweep)
 	if err != nil {
@@ -726,13 +747,16 @@ func (e *Encoder) sliceHeader(p sliceJob) *syntax.SliceHeader {
 	}
 	switch {
 	case p.sliceType.IsB():
-		hdr.DirectSpatialMvPred = true
+		hdr.DirectSpatialMvPred = e.cfg.DirectMode != DirectTemporal
 		hdr.NumRefIdxActiveOverride = true
 		hdr.NumRefIdxL0ActiveMinus1 = uint32(p.active - 1)
 		hdr.NumRefIdxL1ActiveMinus1 = uint32(p.activeL1 - 1)
 	case !p.idr && p.active != e.cfg.RefFrames:
 		hdr.NumRefIdxActiveOverride = true
 		hdr.NumRefIdxL0ActiveMinus1 = uint32(p.active - 1)
+	}
+	if e.weightModeFor(p.sliceType) == weightExplicit {
+		e.fillPredWeightTable(hdr, p)
 	}
 	return hdr
 }

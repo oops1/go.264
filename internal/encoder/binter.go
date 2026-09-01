@@ -18,9 +18,17 @@ func minPositive(a, b int8) int8 {
 	return b
 }
 
+type DirectMode uint8
+
+const (
+	DirectSpatial DirectMode = iota
+	DirectTemporal
+)
+
 type colBlock struct {
 	mv     [2]int16
 	refIdx int8
+	refPOC int32
 	intra  bool
 }
 
@@ -50,7 +58,11 @@ func (s *mbEncoder) colocatedAt(bx4, by4 int) colBlock {
 	i := mo.Index(x, y)
 	for list := 0; list < 2; list++ {
 		if mo.RefIdx[list][i] >= 0 {
-			return colBlock{mv: mo.Mv[list][i], refIdx: mo.RefIdx[list][i]}
+			return colBlock{
+				mv:     mo.Mv[list][i],
+				refIdx: mo.RefIdx[list][i],
+				refPOC: mo.RefPOC[list][i],
+			}
 		}
 	}
 	return colBlock{intra: true}
@@ -100,6 +112,69 @@ func (s *mbEncoder) spatialDirect(x, y, w, h int) {
 			}
 		}
 	}
+}
+
+func (s *mbEncoder) mapColToList0(refPOC int32) int8 {
+	for i, p := range s.e.refL0 {
+		if p != nil && int32(p.POC) == refPOC {
+			return int8(i)
+		}
+	}
+	return 0
+}
+
+func scaleMV(v int16, dist int) int16 {
+	return int16((dist*int(v) + 128) >> 8)
+}
+
+func (s *mbEncoder) distScaleFactor(p0 *frame.Picture) (int, bool) {
+	p1 := s.refPictureIn(1, 0)
+	if p0 == nil || p1 == nil || p0.LongTerm {
+		return 0, false
+	}
+	td := clip3(-128, 127, p1.POC-p0.POC)
+	if td == 0 {
+		return 0, false
+	}
+	tb := clip3(-128, 127, s.e.rec.POC-p0.POC)
+	abs := td / 2
+	if abs < 0 {
+		abs = -abs
+	}
+	tx := (16384 + abs) / td
+	return clip3(-1024, 1023, (tb*tx+32)>>6), true
+}
+
+func (s *mbEncoder) temporalDirect(x, y, w, h int) {
+	for by := y; by < y+h; by += 4 {
+		for bx := x; bx < x+w; bx += 4 {
+			c := s.colocatedAt(bx>>2, by>>2)
+			if c.intra {
+				s.storeMotionIn(0, bx, by, 4, 4, [2]int16{}, 0)
+				s.storeMotionIn(1, bx, by, 4, 4, [2]int16{}, 0)
+				continue
+			}
+			ref0 := s.mapColToList0(c.refPOC)
+			dist, scaled := s.distScaleFactor(s.refPictureIn(0, ref0))
+			if !scaled {
+				s.storeMotionIn(0, bx, by, 4, 4, c.mv, ref0)
+				s.storeMotionIn(1, bx, by, 4, 4, [2]int16{}, 0)
+				continue
+			}
+			mv0 := [2]int16{scaleMV(c.mv[0], dist), scaleMV(c.mv[1], dist)}
+			mv1 := [2]int16{mv0[0] - c.mv[0], mv0[1] - c.mv[1]}
+			s.storeMotionIn(0, bx, by, 4, 4, mv0, ref0)
+			s.storeMotionIn(1, bx, by, 4, 4, mv1, 0)
+		}
+	}
+}
+
+func (s *mbEncoder) directMotion(x, y, w, h int) {
+	if s.e.cfg.DirectMode == DirectTemporal {
+		s.temporalDirect(x, y, w, h)
+		return
+	}
+	s.spatialDirect(x, y, w, h)
 }
 
 func (s *mbEncoder) markDirect(x, y, w, h int) {
@@ -236,18 +311,16 @@ func (s *mbEncoder) compensateB() {
 			if !okA || !okB {
 				continue
 			}
-			cx, cy := x/2, y/2
-			cw, ch := seg.w/2, seg.h/2
-			mc.Average(rec.Y, rec.StrideY, rec.LumaOffset(x, y), a.y[:], 16, 0, b.y[:], 16, 0, seg.w, seg.h)
-			mc.Average(rec.Cb, rec.StrideC, rec.ChromaOffset(cx, cy), a.cb[:], 8, 0, b.cb[:], 8, 0, cw, ch)
-			mc.Average(rec.Cr, rec.StrideC, rec.ChromaOffset(cx, cy), a.cr[:], 8, 0, b.cr[:], 8, 0, cw, ch)
+			s.combineBi(seg, x, y)
 		case use0, use1:
 			list := 0
 			if use1 {
 				list = 1
 			}
-			s.predictOneB(list, seg, x, y, rec.Y, rec.StrideY, rec.LumaOffset(x, y),
-				rec.Cb, rec.Cr, rec.StrideC, rec.ChromaOffset(x/2, y/2))
+			if s.predictOneB(list, seg, x, y, rec.Y, rec.StrideY, rec.LumaOffset(x, y),
+				rec.Cb, rec.Cr, rec.StrideC, rec.ChromaOffset(x/2, y/2)) {
+				s.weightUniRegion(list, seg.ref[list], x, y, seg.w, seg.h)
+			}
 		}
 	}
 }
@@ -286,7 +359,8 @@ func (s *mbEncoder) biSATD(p partition, mv [2][2]int16) int {
 		p.w, p.h, int(mv[0][0]), int(mv[0][1]))
 	mc.PredictLuma(s.scratchB[:], 16, 0, ref1.Y, ref1.StrideY, ref1.LumaOffset(x, y),
 		p.w, p.h, int(mv[1][0]), int(mv[1][1]))
-	mc.Average(s.scratch[:], 16, 0, s.scratch[:], 16, 0, s.scratchB[:], 16, 0, p.w, p.h)
+	s.combineLumaBi(s.scratch[:], 16, 0, s.scratch[:], 16, 0, s.scratchB[:], 16, 0,
+		p.w, p.h, [2]int8{0, 0})
 	return satdBlock(s.e.src.Y, s.e.src.StrideY, s.e.src.LumaOffset(x, y), s.scratch[:], 16, 0, p.w, p.h)
 }
 
@@ -408,7 +482,7 @@ func (s *mbEncoder) evaluateBCandidate(c bCandidate, lambda float64) (float64, e
 
 func (s *mbEncoder) applyBDirectMotion() {
 	s.clearMotion()
-	s.spatialDirect(0, 0, 16, 16)
+	s.directMotion(0, 0, 16, 16)
 	s.markDirect(0, 0, 16, 16)
 }
 

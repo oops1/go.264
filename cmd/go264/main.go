@@ -62,6 +62,28 @@ func parseSize(s string) (int, int, error) {
 	return w, h, nil
 }
 
+func parseWeightedPrediction(s string) (go264.WeightedPrediction, error) {
+	switch s {
+	case "", "off":
+		return go264.WeightedPredictionOff, nil
+	case "explicit":
+		return go264.WeightedPredictionExplicit, nil
+	case "implicit":
+		return go264.WeightedPredictionImplicit, nil
+	}
+	return 0, fmt.Errorf("-weightp %q must be off, explicit or implicit", s)
+}
+
+func parseDirectMode(s string) (go264.DirectMode, error) {
+	switch s {
+	case "", "spatial":
+		return go264.DirectSpatial, nil
+	case "temporal":
+		return go264.DirectTemporal, nil
+	}
+	return 0, fmt.Errorf("-direct %q must be spatial or temporal", s)
+}
+
 func openIn(path string) (io.ReadCloser, error) {
 	if path == "" || path == "-" {
 		return io.NopCloser(os.Stdin), nil
@@ -103,11 +125,22 @@ func runEncode(args []string) error {
 	vbvBuffer := fs.Int("vbv-bufsize", 0, "coded picture buffer size in kbit")
 	vbvMaxrate := fs.Int("vbv-maxrate", 0, "peak bitrate in kbit/s for the coded picture buffer")
 	cbr := fs.Bool("cbr", false, "hold the coded picture buffer near full and pad the stream when needed")
+	weightp := fs.String("weightp", "off", "weighted prediction: off, explicit, or implicit for bi-predictive pictures")
+	direct := fs.String("direct", "spatial", "direct motion in bi-predictive pictures: spatial or temporal")
+	repeatHeaders := fs.Bool("repeat-headers", false, "send the parameter sets again before every recovery point")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 	if *deblock < 0 || *deblock > 2 {
 		return errors.New("-deblock must be 0, 1 or 2")
+	}
+	weights, err := parseWeightedPrediction(*weightp)
+	if err != nil {
+		return err
+	}
+	directMode, err := parseDirectMode(*direct)
+	if err != nil {
+		return err
 	}
 	if *size == "" {
 		return errors.New("encode requires -s WxH")
@@ -124,6 +157,10 @@ func runEncode(args []string) error {
 		ForceSoftware: *software,
 		IntraRefresh:  *refresh,
 		Deblocking:    go264.DeblockMode(*deblock),
+
+		WeightedPrediction:  weights,
+		DirectMode:          directMode,
+		RepeatParameterSets: *repeatHeaders,
 
 		DeblockAlphaOffset: *alpha,
 		DeblockBetaOffset:  *beta,

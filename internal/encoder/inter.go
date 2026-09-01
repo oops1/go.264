@@ -154,6 +154,7 @@ func (s *mbEncoder) motionCompensateMB(mv [2]int16) {
 		ref.Cb, ref.StrideC, ref.ChromaOffset(cx, cy), 8, 8, int(mv[0]), int(mv[1]))
 	mc.PredictChroma(s.e.rec.Cr, s.e.rec.StrideC, s.e.rec.ChromaOffset(cx, cy),
 		ref.Cr, ref.StrideC, ref.ChromaOffset(cx, cy), 8, 8, int(mv[0]), int(mv[1]))
+	s.weightUniRegion(0, 0, x, y, 16, 16)
 }
 
 func (s *mbEncoder) quantiseInterLuma() bool {

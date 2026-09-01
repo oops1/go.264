@@ -63,10 +63,11 @@ func (s *mbEncoder) partSAD(ref *frame.Picture, px, py, w, h, ix, iy int) int {
 		ref.Y, ref.StrideY, ref.LumaOffset(x+ix, y+iy), w, h)
 }
 
-func (s *mbEncoder) partSubPelCost(ref *frame.Picture, px, py, w, h int, mv, mvp [2]int16, lambda int) int {
+func (s *mbEncoder) partSubPelCost(list int, refIdx int8, ref *frame.Picture, px, py, w, h int, mv, mvp [2]int16, lambda int) int {
 	x, y := s.mbx*16+px, s.mby*16+py
 	mc.PredictLuma(s.scratch[:], 16, 0, ref.Y, ref.StrideY,
 		ref.LumaOffset(x, y), w, h, int(mv[0]), int(mv[1]))
+	s.weightLumaScratch(list, refIdx, s.scratch[:], 16, 0, w, h)
 	c := satdBlock(s.e.src.Y, s.e.src.StrideY, s.e.src.LumaOffset(x, y),
 		s.scratch[:], 16, 0, w, h)
 	return c + mvBitCost(mv, mvp, lambda)
@@ -159,7 +160,7 @@ func (s *mbEncoder) searchPartitionRef(list int, p partition, partIdx, kind, lam
 	}
 
 	mv := [2]int16{int16(bestX << 2), int16(bestY << 2)}
-	bestCost := s.partSubPelCost(ref, p.x, p.y, p.w, p.h, mv, mvp, lambda)
+	bestCost := s.partSubPelCost(list, refIdx, ref, p.x, p.y, p.w, p.h, mv, mvp, lambda)
 	inRange := func(m [2]int16) bool {
 		if int(m[0])>>2 < loX || int(m[0])>>2 > hiX ||
 			int(m[1])>>2 < loY || int(m[1])>>2 > hiY {
@@ -178,7 +179,7 @@ func (s *mbEncoder) searchPartitionRef(list int, p partition, partIdx, kind, lam
 				if !inRange(cand) {
 					continue
 				}
-				if c := s.partSubPelCost(ref, p.x, p.y, p.w, p.h, cand, mvp, lambda); c < bestCost {
+				if c := s.partSubPelCost(list, refIdx, ref, p.x, p.y, p.w, p.h, cand, mvp, lambda); c < bestCost {
 					bestCost, mv = c, cand
 					improved = true
 				}
@@ -277,6 +278,7 @@ func (s *mbEncoder) compensatePartition(p partition, mv [2]int16, refIdx int8) {
 		ref.Cb, ref.StrideC, ref.ChromaOffset(cx, cy), cw, ch, int(mv[0]), int(mv[1]))
 	mc.PredictChroma(s.e.rec.Cr, s.e.rec.StrideC, s.e.rec.ChromaOffset(cx, cy),
 		ref.Cr, ref.StrideC, ref.ChromaOffset(cx, cy), cw, ch, int(mv[0]), int(mv[1]))
+	s.weightUniRegion(0, refIdx, x, y, p.w, p.h)
 }
 
 func (s *mbEncoder) compensatePartitions(kind int, results []partResult) {

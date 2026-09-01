@@ -605,3 +605,57 @@ func TestBFramesWithoutFlushingWouldLoseFrames(t *testing.T) {
 			len(withB), len(withoutB))
 	}
 }
+
+func encodeWithFlags(t *testing.T, w, h, frames int, extra ...string) []byte {
+	t.Helper()
+	dir := t.TempDir()
+	inPath := filepath.Join(dir, "in.yuv")
+	outPath := filepath.Join(dir, "out.264")
+	yuvPath := filepath.Join(dir, "out.yuv")
+	if err := os.WriteFile(inPath, syntheticI420(w, h, frames), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	args := append([]string{"encode", "-s", fmt.Sprintf("%dx%d", w, h), "-qp", "28",
+		"-software", "-i", inPath, "-o", outPath}, extra...)
+	if err := runQuiet(t, args); err != nil {
+		t.Fatalf("encode %v failed: %v", extra, err)
+	}
+	if err := runQuiet(t, []string{"decode", "-i", outPath, "-o", yuvPath}); err != nil {
+		t.Fatalf("decode after %v failed: %v", extra, err)
+	}
+	decoded, err := os.ReadFile(yuvPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(decoded) != w*h*3/2*frames {
+		t.Fatalf("encode %v produced %d bytes of video, want %d", extra, len(decoded), w*h*3/2*frames)
+	}
+	stream, err := os.ReadFile(outPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return stream
+}
+
+func TestEncodeAcceptsTheNewPredictionFlags(t *testing.T) {
+	cases := [][]string{
+		{"-weightp", "explicit"},
+		{"-weightp", "implicit", "-bframes", "2"},
+		{"-direct", "temporal", "-bframes", "2"},
+		{"-intra-refresh", "4", "-repeat-headers"},
+	}
+	for _, extra := range cases {
+		if n := len(encodeWithFlags(t, 64, 48, 8, extra...)); n == 0 {
+			t.Fatalf("encode %v produced an empty stream", extra)
+		}
+	}
+}
+
+func TestEncodeRejectsUnknownPredictionFlagValues(t *testing.T) {
+	for _, extra := range [][]string{{"-weightp", "sometimes"}, {"-direct", "sideways"}} {
+		args := append([]string{"encode", "-s", "64x48", "-qp", "28", "-i", os.DevNull, "-o", os.DevNull}, extra...)
+		if err := runQuiet(t, args); err == nil {
+			t.Fatalf("encode accepted %v", extra)
+		}
+	}
+}

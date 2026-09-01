@@ -488,3 +488,68 @@ func TestBufferModelReachesTheSoftwareEncoder(t *testing.T) {
 		t.Fatal("constant bitrate without a buffer was accepted")
 	}
 }
+
+func TestWeightedPredictionReachesTheSoftwareEncoder(t *testing.T) {
+	for _, mode := range []WeightedPrediction{
+		WeightedPredictionOff, WeightedPredictionExplicit, WeightedPredictionImplicit} {
+		cfg := EncoderConfig{Width: 176, Height: 144, FPSNum: 25, FPSDen: 1,
+			GOPSize: 12, QP: 28, RefFrames: 2, BFrames: 2, CABAC: true,
+			WeightedPrediction: mode}
+		stream, _ := encodeThroughPublicAPI(t, cfg, 12)
+		if n := decodeThroughPublicAPI(t, stream); n != 12 {
+			t.Fatalf("weighted prediction %d: decoded %d frames, want 12", mode, n)
+		}
+	}
+	bad := EncoderConfig{Width: 64, Height: 64, QP: 26, ForceSoftware: true,
+		WeightedPrediction: WeightedPredictionImplicit + 1}
+	if _, err := NewEncoder(bad); err == nil {
+		t.Fatal("an unknown weighted prediction mode was accepted")
+	}
+}
+
+func TestWeightedPredictionKeepsTheHardwarePathForTheDefault(t *testing.T) {
+	plain := EncoderConfig{Width: 176, Height: 144, QP: 26}
+	if plain.needsSoftware() {
+		t.Fatal("a plain configuration was pushed onto the software encoder")
+	}
+	weighted := plain
+	weighted.WeightedPrediction = WeightedPredictionExplicit
+	if !weighted.needsSoftware() {
+		t.Fatal("weighted prediction must select the software encoder")
+	}
+}
+
+func TestDirectModeReachesTheSoftwareEncoder(t *testing.T) {
+	for _, mode := range []DirectMode{DirectSpatial, DirectTemporal} {
+		cfg := EncoderConfig{Width: 176, Height: 144, FPSNum: 25, FPSDen: 1,
+			GOPSize: 12, QP: 28, RefFrames: 2, BFrames: 2, CABAC: true, DirectMode: mode}
+		stream, _ := encodeThroughPublicAPI(t, cfg, 12)
+		if n := decodeThroughPublicAPI(t, stream); n != 12 {
+			t.Fatalf("direct mode %d: decoded %d frames, want 12", mode, n)
+		}
+	}
+	bad := EncoderConfig{Width: 64, Height: 64, QP: 26, ForceSoftware: true,
+		DirectMode: DirectTemporal + 1}
+	if _, err := NewEncoder(bad); err == nil {
+		t.Fatal("an unknown direct mode was accepted")
+	}
+}
+
+func TestRepeatedParameterSetsReachTheSoftwareEncoder(t *testing.T) {
+	cfg := EncoderConfig{Width: 176, Height: 144, FPSNum: 25, FPSDen: 1,
+		GOPSize: 100, QP: 27, IntraRefresh: 6, RepeatParameterSets: true}
+	repeated, _ := encodeThroughPublicAPI(t, cfg, 24)
+	if n := decodeThroughPublicAPI(t, repeated); n != 24 {
+		t.Fatalf("decoded %d frames, want 24", n)
+	}
+	cfg.RepeatParameterSets = false
+	plain, _ := encodeThroughPublicAPI(t, cfg, 24)
+	if len(repeated) <= len(plain) {
+		t.Fatalf("repeating the parameter sets produced %d bytes against %d without", len(repeated), len(plain))
+	}
+	if n := decodeThroughPublicAPI(t, plain); n != 24 {
+		t.Fatalf("decoded %d frames, want 24", n)
+	}
+	t.Logf("intra refresh over 24 frames: %d bytes plain, %d bytes with repeated parameter sets (+%.1f%%)",
+		len(plain), len(repeated), 100*float64(len(repeated)-len(plain))/float64(len(plain)))
+}

@@ -149,7 +149,7 @@ func (s *mbEncoder) runB8x8Pass(lambda int, allowDirect bool) []bSubResult {
 	s.clearMotion()
 	var direct bMotionSnapshot
 	if allowDirect {
-		s.spatialDirect(0, 0, 16, 16)
+		s.directMotion(0, 0, 16, 16)
 		direct = s.snapshotBMotion()
 		s.compensateB()
 	}
@@ -180,7 +180,7 @@ func (s *mbEncoder) searchB8x8(lambda int) bCandidate {
 func (s *mbEncoder) applyB8x8(c bCandidate) {
 	s.clearMotion()
 	if anyDirectSub(c.subs) {
-		s.spatialDirect(0, 0, 16, 16)
+		s.directMotion(0, 0, 16, 16)
 		for i, sub := range c.subs {
 			if sub.subType == 0 {
 				s.markDirect(i%2*8, i/2*8, 8, 8)

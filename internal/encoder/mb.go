@@ -58,6 +58,9 @@ type mbEncoder struct {
 	prevQP         int
 	pendingSkipRun uint32
 
+	weights    *syntax.PredWeightTable
+	weightMode int
+
 	cb                 *cabac.Encoder
 	prevQPDeltaNonZero bool
 
@@ -98,6 +101,10 @@ func (e *Encoder) encodeSlice(w *bits.Writer, hdr *syntax.SliceHeader, p sliceJo
 		numRefs: p.active, numRefsL1: p.activeL1,
 		hints: hints, sliceQP: qp, prevQP: qp, span: span, refresh: e.refresh,
 		skipAll: p.skipAll}
+	s.weightMode = e.weightModeFor(hdr.SliceType)
+	if s.weightMode == weightExplicit {
+		s.weights = &hdr.PredWeight
+	}
 	if e.pps.CABAC {
 		s.cb = &cabac.Encoder{}
 		if err := s.cb.Init(w, qp, hdr.SliceType.IsI(), hdr.CABACInitIDC); err != nil {

@@ -654,3 +654,78 @@ func TestWeightUniWithUnitWeightIsIdentity(t *testing.T) {
 		}
 	}
 }
+
+func specWeightUni(a, w, o, logWD int) int {
+	if logWD >= 1 {
+		return clipToByte((a*w+1<<uint(logWD-1))>>uint(logWD) + o)
+	}
+	return clipToByte(a*w + o)
+}
+
+func specWeightBi(a, b, w0, w1, o0, o1, logWD int) int {
+	return clipToByte(((a*w0+b*w1+1<<uint(logWD))>>uint(logWD+1) + (o0+o1+1)>>1))
+}
+
+func ffmpegWeightBi(a, b, w0, w1, o0, o1, logWD int) int {
+	off := ((o0 + o1 + 1) | 1) << uint(logWD)
+	return clipToByte((a*w0 + b*w1 + off) >> uint(logWD+1))
+}
+
+func clipToByte(v int) int {
+	if v < 0 {
+		return 0
+	}
+	if v > 255 {
+		return 255
+	}
+	return v
+}
+
+func TestWeightBiMatchesTheSpecificationAndTheReferenceDecoder(t *testing.T) {
+	pixels := []int{0, 1, 17, 63, 128, 200, 214, 254, 255}
+	for logWD := 0; logWD <= 7; logWD++ {
+		for w0 := -128; w0 <= 127; w0 += 7 {
+			for w1 := -128; w1 <= 127; w1 += 11 {
+				for o0 := -128; o0 <= 127; o0 += 13 {
+					for o1 := -128; o1 <= 127; o1 += 17 {
+						for _, a := range pixels {
+							for _, b := range pixels {
+								src := []byte{byte(a)}
+								ref := []byte{byte(b)}
+								dst := make([]byte, 1)
+								WeightBi(dst, 1, 0, src, 1, 0, ref, 1, 0, 1, 1, w0, w1, o0, o1, logWD)
+								got := int(dst[0])
+								if want := specWeightBi(a, b, w0, w1, o0, o1, logWD); got != want {
+									t.Fatalf("WeightBi(%d,%d,w0=%d,w1=%d,o0=%d,o1=%d,logWD=%d) = %d, the specification says %d",
+										a, b, w0, w1, o0, o1, logWD, got, want)
+								}
+								if want := ffmpegWeightBi(a, b, w0, w1, o0, o1, logWD); got != want {
+									t.Fatalf("WeightBi(%d,%d,w0=%d,w1=%d,o0=%d,o1=%d,logWD=%d) = %d, the reference decoder's own arithmetic says %d",
+										a, b, w0, w1, o0, o1, logWD, got, want)
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+}
+
+func TestWeightUniMatchesTheSpecification(t *testing.T) {
+	pixels := []int{0, 1, 17, 63, 128, 200, 214, 254, 255}
+	for logWD := 0; logWD <= 7; logWD++ {
+		for w := -128; w <= 127; w += 3 {
+			for o := -128; o <= 127; o += 5 {
+				for _, a := range pixels {
+					dst := []byte{byte(a)}
+					WeightUni(dst, 1, 0, 1, 1, w, o, logWD)
+					if got, want := int(dst[0]), specWeightUni(a, w, o, logWD); got != want {
+						t.Fatalf("WeightUni(%d,w=%d,o=%d,logWD=%d) = %d, the specification says %d",
+							a, w, o, logWD, got, want)
+					}
+				}
+			}
+		}
+	}
+}

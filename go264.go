@@ -75,7 +75,11 @@ type EncoderConfig struct {
 	ScalingMatrix ScalingMatrix
 	ForceSoftware bool
 
-	IntraRefresh int
+	WeightedPrediction WeightedPrediction
+	DirectMode         DirectMode
+
+	IntraRefresh        int
+	RepeatParameterSets bool
 
 	Deblocking         DeblockMode
 	DeblockAlphaOffset int
@@ -87,7 +91,9 @@ type EncoderConfig struct {
 }
 
 func (c EncoderConfig) needsSoftware() bool {
-	return c.IntraRefresh > 0 || c.Deblocking != DeblockingOn ||
+	return c.WeightedPrediction != WeightedPredictionOff ||
+		c.DirectMode != DirectSpatial || c.RepeatParameterSets ||
+		c.IntraRefresh > 0 || c.Deblocking != DeblockingOn ||
 		c.DeblockAlphaOffset != 0 || c.DeblockBetaOffset != 0 ||
 		c.VBVBufferKbits > 0 || c.VBVMaxrateKbps > 0 || c.CBR
 }
@@ -112,6 +118,21 @@ type MotionSearch = encoder.MotionSearch
 const (
 	MotionSearchFull = encoder.MotionSearchFull
 	MotionSearchZero = encoder.MotionSearchZero
+)
+
+type WeightedPrediction = encoder.WeightedPrediction
+
+const (
+	WeightedPredictionOff      = encoder.WeightedPredictionOff
+	WeightedPredictionExplicit = encoder.WeightedPredictionExplicit
+	WeightedPredictionImplicit = encoder.WeightedPredictionImplicit
+)
+
+type DirectMode = encoder.DirectMode
+
+const (
+	DirectSpatial  = encoder.DirectSpatial
+	DirectTemporal = encoder.DirectTemporal
 )
 
 type ModeDecision = encoder.ModeDecision
@@ -174,7 +195,11 @@ func NewEncoder(cfg EncoderConfig) (*Encoder, error) {
 		Transform8x8:  cfg.Transform8x8,
 		ScalingMatrix: cfg.ScalingMatrix,
 
-		IntraRefresh: cfg.IntraRefresh,
+		WeightedPrediction: cfg.WeightedPrediction,
+		DirectMode:         cfg.DirectMode,
+
+		IntraRefresh:        cfg.IntraRefresh,
+		RepeatParameterSets: cfg.RepeatParameterSets,
 
 		Deblocking:         cfg.Deblocking,
 		DeblockAlphaOffset: cfg.DeblockAlphaOffset,
