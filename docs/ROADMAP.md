@@ -16,12 +16,16 @@ than absent.
 | Area | State |
 | --- | --- |
 | Decoder | High profile, bit-exact against ffmpeg on twenty-nine clips |
-| Encoder | Main profile, bit-exact against ffmpeg, B slices included |
-| High profile encoding | not started: the 8x8 transform and the matrices are read but not written |
+| Encoder | High profile: the 8x8 transform, Intra_8x8, the scaling matrices, B slices |
 | Hardware encoding | Media Foundation on Windows, NVENC on Linux, both without cgo |
 | Hardware decoding | none; the platform transform is kept as an oracle, not a backend |
 | Screen content interface | changed rectangles, typed regions, forced key frames, switchable motion search |
 | Slices | any count on macroblock row boundaries, encoded in parallel |
+| Intra refresh | a sweeping band with motion constrained across the boundary, recovery point announced |
+| Buffer model | a real coded picture buffer, constant bitrate, announced in the parameters and the messages |
+| Deblocking control | off, on, or kept inside slices, with both offsets |
+| Weighted prediction | applied when decoding; the encoder never writes a weight table |
+| Temporal direct | derived when decoding; the encoder writes spatial only |
 | Lossless transform bypass | rejected explicitly, both directions |
 
 Measured on the development machine, 20 threads, one frame per operation.
@@ -136,25 +140,51 @@ reference lists come out identical, which this group structure cannot
 produce. If B pyramids or open groups are ever added, that swap is where
 the two sides would silently diverge.
 
-## 1.5 — High profile, half done
+## 1.5 — High profile, done
 
-**Decoding is done.** The eight by eight transform, the scaling matrices
-and Intra_8x8 prediction, under both entropy coders. Eleven clips joined
-the corpus, three of them carrying matrices that are not flat, which is
-the only way to tell whether the matrix work exists at all rather than
-being skipped over.
+Both directions. Decoding took the eight by eight transform, the scaling
+matrices and Intra_8x8, with eleven clips joining the corpus, three of
+them carrying matrices that are not flat, which is the only way to tell
+whether the matrix work exists at all. Encoding writes the same, with
+the transform chosen per macroblock by rate and distortion.
 
-**Encoding is not started.** The encoder still writes flat matrices and
-the four by four transform only. What it needs: the eight by eight
-transform in the mode decision, `transform_size_8x8_flag` written at both
-of its syntax positions, Intra_8x8 prediction on the search side, and the
-matrices in the picture parameter set. The pieces underneath it —
-transform, quantisation, matrix resolution — are built and tested.
+The eight by eight transform is not a bitrate win on every source. On
+synthetic content it saves 2.6 to 6.9 per cent; on the corpus clips,
+whose source has already been through a codec, the bits are a wash and
+at coarse quantisers it costs up to 4.6 per cent, while distortion
+improves nearly everywhere, by up to 0.88 decibels. The JVT matrices
+save 8 to 18 per cent and lower the peak signal to noise ratio, which is
+what they are for.
 
-Acceptance: our own High profile streams survive the same three-way
-check the rest of the encoder does.
+## 1.6 — What a remote desktop needs, done
 
-## 1.6 — Wider hardware
+Three things that had no implementation at all, all off by default.
+
+**Intra refresh.** A band of intra macroblocks sweeps the picture so that
+recovery costs no key frame. It halves the largest frame and costs eight
+to ten per cent more bits. What makes it real rather than decorative is
+that motion may not reach across the boundary into stale area; breaking
+any one of those constraints makes the convergence test fail. A decoder
+joining at a recovery point is bit exact one sweep later, verified
+against ffmpeg as well as our own decoder.
+
+The cost does not fall with a longer period, because the loop filter
+smears the stale region into the last refreshed column and forces one
+intra column per frame regardless. The useful range is a period no
+longer than the picture is wide in macroblock columns.
+
+**Deblocking control.** Off, on, or kept inside slices, with both
+offsets. Keeping it inside slices is what makes the parallel slice path
+independent all the way through.
+
+**A buffer model.** A real coded picture buffer, announced in the video
+usability information and in the buffering period and picture timing
+messages, with a constant bitrate mode that pads. Walked frame by frame
+from the announced parameters and the actual unit sizes, it never
+underflows or overflows across ten configurations, and the long run rate
+never exceeds the request.
+
+## 1.7 — Wider hardware
 
 Three separate pieces, none blocking the others.
 
@@ -175,6 +205,41 @@ transform is Microsoft's software one, and it is about four times slower
 than our own decoder, which is why it is kept as a test oracle and not
 registered as a backend. Real hardware decoding means handing that
 transform a Direct3D device and copying textures back.
+
+## What is still missing
+
+Smaller than a milestone each, listed so none of it is forgotten.
+
+**Weighted prediction in the encoder.** The decoder applies explicit and
+implicit weights; the encoder never writes a weight table. The
+repository even carries a fade clip, which is exactly the case weights
+exist for, and the encoder spends bits on it for nothing.
+
+**Temporal direct in the encoder.** Spatial only today. It needs the
+distance scaling and the colocated picture order count mapping.
+
+**Quantisation with rate and distortion (trellis).** Not present.
+Usually five to ten per cent of the bitrate.
+
+**Long term references and the memory management operations** in the
+encoder. The decoder handles both; the encoder does sliding window only.
+
+**Level limits against the bitrate.** The buffer model does not check
+the announced level's maximum bitrate or buffer size, because those
+tables were not transcribed from a verified source.
+
+**Parameter sets alongside a recovery point.** A late joiner needs them
+in band. The decoder no longer throws away its references when they are
+repeated, which was the blocker; the encoder does not yet send them.
+
+**An 8x8 transformed difference kernel.** The Intra_8x8 mode decision
+scores with 4x4 sums, which under-rates the transform it is choosing.
+
+**Rejected on purpose, both directions**: lossless transform bypass, the
+4:2:2 and 4:4:4 chroma formats, bit depths above eight, interlaced and
+macroblock adaptive coding, slice groups, and data partitioning. Each
+has a test that feeds a real stream of that kind and requires the
+refusal.
 
 ## Open questions that are not the codec's to answer
 

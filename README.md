@@ -20,22 +20,25 @@ Working today:
 | Area | State |
 | --- | --- |
 | Decoder, High profile | complete, bit-exact against ffmpeg on twenty-nine clips |
-| Encoder, Main profile | complete, bit-exact against ffmpeg |
-| Intra prediction | all block sizes, 4x4, 8x8 and 16x16; 8x8 decoded only |
+| Encoder, High profile | the 8x8 transform, Intra_8x8 and the scaling matrices |
+| Intra prediction | all block sizes in both directions, 4x4, 8x8 and 16x16 |
 | Inter prediction | all P partitions both directions, 8x8 sub-macroblocks, multiple references |
 | B slices | both directions: bi-prediction, spatial direct, output reordered by picture order count |
 | Weighted prediction | explicit for predictive slices, explicit and implicit for bi-predictive |
+| Supplemental enhancement information | recovery point, buffering period, picture timing and user data, both directions |
 | CAVLC | complete, both directions |
 | CABAC | complete in both directions; streams are 18 to 30 per cent smaller than CAVLC |
 | In-loop deblocking filter | complete, shared by encoder and decoder |
 | Reference picture management | sliding window and MMCO, up to sixteen references in the encoder |
 | Slices | any count, encoded in parallel; ten times faster on twenty threads for 1.8 per cent more bits |
 | Hardware acceleration | encoding on Windows through Media Foundation and on Linux through NVENC, chosen automatically, no cgo on either path |
-| Bitrate targeted rate control | complete, within about a fifth of the request |
+| Bitrate targeted rate control | complete, and under a buffer model the long run rate never exceeds the request |
 | Mode decision | rate-distortion, with an early skip test that pays for itself six times over on screen content |
 | SIMD kernels | transformed differences, six-tap and bilinear interpolation, block matching, the 4x4 transform and quantisation |
-| Scaling matrices | resolved and applied when decoding; the encoder writes flat matrices only |
-| High profile encoding | not started; the 8x8 transform and matrices are read but not written |
+| Scaling matrices | resolved and applied in both directions; the JVT defaults save 8 to 18 per cent of the bits |
+| Intra refresh | a sweeping band of intra macroblocks, motion constrained so the refreshed area is never reinfected |
+| Deblocking control | on, off, or kept inside slices, with both offsets |
+| Buffer model | a coded picture buffer with a constant bitrate mode, announced to the decoder |
 | Lossless transform bypass | rejected explicitly, in both directions |
 
 See [docs/ROADMAP.md](docs/ROADMAP.md) for what comes next and why in that
