@@ -157,6 +157,13 @@ func (s *mbEncoder) motionCompensateMB(mv [2]int16) {
 }
 
 func (s *mbEncoder) quantiseInterLuma() bool {
+	if s.cur.Transform8x8 {
+		s.quantiseInterLuma8x8()
+		if s.cur.cbpLuma == 0 {
+			s.cur.Transform8x8 = false
+		}
+		return s.cur.cbpLuma != 0
+	}
 	var block transform.Block
 	any := false
 	for blk := 0; blk < 16; blk++ {
@@ -164,7 +171,7 @@ func (s *mbEncoder) quantiseInterLuma() bool {
 		srcOff := s.e.src.LumaOffset(s.mbx*16+blockX[blk], s.mby*16+blockY[blk])
 		transform.Residual4x4(&block, s.e.src.Y, s.e.src.StrideY, srcOff, s.e.rec.Y, s.e.rec.StrideY, off)
 		transform.Forward4x4(&block)
-		transform.Quant4x4(&block, s.qpY, false)
+		quant4x4(&block, s.qpY, s.e.lumaQuant4x4(false), false)
 		var scan [16]int32
 		transform.BlockToScan(&scan, &block)
 		s.lumaScan[blk] = scan
@@ -187,13 +194,17 @@ func (s *mbEncoder) quantiseInterLuma() bool {
 }
 
 func (s *mbEncoder) reconstructInterLuma() {
+	if s.cur.Transform8x8 {
+		s.reconstructInterLuma8x8()
+		return
+	}
 	for blk := 0; blk < 16; blk++ {
 		if s.cur.NzY[blk] == 0 {
 			continue
 		}
 		var b transform.Block
 		transform.ScanToBlock(&b, &s.lumaScan[blk])
-		transform.Dequant4x4(&b, s.qpY, false)
+		dequant4x4(&b, s.qpY, s.e.lumaLevel4x4(false), false)
 		transform.Inverse4x4(&b)
 		transform.AddResidual4x4(s.e.rec.Y, s.e.rec.StrideY, s.lumaOffset(blk), &b)
 	}
@@ -216,7 +227,7 @@ func (s *mbEncoder) quantiseInterChroma() {
 			transform.Forward4x4(&blocks[blk])
 			dc[blk] = blocks[blk][0]
 		}
-		transform.QuantChromaDC(&dc, qpc, false)
+		quantChromaDC(&dc, qpc, s.e.chromaQuant4x4(false, plane), false)
 		s.chromaDC[plane] = dc
 		for i := 0; i < 4; i++ {
 			if dc[i] != 0 {
@@ -225,7 +236,7 @@ func (s *mbEncoder) quantiseInterChroma() {
 		}
 		for blk := 0; blk < 4; blk++ {
 			blocks[blk][0] = 0
-			transform.Quant4x4(&blocks[blk], qpc, false)
+			quant4x4(&blocks[blk], qpc, s.e.chromaQuant4x4(false, plane), false)
 			blocks[blk][0] = 0
 			var scan [16]int32
 			transform.BlockToScan(&scan, &blocks[blk])
@@ -271,12 +282,12 @@ func (s *mbEncoder) reconstructInterChroma() {
 		if s.cur.cbpChroma == 0 {
 			dc = transform.ChromaDC{}
 		}
-		transform.DequantChromaDC(&dc, qpc)
+		dequantChromaDC(&dc, qpc, s.e.chromaLevel4x4(false, plane))
 		for blk := 0; blk < 4; blk++ {
 			var b transform.Block
 			transform.ScanToBlock(&b, &s.chromaScan[plane][blk])
 			b[0] = dc[blk]
-			transform.Dequant4x4(&b, qpc, true)
+			dequant4x4(&b, qpc, s.e.chromaLevel4x4(false, plane), true)
 			transform.Inverse4x4(&b)
 			transform.AddResidual4x4(planes[plane], s.e.rec.StrideC, s.chromaOffset(blk), &b)
 		}
@@ -400,6 +411,18 @@ func (s *mbEncoder) decideInterMB() (int, interCandidate, [2]int16, error) {
 		if j < bestCost {
 			bestCost, bestCand, bestChoice = j, c, choiceInter
 		}
+		if !s.allows8x8(kind, c.subs) {
+			continue
+		}
+		c8 := c
+		c8.t8 = true
+		j8, err := s.evaluateInter(c8, rdLambda)
+		if err != nil {
+			return 0, interCandidate{}, skipMV, err
+		}
+		if j8 < bestCost {
+			bestCost, bestCand, bestChoice = j8, c8, choiceInter
+		}
 	}
 
 	if j := s.evaluateSkip(skipMV, rdLambda); j < bestCost {
@@ -441,6 +464,7 @@ func (s *mbEncoder) writeInterMB() error {
 	}
 	cbp := uint8(s.cur.cbpLuma | s.cur.cbpChroma<<4)
 	s.w.WriteUE(interCBPToGolomb[cbp])
+	s.writeTransformSize8x8()
 	if cbp != 0 {
 		s.writeQPDelta()
 		if err := s.writeResidual(false); err != nil {
@@ -464,6 +488,12 @@ const (
 	choiceSkip
 	choiceIntra
 	choiceDirect
+)
+
+const (
+	choiceIntra4x4 = iota
+	choiceIntra16x16
+	choiceIntra8x8
 )
 
 func (s *mbEncoder) applyUnchanged() bool {

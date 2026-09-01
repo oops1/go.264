@@ -87,6 +87,7 @@ func rdCost(ssd, bits int, lambda float64) float64 {
 
 type interCandidate struct {
 	kind  int
+	t8    bool
 	parts []partResult
 	subs  []subResult
 }
@@ -94,6 +95,7 @@ type interCandidate struct {
 func (s *mbEncoder) applyInterCandidate(c interCandidate) {
 	s.reset()
 	s.cur.kind = c.kind
+	s.cur.Transform8x8 = c.t8
 	s.cur.Intra = false
 	s.cur.skipped = false
 	s.parts = c.parts

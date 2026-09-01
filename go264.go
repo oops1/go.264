@@ -71,8 +71,17 @@ type EncoderConfig struct {
 	MotionSearch  MotionSearch
 	ModeDecision  ModeDecision
 	Slices        int
+	Transform8x8  bool
+	ScalingMatrix ScalingMatrix
 	ForceSoftware bool
 }
+
+type ScalingMatrix = encoder.ScalingMatrix
+
+const (
+	ScalingMatrixFlat = encoder.ScalingMatrixFlat
+	ScalingMatrixJVT  = encoder.ScalingMatrixJVT
+)
 
 type MotionSearch = encoder.MotionSearch
 
@@ -125,19 +134,21 @@ func NewEncoder(cfg EncoderConfig) (*Encoder, error) {
 		}
 	}
 	cpu, err := encoder.New(encoder.Config{
-		Width:        cfg.Width,
-		Height:       cfg.Height,
-		FPSNum:       cfg.FPSNum,
-		FPSDen:       cfg.FPSDen,
-		GOPSize:      cfg.GOPSize,
-		QP:           cfg.QP,
-		BitrateKbps:  cfg.BitrateKbps,
-		RefFrames:    cfg.RefFrames,
-		BFrames:      cfg.BFrames,
-		CABAC:        cfg.CABAC,
-		MotionSearch: cfg.MotionSearch,
-		ModeDecision: cfg.ModeDecision,
-		Slices:       cfg.Slices,
+		Width:         cfg.Width,
+		Height:        cfg.Height,
+		FPSNum:        cfg.FPSNum,
+		FPSDen:        cfg.FPSDen,
+		GOPSize:       cfg.GOPSize,
+		QP:            cfg.QP,
+		BitrateKbps:   cfg.BitrateKbps,
+		RefFrames:     cfg.RefFrames,
+		BFrames:       cfg.BFrames,
+		CABAC:         cfg.CABAC,
+		MotionSearch:  cfg.MotionSearch,
+		ModeDecision:  cfg.ModeDecision,
+		Slices:        cfg.Slices,
+		Transform8x8:  cfg.Transform8x8,
+		ScalingMatrix: cfg.ScalingMatrix,
 	})
 	if err != nil {
 		return nil, err

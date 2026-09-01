@@ -26,6 +26,10 @@ func (s *mbEncoder) writeResidualCABAC(i16 bool) {
 		if s.cur.cbpLuma&(1<<uint(i8)) == 0 {
 			continue
 		}
+		if s.cur.Transform8x8 {
+			s.cb.ResidualBlock8x8(&s.luma8x8Scan[i8])
+			continue
+		}
 		for i4 := 0; i4 < 4; i4++ {
 			blk := i8*4 + i4
 			a, b := s.lumaCBFContext(blk)
@@ -69,6 +73,12 @@ func (s *mbEncoder) intraMBTypeValue() int {
 }
 
 func (s *mbEncoder) writeIntraModesCABAC() {
+	if s.cur.Transform8x8 {
+		for i8 := 0; i8 < 4; i8++ {
+			s.cb.Intra4x4PredMode(s.predIntra4x4Mode(i8*4), int(s.cur.intra4Modes[i8*4]))
+		}
+		return
+	}
 	for blk := 0; blk < 16; blk++ {
 		s.cb.Intra4x4PredMode(s.predIntra4x4Mode(blk), int(s.cur.intra4Modes[blk]))
 	}
@@ -91,6 +101,9 @@ func (s *mbEncoder) writeIntraMBCABACInB() {
 
 func (s *mbEncoder) writeIntraMBBodyCABAC() {
 	if s.cur.kind == mbTypeINxN {
+		if s.e.pps.Transform8x8Mode {
+			s.cb.TransformSize8x8Flag(s.transform8x8Inc(), s.cur.Transform8x8)
+		}
 		s.writeIntraModesCABAC()
 		s.cb.IntraChromaPredMode(s.chromaPredInc(), int(s.cur.chromaMode))
 		left, top := s.neighbourCBP(s.nb.left), s.neighbourCBP(s.nb.top)
@@ -164,6 +177,7 @@ func (s *mbEncoder) writeInterMBCABAC() {
 	left, top := s.neighbourCBP(s.nb.left), s.neighbourCBP(s.nb.top)
 	s.cb.CodedBlockPatternLuma(left, top, s.cur.cbpLuma)
 	s.cb.CodedBlockPatternChroma(left, top, s.cur.cbpChroma)
+	s.writeTransformSize8x8CABAC()
 	if s.cur.cbpLuma != 0 || s.cur.cbpChroma != 0 {
 		s.cabacQPDelta()
 		s.writeResidualCABAC(false)

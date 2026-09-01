@@ -61,19 +61,21 @@ type mbEncoder struct {
 	cb                 *cabac.Encoder
 	prevQPDeltaNonZero bool
 
-	scratch    [256]byte
-	scratchB   [256]byte
-	segs       []motionSegment
-	predA      predBuffer
-	predB      predBuffer
-	parts      []partResult
-	subs       []subResult
-	bparts     []bPartResult
-	bsubs      []bSubResult
-	lumaScan   [16][16]int32
-	lumaDCScan [16]int32
-	chromaDC   [2]transform.ChromaDC
-	chromaScan [2][4][16]int32
+	scratch     [256]byte
+	scratchB    [256]byte
+	segs        []motionSegment
+	predA       predBuffer
+	predB       predBuffer
+	parts       []partResult
+	subs        []subResult
+	bparts      []bPartResult
+	bsubs       []bSubResult
+	lumaScan    [16][16]int32
+	lumaDCScan  [16]int32
+	chromaDC    [2]transform.ChromaDC
+	chromaScan  [2][4][16]int32
+	luma8x8Scan [4][64]int32
+	saved8x8    intraLumaState
 }
 
 func (s *mbEncoder) reset() {
@@ -81,6 +83,8 @@ func (s *mbEncoder) reset() {
 	s.lumaDCScan = [16]int32{}
 	s.chromaDC = [2]transform.ChromaDC{}
 	s.chromaScan = [2][4][16]int32{}
+	s.luma8x8Scan = [4][64]int32{}
+	s.cur.Transform8x8 = false
 }
 
 func (e *Encoder) encodeSlice(w *bits.Writer, hdr *syntax.SliceHeader, p sliceJob, hints *frameHints) error {
@@ -176,15 +180,34 @@ func (s *mbEncoder) chromaOffset(blk int) int {
 
 func (s *mbEncoder) encodeIntraModes() {
 	cost16, mode16 := s.searchIntra16x16()
-	cost4 := s.encodeIntra4x4()
 	lambda := lambdaTable[s.qpY]
 
-	if cost16+lambda*8 < cost4 {
+	cost8 := -1
+	if s.e.pps.Transform8x8Mode {
+		cost8 = s.encodeIntra8x8()
+		s.saveIntraLuma(&s.saved8x8)
+	}
+	cost4 := s.encodeIntra4x4()
+
+	best, choice := cost4, choiceIntra4x4
+	if c := cost16 + lambda*8; c < best {
+		best, choice = c, choiceIntra16x16
+	}
+	if cost8 >= 0 && cost8 < best {
+		choice = choiceIntra8x8
+	}
+
+	switch choice {
+	case choiceIntra16x16:
 		s.reset()
 		s.cur.kind = mbTypeI16x16
 		s.cur.intra16Mode = int8(mode16)
 		s.encodeIntra16x16(mode16)
-	} else {
+	case choiceIntra8x8:
+		s.restoreIntraLuma(&s.saved8x8)
+		s.cur.kind = mbTypeINxN
+		s.cur.Transform8x8 = true
+	default:
 		s.cur.kind = mbTypeINxN
 	}
 	s.cur.Intra = true
@@ -254,12 +277,12 @@ func (s *mbEncoder) encodeIntra4x4() int {
 		pred.Intra4x4(s.e.rec.Y, s.e.rec.StrideY, off, bestMode, a)
 		transform.Residual4x4(&block, s.e.src.Y, s.e.src.StrideY, srcOff, s.e.rec.Y, s.e.rec.StrideY, off)
 		transform.Forward4x4(&block)
-		transform.Quant4x4(&block, s.qpY, true)
+		quant4x4(&block, s.qpY, s.e.lumaQuant4x4(true), true)
 		var scan [16]int32
 		transform.BlockToScan(&scan, &block)
 		s.lumaScan[blk] = scan
 		s.cur.NzY[blk] = uint8(countNonZero(scan[:]))
-		transform.Dequant4x4(&block, s.qpY, false)
+		dequant4x4(&block, s.qpY, s.e.lumaLevel4x4(true), false)
 		transform.Inverse4x4(&block)
 		transform.AddResidual4x4(s.e.rec.Y, s.e.rec.StrideY, off, &block)
 	}
@@ -291,13 +314,13 @@ func (s *mbEncoder) encodeIntra16x16(mode int) {
 		dcIdx := (blockY[blk]>>2)*4 + blockX[blk]>>2
 		dc[dcIdx] = blocks[blk][0]
 	}
-	transform.QuantLumaDC(&dc, s.qpY, true)
+	quantLumaDC(&dc, s.qpY, s.e.lumaQuant4x4(true), true)
 	transform.BlockToScan(&s.lumaDCScan, &dc)
 
 	acNonZero := false
 	for blk := 0; blk < 16; blk++ {
 		blocks[blk][0] = 0
-		transform.Quant4x4(&blocks[blk], s.qpY, true)
+		quant4x4(&blocks[blk], s.qpY, s.e.lumaQuant4x4(true), true)
 		blocks[blk][0] = 0
 		var scan [16]int32
 		transform.BlockToScan(&scan, &blocks[blk])
@@ -321,12 +344,12 @@ func (s *mbEncoder) encodeIntra16x16(mode int) {
 	}
 
 	transform.ScanToBlock(&dc, &s.lumaDCScan)
-	transform.DequantLumaDC(&dc, s.qpY)
+	dequantLumaDC(&dc, s.qpY, s.e.lumaLevel4x4(true))
 	for blk := 0; blk < 16; blk++ {
 		var b transform.Block
 		transform.ScanToBlock(&b, &s.lumaScan[blk])
 		b[0] = dc[(blockY[blk]>>2)*4+blockX[blk]>>2]
-		transform.Dequant4x4(&b, s.qpY, true)
+		dequant4x4(&b, s.qpY, s.e.lumaLevel4x4(true), true)
 		transform.Inverse4x4(&b)
 		transform.AddResidual4x4(s.e.rec.Y, s.e.rec.StrideY, s.lumaOffset(blk), &b)
 	}
@@ -376,7 +399,7 @@ func (s *mbEncoder) encodeChroma(mode int) {
 			transform.Forward4x4(&blocks[plane][blk])
 			dc[blk] = blocks[plane][blk][0]
 		}
-		transform.QuantChromaDC(&dc, qpc, true)
+		quantChromaDC(&dc, qpc, s.e.chromaQuant4x4(true, plane), true)
 		s.chromaDC[plane] = dc
 		for i := 0; i < 4; i++ {
 			if dc[i] != 0 {
@@ -385,7 +408,7 @@ func (s *mbEncoder) encodeChroma(mode int) {
 		}
 		for blk := 0; blk < 4; blk++ {
 			blocks[plane][blk][0] = 0
-			transform.Quant4x4(&blocks[plane][blk], qpc, true)
+			quant4x4(&blocks[plane][blk], qpc, s.e.chromaQuant4x4(true, plane), true)
 			blocks[plane][blk][0] = 0
 			var scan [16]int32
 			transform.BlockToScan(&scan, &blocks[plane][blk])
@@ -428,12 +451,12 @@ func (s *mbEncoder) encodeChroma(mode int) {
 		if s.cur.cbpChroma == 0 {
 			dc = transform.ChromaDC{}
 		}
-		transform.DequantChromaDC(&dc, qpc)
+		dequantChromaDC(&dc, qpc, s.e.chromaLevel4x4(true, plane))
 		for blk := 0; blk < 4; blk++ {
 			var b transform.Block
 			transform.ScanToBlock(&b, &s.chromaScan[plane][blk])
 			b[0] = dc[blk]
-			transform.Dequant4x4(&b, qpc, true)
+			dequant4x4(&b, qpc, s.e.chromaLevel4x4(true, plane), true)
 			transform.Inverse4x4(&b)
 			transform.AddResidual4x4(planes[plane], s.e.rec.StrideC, s.chromaOffset(blk), &b)
 		}
@@ -453,19 +476,26 @@ func countNonZero(v []int32) int {
 func (s *mbEncoder) writeIntraMB(typeOffset uint32) error {
 	if s.cur.kind == mbTypeINxN {
 		s.w.WriteUE(typeOffset)
-		for blk := 0; blk < 16; blk++ {
-			mode := int(s.cur.intra4Modes[blk])
-			predMode := s.predIntra4x4Mode(blk)
-			if mode == predMode {
-				s.w.WriteFlag(true)
-				continue
+		if s.e.pps.Transform8x8Mode {
+			s.w.WriteFlag(s.cur.Transform8x8)
+		}
+		if s.cur.Transform8x8 {
+			s.writeIntra8x8Modes()
+		} else {
+			for blk := 0; blk < 16; blk++ {
+				mode := int(s.cur.intra4Modes[blk])
+				predMode := s.predIntra4x4Mode(blk)
+				if mode == predMode {
+					s.w.WriteFlag(true)
+					continue
+				}
+				s.w.WriteFlag(false)
+				rem := mode
+				if mode > predMode {
+					rem = mode - 1
+				}
+				s.w.WriteBits(uint32(rem), 3)
 			}
-			s.w.WriteFlag(false)
-			rem := mode
-			if mode > predMode {
-				rem = mode - 1
-			}
-			s.w.WriteBits(uint32(rem), 3)
 		}
 		s.w.WriteUE(uint32(s.cur.chromaMode))
 		cbp := uint8(s.cur.cbpLuma | s.cur.cbpChroma<<4)
@@ -503,6 +533,12 @@ func (s *mbEncoder) writeResidual(i16 bool) error {
 	}
 	for i8 := 0; i8 < 4; i8++ {
 		if s.cur.cbpLuma&(1<<uint(i8)) == 0 {
+			continue
+		}
+		if s.cur.Transform8x8 {
+			if err := s.writeLuma8x8(i8); err != nil {
+				return fmt.Errorf("writing luma 8x8 block %d: %w", i8, err)
+			}
 			continue
 		}
 		for i4 := 0; i4 < 4; i4++ {

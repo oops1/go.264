@@ -12,6 +12,7 @@ import (
 	"github.com/oops1/go.264/internal/loopfilter"
 	"github.com/oops1/go.264/internal/nal"
 	"github.com/oops1/go.264/internal/syntax"
+	"github.com/oops1/go.264/internal/transform"
 )
 
 var (
@@ -31,10 +32,12 @@ type Config struct {
 	RefFrames   int
 	BFrames     int
 
-	CABAC        bool
-	MotionSearch MotionSearch
-	ModeDecision ModeDecision
-	Slices       int
+	CABAC         bool
+	MotionSearch  MotionSearch
+	ModeDecision  ModeDecision
+	Slices        int
+	Transform8x8  bool
+	ScalingMatrix ScalingMatrix
 }
 
 type ModeDecision uint8
@@ -87,6 +90,11 @@ type Encoder struct {
 	widthMBs  int
 	heightMBs int
 
+	level4x4 [6]scale4x4
+	quant4x4 [6]scale4x4
+	level8x8 [2]transform.LevelScale8x8
+	quant8x8 [2]transform.QuantScale8x8
+
 	src  *frame.Picture
 	rec  *frame.Picture
 	refs []*frame.Picture
@@ -126,6 +134,7 @@ func New(cfg Config) (*Encoder, error) {
 	e.widthMBs = (cfg.Width + 15) / 16
 	e.heightMBs = (cfg.Height + 15) / 16
 	e.buildParameterSets()
+	e.buildScalingTables()
 	e.src = frame.NewPicture(e.widthMBs, e.heightMBs)
 	e.rec = frame.NewPicture(e.widthMBs, e.heightMBs)
 	e.grid = make([]mbInfo, e.widthMBs*e.heightMBs)
@@ -182,6 +191,10 @@ func (e *Encoder) buildParameterSets() {
 		profile = syntax.ProfileMain
 		constraints = 0x40
 	}
+	if e.cfg.Transform8x8 || e.cfg.ScalingMatrix != ScalingMatrixFlat {
+		profile = syntax.ProfileHigh
+		constraints = 0
+	}
 	sps := &syntax.SPS{
 		ProfileIDC:                profile,
 		ConstraintSet:             constraints,
@@ -221,6 +234,26 @@ func (e *Encoder) buildParameterSets() {
 		PicInitQPMinus26:               int32(e.cfg.QP - 26),
 		DeblockingFilterControlPresent: true,
 		CABAC:                          e.cfg.CABAC,
+	}
+	if sps.ProfileIDC == syntax.ProfileHigh {
+		sps.BitDepthLumaMinus8 = 0
+		sps.BitDepthChromaMinus8 = 0
+		sps.QpprimeYZeroTransformBypass = false
+		pps.HasExtension = true
+		pps.Transform8x8Mode = e.cfg.Transform8x8
+	}
+	if e.cfg.ScalingMatrix == ScalingMatrixJVT {
+		pps.PicScalingMatrixPresent = true
+		for i := 0; i < 6; i++ {
+			pps.ScalingList4x4Present[i] = true
+			pps.UseDefaultScaling4x4[i] = true
+		}
+		if pps.Transform8x8Mode {
+			for i := 0; i < 2; i++ {
+				pps.ScalingList8x8Present[i] = true
+				pps.UseDefaultScaling8x8[i] = true
+			}
+		}
 	}
 	e.sps = sps
 	e.pps = pps

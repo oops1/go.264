@@ -263,6 +263,7 @@ type bPartResult struct {
 type bCandidate struct {
 	typeIdx int
 	kind    int
+	t8      bool
 	parts   []bPartResult
 	subs    []bSubResult
 }
@@ -347,6 +348,7 @@ func (s *mbEncoder) applyBCandidate(c bCandidate) {
 	s.reset()
 	s.cur.kind = c.kind
 	s.cur.bTypeIdx = c.typeIdx
+	s.cur.Transform8x8 = c.t8
 	s.cur.Intra = false
 	s.cur.skipped = false
 	s.bparts = c.parts
@@ -425,10 +427,11 @@ func (s *mbEncoder) applyBSkip() {
 	s.compensateB()
 }
 
-func (s *mbEncoder) applyBDirect() {
+func (s *mbEncoder) applyBDirect(t8 bool) {
 	s.reset()
 	s.cur.kind = mbTypeBDirect
 	s.cur.bTypeIdx = 0
+	s.cur.Transform8x8 = t8
 	s.cur.Intra = false
 	s.cur.skipped = false
 	s.applyBDirectMotion()
@@ -448,8 +451,8 @@ func (s *mbEncoder) evaluateBSkip(lambda float64) float64 {
 	return rdCost(s.mbSSD(), bits, lambda)
 }
 
-func (s *mbEncoder) evaluateBDirect(lambda float64) (float64, error) {
-	s.applyBDirect()
+func (s *mbEncoder) evaluateBDirect(t8 bool, lambda float64) (float64, error) {
+	s.applyBDirect(t8)
 	ssd := s.mbSSD()
 	if s.cb != nil {
 		n := s.trialBitsCABAC(func() {
@@ -493,12 +496,22 @@ func (s *mbEncoder) decideBMB() (int, bCandidate, error) {
 	rdLambda := lambdaRDTable[s.qpY]
 	satdLambda := lambdaTable[s.qpY]
 
-	bestCost, err := s.evaluateBDirect(rdLambda)
+	bestCost, err := s.evaluateBDirect(false, rdLambda)
 	if err != nil {
 		return 0, bCandidate{}, err
 	}
 	bestChoice := choiceDirect
 	var bestCand bCandidate
+
+	if s.allowsB8x8(mbTypeBDirect, nil) {
+		j, err := s.evaluateBDirect(true, rdLambda)
+		if err != nil {
+			return 0, bCandidate{}, err
+		}
+		if j < bestCost {
+			bestCost, bestChoice, bestCand = j, choiceDirect, bCandidate{kind: mbTypeBDirect, t8: true}
+		}
+	}
 
 	for _, kind := range s.bShapes() {
 		var c bCandidate
@@ -513,6 +526,18 @@ func (s *mbEncoder) decideBMB() (int, bCandidate, error) {
 		}
 		if j < bestCost {
 			bestCost, bestChoice, bestCand = j, choiceInter, c
+		}
+		if !s.allowsB8x8(kind, c.subs) {
+			continue
+		}
+		c8 := c
+		c8.t8 = true
+		j8, err := s.evaluateBCandidate(c8, rdLambda)
+		if err != nil {
+			return 0, bCandidate{}, err
+		}
+		if j8 < bestCost {
+			bestCost, bestChoice, bestCand = j8, choiceInter, c8
 		}
 	}
 
@@ -536,7 +561,7 @@ func (s *mbEncoder) applyBChoice(choice int, cand bCandidate) {
 	case choiceSkip:
 		s.applyBSkip()
 	case choiceDirect:
-		s.applyBDirect()
+		s.applyBDirect(cand.t8)
 	default:
 		s.applyBCandidate(cand)
 	}
@@ -594,6 +619,7 @@ func (s *mbEncoder) writeBMB() error {
 	}
 	cbp := uint8(s.cur.cbpLuma | s.cur.cbpChroma<<4)
 	s.w.WriteUE(interCBPToGolomb[cbp])
+	s.writeTransformSize8x8()
 	if cbp != 0 {
 		s.writeQPDelta()
 		if err := s.writeResidual(false); err != nil {

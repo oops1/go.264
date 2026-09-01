@@ -76,6 +76,7 @@ func (s *mbEncoder) writeBMBCABAC() {
 	left, top := s.neighbourCBP(s.nb.left), s.neighbourCBP(s.nb.top)
 	s.cb.CodedBlockPatternLuma(left, top, s.cur.cbpLuma)
 	s.cb.CodedBlockPatternChroma(left, top, s.cur.cbpChroma)
+	s.writeTransformSize8x8CABAC()
 	if s.cur.cbpLuma != 0 || s.cur.cbpChroma != 0 {
 		s.cabacQPDelta()
 		s.writeResidualCABAC(false)

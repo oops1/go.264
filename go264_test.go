@@ -359,3 +359,41 @@ func TestRoundTripWithBFrames(t *testing.T) {
 		}
 	}
 }
+
+func TestTransform8x8ReachesTheSoftwareEncoder(t *testing.T) {
+	cfg := EncoderConfig{Width: 96, Height: 80, FPSNum: 25, FPSDen: 1, GOPSize: 4, QP: 27,
+		Transform8x8: true, ScalingMatrix: ScalingMatrixJVT, ForceSoftware: true}
+	enc, err := NewEncoder(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer enc.Close()
+
+	var stream []byte
+	for i := 0; i < 4; i++ {
+		pkt, err := enc.Encode(pattern(cfg.Width, cfg.Height, i))
+		if err != nil {
+			t.Fatal(err)
+		}
+		stream = append(stream, pkt...)
+	}
+	tail, err := enc.Flush()
+	if err != nil {
+		t.Fatal(err)
+	}
+	stream = append(stream, tail...)
+
+	d := NewDecoderWithConfig(DecoderConfig{ForceSoftware: true})
+	defer d.Close()
+	frames, err := d.Decode(stream)
+	if err != nil {
+		t.Fatalf("our decoder rejected a High profile stream from the public encoder: %v", err)
+	}
+	rest, err := d.Flush()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(frames)+len(rest) != 4 {
+		t.Fatalf("decoded %d frames, want 4", len(frames)+len(rest))
+	}
+}
