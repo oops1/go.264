@@ -100,6 +100,9 @@ func (d *sliceDecoder) decodeInterMB(info mbTypeInfo, res *mbResidual) error {
 	if err := d.parseCBP(false); err != nil {
 		return err
 	}
+	if err := d.readTransformSize8x8(); err != nil {
+		return err
+	}
 	if d.cur.cbpLuma != 0 || d.cur.cbpChroma != 0 {
 		if err := d.parseQPDelta(); err != nil {
 			return err
@@ -125,6 +128,9 @@ func (d *sliceDecoder) decodeP8x8(info mbTypeInfo, maxRef uint32) error {
 			return fmt.Errorf("%w: sub_mb_type %d", ErrCorrupt, v)
 		}
 		sub[i] = subMbTable[v]
+		if sub[i].numParts != 1 {
+			d.subPartsAtLeast8x8 = false
+		}
 	}
 	var refs [4]int8
 	for i := 0; i < 4; i++ {
@@ -443,13 +449,35 @@ func motionSegments(m *mbState) []motionSegment {
 	return segs
 }
 
+func (d *sliceDecoder) readTransformSize8x8() error {
+	if !d.mayUse8x8Transform() {
+		return nil
+	}
+	flag, err := d.r.ReadFlag()
+	if err != nil {
+		return err
+	}
+	d.cur.Transform8x8 = flag
+	return nil
+}
+
 func (d *sliceDecoder) addInterResidual(res *mbResidual) {
 	baseX, baseY := d.mbx*16, d.mby*16
+	if d.cur.Transform8x8 {
+		for i8 := 0; i8 < 4; i8++ {
+			if d.cur.cbpLuma&(1<<uint(i8)) == 0 {
+				continue
+			}
+			d.addLuma8x8(res, i8, d.pic.LumaOffset(baseX+i8%2*8, baseY+i8/2*8), false)
+		}
+		d.addChromaResidual(res)
+		return
+	}
 	for blk := 0; blk < 16; blk++ {
 		if d.cur.NzY[blk] == 0 {
 			continue
 		}
-		transform.Dequant4x4(&res.luma[blk], d.qpY, false)
+		dequant4x4(&res.luma[blk], d.qpY, d.scal.luma4x4(false), false)
 		transform.Inverse4x4(&res.luma[blk])
 		transform.AddResidual4x4(d.pic.Y, d.pic.StrideY,
 			d.pic.LumaOffset(baseX+blockX[blk], baseY+blockY[blk]), &res.luma[blk])

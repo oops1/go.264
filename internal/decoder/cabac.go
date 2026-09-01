@@ -132,6 +132,29 @@ func (d *sliceDecoder) cabacIntraPredModes() {
 	}
 }
 
+func (d *sliceDecoder) cabacIntra8x8PredModes() {
+	for i8 := 0; i8 < 4; i8++ {
+		pred := d.predIntra4x4Mode(i8 * 4)
+		d.setIntra8x8Mode(i8, d.cb.Intra4x4PredMode(pred))
+	}
+}
+
+func (d *sliceDecoder) cabacTransformSize8x8() {
+	if !d.mayUse8x8Transform() {
+		return
+	}
+	d.cur.Transform8x8 = d.cb.TransformSize8x8Flag(d.transform8x8Inc())
+}
+
+func (d *sliceDecoder) cabacLuma8x8(res *mbResidual, i8 int) {
+	var scan [64]int32
+	n := d.cb.ResidualBlock8x8(&scan)
+	for i4 := 0; i4 < 4; i4++ {
+		d.cur.NzY[i8*4+i4] = uint8(n)
+	}
+	scanToBlock8x8(&res.luma8x8[i8], &scan)
+}
+
 func (d *sliceDecoder) cabacResidual(res *mbResidual, i16 bool) {
 	if i16 {
 		var scan [16]int32
@@ -145,6 +168,10 @@ func (d *sliceDecoder) cabacResidual(res *mbResidual, i16 bool) {
 			for i4 := 0; i4 < 4; i4++ {
 				d.cur.NzY[i8*4+i4] = 0
 			}
+			continue
+		}
+		if d.cur.Transform8x8 {
+			d.cabacLuma8x8(res, i8)
 			continue
 		}
 		for i4 := 0; i4 < 4; i4++ {
@@ -214,9 +241,13 @@ func (d *sliceDecoder) decodeIntraMBCABAC(info mbTypeInfo, res *mbResidual) erro
 
 	case mbTypeINxN:
 		if d.pps.Transform8x8Mode {
-			return fmt.Errorf("%w: 8x8 transform", ErrUnsupported)
+			d.cur.Transform8x8 = d.cb.TransformSize8x8Flag(d.transform8x8Inc())
 		}
-		d.cabacIntraPredModes()
+		if d.cur.Transform8x8 {
+			d.cabacIntra8x8PredModes()
+		} else {
+			d.cabacIntraPredModes()
+		}
 		d.cur.chromaMode = int8(d.cb.IntraChromaPredMode(d.chromaPredInc()))
 		cbp := d.cb.CodedBlockPatternLuma(d.neighbourCBP(d.nb.left), d.neighbourCBP(d.nb.top))
 		d.cur.cbpLuma = cbp
@@ -230,7 +261,11 @@ func (d *sliceDecoder) decodeIntraMBCABAC(info mbTypeInfo, res *mbResidual) erro
 			d.prevQPDeltaNonZero = false
 		}
 		d.cur.QPY = d.qpY
-		d.reconstructIntra4x4(res)
+		if d.cur.Transform8x8 {
+			d.reconstructIntra8x8(res)
+		} else {
+			d.reconstructIntra4x4(res)
+		}
 		d.reconstructChroma(res)
 		return nil
 
@@ -324,6 +359,9 @@ func (d *sliceDecoder) decodeP8x8CABAC(maxRef int) error {
 	var sub [4]subMbInfo
 	for i := 0; i < 4; i++ {
 		sub[i] = subMbTable[d.cb.SubMBTypeP()]
+		if sub[i].numParts != 1 {
+			d.subPartsAtLeast8x8 = false
+		}
 	}
 	var refs [4]int8
 	for i := 0; i < 4; i++ {
@@ -377,6 +415,7 @@ func (d *sliceDecoder) decodeInterMBCABAC(kind int, res *mbResidual) error {
 	left, top := d.neighbourCBP(d.nb.left), d.neighbourCBP(d.nb.top)
 	d.cur.cbpLuma = d.cb.CodedBlockPatternLuma(left, top)
 	d.cur.cbpChroma = d.cb.CodedBlockPatternChroma(left, top)
+	d.cabacTransformSize8x8()
 	if d.cur.cbpLuma != 0 || d.cur.cbpChroma != 0 {
 		if err := d.cabacQPDelta(); err != nil {
 			return err
@@ -398,6 +437,7 @@ func (d *sliceDecoder) decodeB8x8CABAC(res *mbResidual) error {
 		sub[i] = bSubTypes[d.cb.SubMBTypeB()]
 		anyDirect = anyDirect || sub[i].direct
 	}
+	d.noteBSubPartSizes(sub)
 	d.applySubDirect(sub, anyDirect)
 
 	var refs [2][4]int8
@@ -450,6 +490,7 @@ func (d *sliceDecoder) decodeInterMBBCABAC(info bMBTypeInfo, res *mbResidual) er
 
 	switch {
 	case info.direct:
+		d.subPartsAtLeast8x8 = d.direct8x8
 		d.directMotion(0, 0, 16, 16)
 		d.markDirect(0, 0, 16, 16)
 
@@ -492,6 +533,7 @@ func (d *sliceDecoder) decodeInterMBBCABAC(info bMBTypeInfo, res *mbResidual) er
 	left, top := d.neighbourCBP(d.nb.left), d.neighbourCBP(d.nb.top)
 	d.cur.cbpLuma = d.cb.CodedBlockPatternLuma(left, top)
 	d.cur.cbpChroma = d.cb.CodedBlockPatternChroma(left, top)
+	d.cabacTransformSize8x8()
 	if d.cur.cbpLuma != 0 || d.cur.cbpChroma != 0 {
 		if err := d.cabacQPDelta(); err != nil {
 			return err

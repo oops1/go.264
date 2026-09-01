@@ -24,6 +24,10 @@ type Decoder struct {
 	pending    []*frame.Picture
 	maxReorder int
 
+	scal    *scalingTables
+	scalSPS *syntax.SPS
+	scalPPS *syntax.PPS
+
 	sliceCount int
 }
 
@@ -160,10 +164,17 @@ func (d *Decoder) checkSupported(sps *syntax.SPS) error {
 	if sps.QpprimeYZeroTransformBypass {
 		return fmt.Errorf("%w: lossless transform bypass", ErrUnsupported)
 	}
-	if sps.SeqScalingMatrixPresent {
-		return fmt.Errorf("%w: sequence scaling matrices", ErrUnsupported)
-	}
 	return nil
+}
+
+func (d *Decoder) scalingFor(sps *syntax.SPS, pps *syntax.PPS) *scalingTables {
+	if d.scalSPS == sps && d.scalPPS == pps && d.scal != nil {
+		return d.scal
+	}
+	d.scal = buildScalingTables(sps, pps)
+	d.scalSPS = sps
+	d.scalPPS = pps
+	return d.scal
 }
 
 func (d *Decoder) decodeSlice(u nal.Unit) ([]*frame.Picture, error) {
@@ -171,9 +182,6 @@ func (d *Decoder) decodeSlice(u nal.Unit) ([]*frame.Picture, error) {
 	hdr, sps, pps, err := syntax.ParseSliceHeader(r, u.Header, d)
 	if err != nil {
 		return nil, err
-	}
-	if pps.PicScalingMatrixPresent {
-		return nil, fmt.Errorf("%w: picture scaling matrices", ErrUnsupported)
 	}
 	weighted := pps.WeightedPred && (hdr.SliceType.IsP() || hdr.SliceType.IsSP())
 	var out []*frame.Picture
@@ -233,6 +241,7 @@ func (d *Decoder) decodeSlice(u nal.Unit) ([]*frame.Picture, error) {
 		refListL1:       refListL1,
 		numRefIdxActive: active,
 		numRefIdxL1:     activeL1,
+		scal:            d.scalingFor(sps, pps),
 		directSpatial:   hdr.DirectSpatialMvPred,
 		direct8x8:       sps.Direct8x8Inference,
 		sliceID:         d.sliceCount,

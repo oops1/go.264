@@ -37,8 +37,7 @@ func significanceInc(cat, idx, numC8x8 int) int {
 	return idx
 }
 
-func (d *Decoder) absLevelInc(cat, binIdx, numGt1, numEq1 int) int {
-	base := offAbsLevel + catOffsetAbsLevel[cat]
+func absLevelIncAt(base, limit, binIdx, numGt1, numEq1 int) int {
 	if binIdx == 0 {
 		if numGt1 != 0 {
 			return base
@@ -49,10 +48,6 @@ func (d *Decoder) absLevelInc(cat, binIdx, numGt1, numEq1 int) int {
 		}
 		return base + v
 	}
-	limit := 4
-	if cat == CatChromaDC {
-		limit = 3
-	}
 	v := numGt1
 	if v > limit {
 		v = limit
@@ -60,10 +55,20 @@ func (d *Decoder) absLevelInc(cat, binIdx, numGt1, numEq1 int) int {
 	return base + 5 + v
 }
 
-func (d *Decoder) absLevelMinus1(cat, numGt1, numEq1 int) int {
+func absLevelBase(cat int) (base, limit int) {
+	if cat == CatLuma8x8 {
+		return offAbsLevel8x8, 4
+	}
+	if cat == CatChromaDC {
+		return offAbsLevel + catOffsetAbsLevel[cat], 3
+	}
+	return offAbsLevel + catOffsetAbsLevel[cat], 4
+}
+
+func (d *Decoder) absLevelMinus1At(base, limit, numGt1, numEq1 int) int {
 	prefix := 0
 	for prefix < 14 {
-		if d.DecodeDecision(d.absLevelInc(cat, prefix, numGt1, numEq1)) == 0 {
+		if d.DecodeDecision(absLevelIncAt(base, limit, prefix, numGt1, numEq1)) == 0 {
 			break
 		}
 		prefix++
@@ -94,6 +99,7 @@ func (d *Decoder) ResidualBlock(coeffs []int32, cat, condTermA, condTermB, numC8
 		return 0
 	}
 	maxNumCoeff := len(coeffs)
+	levelBase, levelLimit := absLevelBase(cat)
 
 	var significant [16]bool
 	numCoeff := maxNumCoeff
@@ -114,7 +120,7 @@ func (d *Decoder) ResidualBlock(coeffs []int32, cat, condTermA, condTermB, numC8
 		if !significant[i] {
 			continue
 		}
-		level := d.absLevelMinus1(cat, numGt1, numEq1) + 1
+		level := d.absLevelMinus1At(levelBase, levelLimit, numGt1, numEq1) + 1
 		if level > 1 {
 			numGt1++
 		} else {

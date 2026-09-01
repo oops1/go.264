@@ -13,6 +13,7 @@ import (
 type mbResidual struct {
 	lumaDC   transform.Block
 	luma     [16]transform.Block
+	luma8x8  [4]transform.Block8x8
 	chromaDC [2]transform.ChromaDC
 	chromaAC [2][4]transform.Block
 }
@@ -77,6 +78,36 @@ func (d *sliceDecoder) parseIntraPredModes() error {
 		d.cur.intra4Modes[blk] = int8(mode)
 	}
 	return nil
+}
+
+func (d *sliceDecoder) parseIntra8x8PredModes() error {
+	for i8 := 0; i8 < 4; i8++ {
+		blk := i8 * 4
+		usePrev, err := d.r.ReadFlag()
+		if err != nil {
+			return err
+		}
+		mode := d.predIntra4x4Mode(blk)
+		if !usePrev {
+			rem, err := d.r.ReadBits(3)
+			if err != nil {
+				return err
+			}
+			if int(rem) < mode {
+				mode = int(rem)
+			} else {
+				mode = int(rem) + 1
+			}
+		}
+		d.setIntra8x8Mode(i8, mode)
+	}
+	return nil
+}
+
+func (d *sliceDecoder) setIntra8x8Mode(i8, mode int) {
+	for k := 0; k < 4; k++ {
+		d.cur.intra4Modes[i8*4+k] = int8(mode)
+	}
 }
 
 func (d *sliceDecoder) parseChromaPredMode() error {
@@ -168,6 +199,37 @@ func (d *sliceDecoder) readChromaAC(res *mbResidual, plane, blk int) error {
 	return nil
 }
 
+func scanToBlock8x8(dst *transform.Block8x8, scan *[64]int32) {
+	for i := 0; i < 64; i++ {
+		dst[transform.ZigZagScan8x8[i]] = scan[i]
+	}
+}
+
+func (d *sliceDecoder) readLuma8x8(res *mbResidual, i8 int) error {
+	var scan [64]int32
+	for i4 := 0; i4 < 4; i4++ {
+		blk := i8*4 + i4
+		var sub [16]int32
+		n, err := cavlc.ReadBlock(d.r, sub[:], d.lumaNC(blk))
+		if err != nil {
+			return err
+		}
+		d.cur.NzY[blk] = uint8(n)
+		for k := 0; k < 16; k++ {
+			scan[4*k+i4] = sub[k]
+		}
+	}
+	scanToBlock8x8(&res.luma8x8[i8], &scan)
+	return nil
+}
+
+func (d *sliceDecoder) addLuma8x8(res *mbResidual, i8 int, off int, intra bool) {
+	b := &res.luma8x8[i8]
+	transform.Dequant8x8(b, d.qpY, d.scal.luma8x8(intra))
+	transform.Inverse8x8(b)
+	transform.AddResidual8x8(d.pic.Y, d.pic.StrideY, off, b)
+}
+
 func (d *sliceDecoder) readResidual(res *mbResidual, i16 bool) error {
 	if i16 {
 		if err := d.readLumaDC(res); err != nil {
@@ -178,6 +240,12 @@ func (d *sliceDecoder) readResidual(res *mbResidual, i16 bool) error {
 		if d.cur.cbpLuma&(1<<uint(i8)) == 0 {
 			for i4 := 0; i4 < 4; i4++ {
 				d.cur.NzY[i8*4+i4] = 0
+			}
+			continue
+		}
+		if d.cur.Transform8x8 {
+			if err := d.readLuma8x8(res, i8); err != nil {
+				return err
 			}
 			continue
 		}
@@ -222,9 +290,22 @@ func (d *sliceDecoder) reconstructIntra4x4(res *mbResidual) {
 		if d.cur.NzY[blk] == 0 {
 			continue
 		}
-		transform.Dequant4x4(&res.luma[blk], d.qpY, false)
+		dequant4x4(&res.luma[blk], d.qpY, d.scal.luma4x4(true), false)
 		transform.Inverse4x4(&res.luma[blk])
 		transform.AddResidual4x4(d.pic.Y, d.pic.StrideY, off, &res.luma[blk])
+	}
+}
+
+func (d *sliceDecoder) reconstructIntra8x8(res *mbResidual) {
+	baseX, baseY := d.mbx*16, d.mby*16
+	for i8 := 0; i8 < 4; i8++ {
+		off := d.pic.LumaOffset(baseX+i8%2*8, baseY+i8/2*8)
+		avail := luma8x8Availability(i8, d.nb, d.constrained)
+		pred.Intra8x8(d.pic.Y, d.pic.StrideY, off, int(d.cur.intra4Modes[i8*4]), avail)
+		if d.cur.cbpLuma&(1<<uint(i8)) == 0 {
+			continue
+		}
+		d.addLuma8x8(res, i8, off, true)
 	}
 }
 
@@ -234,11 +315,12 @@ func (d *sliceDecoder) reconstructIntra16x16(res *mbResidual) {
 	avail := mbAvailability(d.nb, d.constrained)
 	pred.Intra16x16(d.pic.Y, d.pic.StrideY, off, int(d.cur.intra16Mode), avail)
 
-	transform.DequantLumaDC(&res.lumaDC, d.qpY)
+	scale := d.scal.luma4x4(true)
+	dequantLumaDC(&res.lumaDC, d.qpY, scale)
 	for blk := 0; blk < 16; blk++ {
 		dcIdx := (blockY[blk]>>2)*4 + blockX[blk]>>2
 		res.luma[blk][0] = res.lumaDC[dcIdx]
-		transform.Dequant4x4(&res.luma[blk], d.qpY, true)
+		dequant4x4(&res.luma[blk], d.qpY, scale, true)
 		transform.Inverse4x4(&res.luma[blk])
 		transform.AddResidual4x4(d.pic.Y, d.pic.StrideY,
 			d.pic.LumaOffset(baseX+blockX[blk], baseY+blockY[blk]), &res.luma[blk])
@@ -265,11 +347,12 @@ func (d *sliceDecoder) addChromaResidual(res *mbResidual) {
 	offsets := [2]int32{d.pps.ChromaQPIndexOffset, d.pps.SecondChromaQPIndexOffset}
 	for plane := 0; plane < 2; plane++ {
 		qpc := syntax.ChromaQP(d.qpY, int(offsets[plane]))
-		transform.DequantChromaDC(&res.chromaDC[plane], qpc)
+		scale := d.scal.chroma4x4(d.cur.Intra, plane)
+		dequantChromaDC(&res.chromaDC[plane], qpc, scale)
 		for blk := 0; blk < 4; blk++ {
 			b := &res.chromaAC[plane][blk]
 			b[0] = res.chromaDC[plane][blk]
-			transform.Dequant4x4(b, qpc, true)
+			dequant4x4(b, qpc, scale, true)
 			transform.Inverse4x4(b)
 			transform.AddResidual4x4(planes[plane], d.pic.StrideC,
 				d.pic.ChromaOffset(baseX+chromaBlockX[blk], baseY+chromaBlockY[blk]), b)
@@ -340,11 +423,13 @@ func (d *sliceDecoder) decodeIntraMB(info mbTypeInfo, res *mbResidual) error {
 			if err != nil {
 				return err
 			}
-			if flag {
-				return fmt.Errorf("%w: 8x8 transform", ErrUnsupported)
-			}
+			d.cur.Transform8x8 = flag
 		}
-		if err := d.parseIntraPredModes(); err != nil {
+		if d.cur.Transform8x8 {
+			if err := d.parseIntra8x8PredModes(); err != nil {
+				return err
+			}
+		} else if err := d.parseIntraPredModes(); err != nil {
 			return err
 		}
 		if err := d.parseChromaPredMode(); err != nil {
@@ -362,7 +447,11 @@ func (d *sliceDecoder) decodeIntraMB(info mbTypeInfo, res *mbResidual) error {
 			}
 		}
 		d.cur.QPY = d.qpY
-		d.reconstructIntra4x4(res)
+		if d.cur.Transform8x8 {
+			d.reconstructIntra8x8(res)
+		} else {
+			d.reconstructIntra4x4(res)
+		}
 		d.reconstructChroma(res)
 		return nil
 

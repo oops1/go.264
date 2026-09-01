@@ -96,7 +96,6 @@ func TestCheckSupportedRejections(t *testing.T) {
 		{"luma bit depth above 8", func(s *syntax.SPS) { s.BitDepthLumaMinus8 = 2 }},
 		{"chroma bit depth above 8", func(s *syntax.SPS) { s.BitDepthChromaMinus8 = 2 }},
 		{"field or MBAFF coding", func(s *syntax.SPS) { s.FrameMbsOnly = false }},
-		{"sequence scaling matrices", func(s *syntax.SPS) { s.SeqScalingMatrixPresent = true }},
 		{"lossless transform bypass", func(s *syntax.SPS) { s.QpprimeYZeroTransformBypass = true }},
 	}
 
@@ -115,6 +114,19 @@ func TestCheckSupportedRejections(t *testing.T) {
 	t.Run("fully supported SPS passes", func(t *testing.T) {
 		if err := d.checkSupported(base()); err != nil {
 			t.Fatalf("checkSupported() = %v, want nil", err)
+		}
+	})
+
+	t.Run("sequence scaling matrices are accepted", func(t *testing.T) {
+		sps := base()
+		sps.ProfileIDC = syntax.ProfileHigh
+		sps.SeqScalingMatrixPresent = true
+		if err := d.checkSupported(sps); err != nil {
+			t.Fatalf("checkSupported() = %v, want nil", err)
+		}
+		tables := buildScalingTables(sps, &syntax.PPS{Transform8x8Mode: true})
+		if tables.flat {
+			t.Fatal("a sequence scaling matrix must reach dequantisation as non-flat weights")
 		}
 	})
 }
@@ -217,7 +229,7 @@ func TestDecodeMalformedPPSPropagatesParseError(t *testing.T) {
 	}
 }
 
-func TestDecodeSlicePicScalingMatrixIsUnsupported(t *testing.T) {
+func TestDecodeSlicePicScalingMatrixIsAccepted(t *testing.T) {
 	sps := minimalSPS()
 	pps := minimalPPS(sps.ID, false)
 	pps.HasExtension = true
@@ -235,8 +247,12 @@ func TestDecodeSlicePicScalingMatrixIsUnsupported(t *testing.T) {
 
 	d := New()
 	_, err := decodeWithFlush(d, data)
-	if !errors.Is(err, ErrUnsupported) {
-		t.Fatalf("Decode() = %v, want ErrUnsupported (picture scaling matrices)", err)
+	if errors.Is(err, ErrUnsupported) {
+		t.Fatalf("Decode() = %v, want picture scaling matrices to be understood", err)
+	}
+	tables := buildScalingTables(sps, d.PPS(pps.ID))
+	if tables.flat {
+		t.Fatal("a picture scaling matrix must reach dequantisation as non-flat weights")
 	}
 }
 

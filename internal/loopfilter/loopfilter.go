@@ -18,6 +18,7 @@ type MB struct {
 	MvL1           [16][2]int16
 	RefPicL1       [16]*frame.Picture
 	Bipredictive   bool
+	Transform8x8   bool
 	ChromaQPOffset [2]int
 	DisableDeblock uint32
 	AlphaOffset    int
@@ -43,6 +44,10 @@ func (m *MB) filterQPY() int {
 func lumaNonZero(m *MB, blk int) bool {
 	if m.IPCM {
 		return true
+	}
+	if m.Transform8x8 {
+		base := blk &^ 3
+		return m.NzY[base]|m.NzY[base+1]|m.NzY[base+2]|m.NzY[base+3] != 0
 	}
 	return m.NzY[blk] != 0
 }
@@ -125,10 +130,14 @@ func (c *edgeContext) filterMB(mbx, mby int) {
 	left := c.neighbourFor(cur, mbx, mby, -1, 0)
 	top := c.neighbourFor(cur, mbx, mby, 0, -1)
 
-	for e := 0; e < 4; e++ {
+	step := 1
+	if cur.Transform8x8 {
+		step = 2
+	}
+	for e := 0; e < 4; e += step {
 		c.verticalEdge(cur, left, mbx, mby, e)
 	}
-	for e := 0; e < 4; e++ {
+	for e := 0; e < 4; e += step {
 		c.horizontalEdge(cur, top, mbx, mby, e)
 	}
 }

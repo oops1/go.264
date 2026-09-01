@@ -211,8 +211,23 @@ func (d *sliceDecoder) readBSubTypes() ([4]bSubTypeInfo, error) {
 		sub[i] = bSubTypes[v]
 		anyDirect = anyDirect || sub[i].direct
 	}
+	d.noteBSubPartSizes(sub)
 	d.applySubDirect(sub, anyDirect)
 	return sub, nil
+}
+
+func (d *sliceDecoder) noteBSubPartSizes(sub [4]bSubTypeInfo) {
+	for i := 0; i < 4; i++ {
+		if sub[i].direct {
+			if !d.direct8x8 {
+				d.subPartsAtLeast8x8 = false
+			}
+			continue
+		}
+		if sub[i].numParts != 1 {
+			d.subPartsAtLeast8x8 = false
+		}
+	}
 }
 
 func (d *sliceDecoder) applySubDirect(sub [4]bSubTypeInfo, anyDirect bool) {
@@ -281,6 +296,7 @@ func (d *sliceDecoder) decodeInterMBB(info bMBTypeInfo, res *mbResidual) error {
 
 	switch {
 	case info.direct:
+		d.subPartsAtLeast8x8 = d.direct8x8
 		d.directMotion(0, 0, 16, 16)
 		d.markDirect(0, 0, 16, 16)
 
@@ -329,6 +345,9 @@ func (d *sliceDecoder) decodeInterMBB(info bMBTypeInfo, res *mbResidual) error {
 	}
 
 	if err := d.parseCBP(false); err != nil {
+		return err
+	}
+	if err := d.readTransformSize8x8(); err != nil {
 		return err
 	}
 	if d.cur.cbpLuma != 0 || d.cur.cbpChroma != 0 {

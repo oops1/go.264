@@ -59,4 +59,23 @@ clip main_ip_fade          main "keyint=10:qp=26:cabac=1:ref=2:bframes=0:weightp
 
 cifclip main_cif_pyramid "keyint=10:qp=26:cabac=1:ref=2:bframes=2:b-pyramid=normal:direct=temporal:$mcommon"
 
+cqm4iy=16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31
+cqm4ic=13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28
+cqm4py=24,23,22,21,20,19,18,17,16,15,14,13,12,11,10,9
+cqm8iy=12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32,33,34,35,36,37,38,39,40,41,42,43,44,45,46,47,48,49,50,51,52,53,54,55,56,57,58,59,60,61,62,63,64,65,66,67,68,69,70,71,72,73,74,75
+cqm8py=40,39,38,37,36,35,34,33,32,31,30,29,28,27,26,25,24,23,22,21,20,19,18,17,16,15,14,13,12,11,10,9,8,7,6,5,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4
+custom="cqm4iy=$cqm4iy:cqm4ic=$cqm4ic:cqm4py=$cqm4py:cqm8iy=$cqm8iy:cqm8py=$cqm8py"
+
+clip high_intra_8x8_cabac high "keyint=1:qp=26:8x8dct=1:cabac=1:ref=1:bframes=0:$mcommon"
+clip high_intra_8x8_cavlc high "keyint=1:qp=26:8x8dct=1:cabac=0:ref=1:bframes=0:$mcommon"
+clip high_ip_8x8_cabac    high "keyint=10:qp=26:8x8dct=1:cabac=1:ref=2:bframes=0:weightp=0:$mcommon"
+clip high_ip_8x8_cavlc    high "keyint=10:qp=26:8x8dct=1:cabac=0:ref=2:bframes=0:weightp=0:$mcommon"
+clip high_ipb_8x8_cabac   high "keyint=10:qp=26:8x8dct=1:cabac=1:ref=2:bframes=2:b-pyramid=none:$mcommon"
+clip high_ipb_8x8_cavlc   high "keyint=10:qp=26:8x8dct=1:cabac=0:ref=2:bframes=2:b-pyramid=none:$mcommon"
+clip high_cqm_jvt_cabac   high "keyint=10:qp=26:8x8dct=1:cabac=1:ref=2:bframes=2:b-pyramid=none:cqm=jvt:$mcommon"
+clip high_cqm_jvt_cavlc   high "keyint=10:qp=26:8x8dct=1:cabac=0:ref=2:bframes=2:b-pyramid=none:cqm=jvt:$mcommon"
+clip high_cqm_jvt_4x4     high "keyint=10:qp=26:8x8dct=0:cabac=1:ref=2:bframes=2:b-pyramid=none:cqm=jvt:$mcommon"
+clip high_cqm_custom      high "keyint=10:qp=22:8x8dct=1:cabac=1:ref=2:bframes=2:b-pyramid=none:$custom:$mcommon"
+clip high_cqm_custom_cavlc high "keyint=10:qp=22:8x8dct=1:cabac=0:ref=2:bframes=2:b-pyramid=none:$custom:$mcommon"
+
 echo "regenerated $(ls -1 "$out" | wc -l) files in $out"

@@ -40,6 +40,20 @@ var MainCorpus = []Clip{
 	{Name: "main_cif_pyramid", Width: 352, Height: 288, Frames: 8},
 }
 
+var HighCorpus = []Clip{
+	{Name: "high_intra_8x8_cabac", Width: 176, Height: 144, Frames: 10},
+	{Name: "high_intra_8x8_cavlc", Width: 176, Height: 144, Frames: 10},
+	{Name: "high_ip_8x8_cabac", Width: 176, Height: 144, Frames: 10},
+	{Name: "high_ip_8x8_cavlc", Width: 176, Height: 144, Frames: 10},
+	{Name: "high_ipb_8x8_cabac", Width: 176, Height: 144, Frames: 10},
+	{Name: "high_ipb_8x8_cavlc", Width: 176, Height: 144, Frames: 10},
+	{Name: "high_cqm_jvt_cabac", Width: 176, Height: 144, Frames: 10},
+	{Name: "high_cqm_jvt_cavlc", Width: 176, Height: 144, Frames: 10},
+	{Name: "high_cqm_jvt_4x4", Width: 176, Height: 144, Frames: 10},
+	{Name: "high_cqm_custom", Width: 176, Height: 144, Frames: 10},
+	{Name: "high_cqm_custom_cavlc", Width: 176, Height: 144, Frames: 10},
+}
+
 func (c Clip) FrameSize() int { return c.Width * c.Height * 3 / 2 }
 
 func CorpusDir() string {

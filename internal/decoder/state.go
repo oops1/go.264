@@ -35,6 +35,40 @@ type mbState struct {
 	directBlk [16]bool
 }
 
+func luma8x8Availability(i8 int, n neighbours, constrained bool) pred.Availability {
+	var a pred.Availability
+	if i8%2 == 1 || usableForIntra(n.left, constrained) {
+		a |= pred.AvailLeft
+	}
+	if i8/2 == 1 || usableForIntra(n.top, constrained) {
+		a |= pred.AvailTop
+	}
+	switch i8 {
+	case 0:
+		if usableForIntra(n.topLeft, constrained) {
+			a |= pred.AvailTopLeft
+		}
+		if usableForIntra(n.top, constrained) {
+			a |= pred.AvailTopRight
+		}
+	case 1:
+		if usableForIntra(n.top, constrained) {
+			a |= pred.AvailTopLeft
+		}
+		if usableForIntra(n.topRight, constrained) {
+			a |= pred.AvailTopRight
+		}
+	case 2:
+		if usableForIntra(n.left, constrained) {
+			a |= pred.AvailTopLeft
+		}
+		a |= pred.AvailTopRight
+	default:
+		a |= pred.AvailTopLeft
+	}
+	return a
+}
+
 var topRightInsideMB = [16]bool{
 	false, false, true, false,
 	false, false, true, false,

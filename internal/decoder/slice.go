@@ -41,9 +41,27 @@ type sliceDecoder struct {
 	qpY         int
 	sliceID     int
 	constrained bool
+	scal        *scalingTables
 
 	cb                 *cabac.Decoder
 	prevQPDeltaNonZero bool
+
+	subPartsAtLeast8x8 bool
+}
+
+func (d *sliceDecoder) transform8x8Inc() int {
+	inc := 0
+	if m := d.nb.left; m != nil && m.Transform8x8 {
+		inc++
+	}
+	if m := d.nb.top; m != nil && m.Transform8x8 {
+		inc++
+	}
+	return inc
+}
+
+func (d *sliceDecoder) mayUse8x8Transform() bool {
+	return d.pps.Transform8x8Mode && d.cur.cbpLuma != 0 && d.subPartsAtLeast8x8
 }
 
 func (d *sliceDecoder) totalMBs() int { return d.grid.widthMBs * d.grid.heightMBs }
@@ -67,6 +85,7 @@ func (d *sliceDecoder) startMB(mbAddr int) {
 		d.cur.refIdxL1[i] = -1
 	}
 	d.cur.Bipredictive = d.hdr.SliceType.IsB()
+	d.subPartsAtLeast8x8 = true
 	d.nb = d.grid.around(d.mbx, d.mby, d.sliceID)
 }
 
