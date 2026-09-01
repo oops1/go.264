@@ -25,3 +25,115 @@ func dequantLeft4x4(b *[16]int32, scale *[16]int32, shift uint64)
 func dequantRight4x4(b *[16]int32, scale *[16]int32, shift uint64, round int32)
 
 func addResidual4x4(plane []byte, stride int, b *[16]int32)
+
+//
+//go:noescape
+func satd4x4(src []byte, srcStride int, ref []byte, refStride int) int
+
+//
+//go:noescape
+func sixTapHoriz16x16(dst []byte, dstStride int, src []byte, srcStride int)
+
+//
+//go:noescape
+func sixTapVert16x16(dst []byte, dstStride int, src []byte, srcStride int)
+
+//
+//go:noescape
+func sixTapHV16x16(dst []byte, dstStride int, src []byte, srcStride int)
+
+//
+//go:noescape
+func sixTapHoriz16x8(dst []byte, dstStride int, src []byte, srcStride int)
+
+//
+//go:noescape
+func sixTapVert16x8(dst []byte, dstStride int, src []byte, srcStride int)
+
+//
+//go:noescape
+func sixTapHV16x8(dst []byte, dstStride int, src []byte, srcStride int)
+
+//
+//go:noescape
+func sixTapHoriz8x16(dst []byte, dstStride int, src []byte, srcStride int)
+
+//
+//go:noescape
+func sixTapVert8x16(dst []byte, dstStride int, src []byte, srcStride int)
+
+//
+//go:noescape
+func sixTapHV8x16(dst []byte, dstStride int, src []byte, srcStride int)
+
+//
+//go:noescape
+func sixTapHoriz8x8(dst []byte, dstStride int, src []byte, srcStride int)
+
+//
+//go:noescape
+func sixTapVert8x8(dst []byte, dstStride int, src []byte, srcStride int)
+
+//
+//go:noescape
+func sixTapHV8x8(dst []byte, dstStride int, src []byte, srcStride int)
+
+//
+//go:noescape
+func sixTapHoriz8x4(dst []byte, dstStride int, src []byte, srcStride int)
+
+//
+//go:noescape
+func sixTapVert8x4(dst []byte, dstStride int, src []byte, srcStride int)
+
+//
+//go:noescape
+func sixTapHV8x4(dst []byte, dstStride int, src []byte, srcStride int)
+
+//
+//go:noescape
+func sixTapHoriz4x8(dst []byte, dstStride int, src []byte, srcStride int)
+
+//
+//go:noescape
+func sixTapVert4x8(dst []byte, dstStride int, src []byte, srcStride int)
+
+//
+//go:noescape
+func sixTapHV4x8(dst []byte, dstStride int, src []byte, srcStride int)
+
+//
+//go:noescape
+func sixTapHoriz4x4(dst []byte, dstStride int, src []byte, srcStride int)
+
+//
+//go:noescape
+func sixTapVert4x4(dst []byte, dstStride int, src []byte, srcStride int)
+
+//
+//go:noescape
+func sixTapHV4x4(dst []byte, dstStride int, src []byte, srcStride int)
+
+//
+//go:noescape
+func bilinearChroma8x8(dst []byte, dstStride int, src []byte, srcStride int, xFrac int32, yFrac int32)
+
+//
+//go:noescape
+func bilinearChroma8x4(dst []byte, dstStride int, src []byte, srcStride int, xFrac int32, yFrac int32)
+
+//
+//go:noescape
+func bilinearChroma8x2(dst []byte, dstStride int, src []byte, srcStride int, xFrac int32, yFrac int32)
+
+//
+//go:noescape
+func bilinearChroma4x8(dst []byte, dstStride int, src []byte, srcStride int, xFrac int32, yFrac int32)
+
+//
+//go:noescape
+func bilinearChroma4x4(dst []byte, dstStride int, src []byte, srcStride int, xFrac int32, yFrac int32)
+
+//
+//go:noescape
+func bilinearChroma4x2(dst []byte, dstStride int, src []byte, srcStride int, xFrac int32, yFrac int32)

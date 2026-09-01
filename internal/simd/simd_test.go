@@ -1,6 +1,7 @@
 package simd
 
 import (
+	"bytes"
 	"math"
 	"math/rand"
 	"testing"
@@ -639,5 +640,498 @@ func BenchmarkSAD8x8(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		SAD(src, 64, 0, ref, 64, 0, 8, 8)
+	}
+}
+
+var lumaMCTestSizes = [][2]int{{16, 16}, {16, 8}, {8, 16}, {8, 8}, {8, 4}, {4, 8}, {4, 4}}
+var chromaMCTestSizes = [][2]int{{8, 8}, {8, 4}, {8, 2}, {4, 8}, {4, 4}, {4, 2}, {2, 4}, {2, 2}}
+
+func TestSATD4x4MatchesGenericOnRandomInput(t *testing.T) {
+	rng := rand.New(rand.NewSource(20260901))
+	const stride = 32
+	const rows = 32
+	for iter := 0; iter < 8000; iter++ {
+		src := randomPlane(rng, stride*rows)
+		ref := randomPlane(rng, stride*rows)
+		srcOff := rng.Intn(stride-4) + rng.Intn(rows-4)*stride
+		refOff := rng.Intn(stride-4) + rng.Intn(rows-4)*stride
+		got := SATD4x4(src, stride, srcOff, ref, stride, refOff)
+		want := satd4x4Generic(src[srcOff:], stride, ref[refOff:], stride)
+		if got != want {
+			t.Fatalf("iter %d: SATD4x4 = %d, generic = %d", iter, got, want)
+		}
+	}
+}
+
+func TestSATD4x4Extremes(t *testing.T) {
+	const stride = 16
+	cases := []struct {
+		srcFill, refFill byte
+	}{
+		{128, 128}, {255, 0}, {0, 255}, {100, 101}, {0, 0}, {255, 255},
+	}
+	for _, c := range cases {
+		src := make([]byte, stride*8)
+		ref := make([]byte, stride*8)
+		for i := range src {
+			src[i] = c.srcFill
+			ref[i] = c.refFill
+		}
+		got := SATD4x4(src, stride, 0, ref, stride, 0)
+		want := satd4x4Generic(src, stride, ref, stride)
+		if got != want {
+			t.Errorf("fill %d/%d: SATD4x4 = %d, generic = %d", c.srcFill, c.refFill, got, want)
+		}
+	}
+	rng := rand.New(rand.NewSource(5))
+	src := make([]byte, stride*8)
+	ref := make([]byte, stride*8)
+	for i := range src {
+		if rng.Intn(2) == 0 {
+			src[i] = 0
+		} else {
+			src[i] = 255
+		}
+		if rng.Intn(2) == 0 {
+			ref[i] = 0
+		} else {
+			ref[i] = 255
+		}
+	}
+	got := SATD4x4(src, stride, 0, ref, stride, 0)
+	want := satd4x4Generic(src, stride, ref, stride)
+	if got != want {
+		t.Errorf("checkerboard extremes: SATD4x4 = %d, generic = %d", got, want)
+	}
+}
+
+func TestSATD4x4NonNegative(t *testing.T) {
+	rng := rand.New(rand.NewSource(6))
+	const stride = 16
+	for i := 0; i < 2000; i++ {
+		src := randomPlane(rng, stride*8)
+		ref := randomPlane(rng, stride*8)
+		got := SATD4x4(src, stride, 0, ref, stride, 0)
+		if got < 0 {
+			t.Fatalf("SATD4x4 returned negative value: %d", got)
+		}
+	}
+}
+
+func FuzzSATD4x4AgainstGeneric(f *testing.F) {
+	f.Add(int64(1), 0, 0)
+	f.Add(int64(500), 5, 3)
+	f.Fuzz(func(t *testing.T, seed int64, srcOffIdx, refOffIdx int) {
+		const stride = 24
+		const rows = 24
+		rng := rand.New(rand.NewSource(seed))
+		src := randomPlane(rng, stride*rows)
+		ref := randomPlane(rng, stride*rows)
+		max := (rows-4)*stride - 4
+		if max <= 0 {
+			return
+		}
+		srcOffIdx %= max
+		if srcOffIdx < 0 {
+			srcOffIdx = -srcOffIdx
+		}
+		refOffIdx %= max
+		if refOffIdx < 0 {
+			refOffIdx = -refOffIdx
+		}
+		got := SATD4x4(src, stride, srcOffIdx, ref, stride, refOffIdx)
+		want := satd4x4Generic(src[srcOffIdx:], stride, ref[refOffIdx:], stride)
+		if got != want {
+			t.Fatalf("SATD4x4 = %d, generic = %d", got, want)
+		}
+	})
+}
+
+func BenchmarkSATD4x4(b *testing.B) {
+	rng := rand.New(rand.NewSource(1))
+	src := randomPlane(rng, 16*8)
+	ref := randomPlane(rng, 16*8)
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		SATD4x4(src, 16, 0, ref, 16, 0)
+	}
+}
+
+func BenchmarkSATD4x4Generic(b *testing.B) {
+	rng := rand.New(rand.NewSource(1))
+	src := randomPlane(rng, 16*8)
+	ref := randomPlane(rng, 16*8)
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		satd4x4Generic(src, 16, ref, 16)
+	}
+}
+
+func mcPlane(rng *rand.Rand, w, h, margin int, fill func(x, y int) int) ([]byte, int, int) {
+	stride := w + 2*margin
+	rows := h + 2*margin
+	buf := make([]byte, stride*rows)
+	for y := 0; y < rows; y++ {
+		for x := 0; x < stride; x++ {
+			buf[y*stride+x] = byte(fill(x-margin, y-margin) & 0xFF)
+		}
+	}
+	off := margin*stride + margin
+	return buf, stride, off
+}
+
+func TestSixTapHorizMatchesGeneric(t *testing.T) {
+	rng := rand.New(rand.NewSource(101))
+	for _, sz := range lumaMCTestSizes {
+		w, h := sz[0], sz[1]
+		for trial := 0; trial < 50; trial++ {
+			src, stride, off := mcPlane(rng, w, h, 8, func(x, y int) int { return rng.Intn(256) })
+			got := make([]byte, w*h)
+			want := make([]byte, w*h)
+			SixTapHoriz(got, w, 0, src, stride, off, w, h)
+			sixTapHorizGeneric(want, w, 0, src, stride, off, w, h)
+			if !bytes.Equal(got, want) {
+				t.Fatalf("size %dx%d trial %d: SixTapHoriz mismatch\ngot  %v\nwant %v", w, h, trial, got, want)
+			}
+		}
+	}
+}
+
+func TestSixTapVertMatchesGeneric(t *testing.T) {
+	rng := rand.New(rand.NewSource(102))
+	for _, sz := range lumaMCTestSizes {
+		w, h := sz[0], sz[1]
+		for trial := 0; trial < 50; trial++ {
+			src, stride, off := mcPlane(rng, w, h, 8, func(x, y int) int { return rng.Intn(256) })
+			got := make([]byte, w*h)
+			want := make([]byte, w*h)
+			SixTapVert(got, w, 0, src, stride, off, w, h)
+			sixTapVertGeneric(want, w, 0, src, stride, off, w, h)
+			if !bytes.Equal(got, want) {
+				t.Fatalf("size %dx%d trial %d: SixTapVert mismatch\ngot  %v\nwant %v", w, h, trial, got, want)
+			}
+		}
+	}
+}
+
+func TestSixTapHVMatchesGeneric(t *testing.T) {
+	rng := rand.New(rand.NewSource(103))
+	for _, sz := range lumaMCTestSizes {
+		w, h := sz[0], sz[1]
+		for trial := 0; trial < 50; trial++ {
+			src, stride, off := mcPlane(rng, w, h, 8, func(x, y int) int { return rng.Intn(256) })
+			got := make([]byte, w*h)
+			want := make([]byte, w*h)
+			SixTapHV(got, w, 0, src, stride, off, w, h)
+			sixTapHVGeneric(want, w, 0, src, stride, off, w, h)
+			if !bytes.Equal(got, want) {
+				t.Fatalf("size %dx%d trial %d: SixTapHV mismatch\ngot  %v\nwant %v", w, h, trial, got, want)
+			}
+		}
+	}
+}
+
+func TestSixTapExtremes(t *testing.T) {
+	fills := []int{0, 1, 127, 128, 255}
+	rng := rand.New(rand.NewSource(104))
+	for _, fill := range fills {
+		for _, sz := range lumaMCTestSizes {
+			w, h := sz[0], sz[1]
+			src, stride, off := mcPlane(rng, w, h, 8, func(x, y int) int { return fill })
+			for _, kind := range []int{0, 1, 2} {
+				got := make([]byte, w*h)
+				want := make([]byte, w*h)
+				switch kind {
+				case 0:
+					SixTapHoriz(got, w, 0, src, stride, off, w, h)
+					sixTapHorizGeneric(want, w, 0, src, stride, off, w, h)
+				case 1:
+					SixTapVert(got, w, 0, src, stride, off, w, h)
+					sixTapVertGeneric(want, w, 0, src, stride, off, w, h)
+				case 2:
+					SixTapHV(got, w, 0, src, stride, off, w, h)
+					sixTapHVGeneric(want, w, 0, src, stride, off, w, h)
+				}
+				if !bytes.Equal(got, want) {
+					t.Fatalf("fill %d size %dx%d kind %d mismatch", fill, w, h, kind)
+				}
+				for _, v := range got {
+					if int(v) != fill {
+						t.Fatalf("fill %d size %dx%d kind %d: constant plane not preserved, got %d", fill, w, h, kind, v)
+					}
+				}
+			}
+		}
+	}
+}
+
+func TestSixTapOutputRange(t *testing.T) {
+	rng := rand.New(rand.NewSource(105))
+	for _, sz := range lumaMCTestSizes {
+		w, h := sz[0], sz[1]
+		src, stride, off := mcPlane(rng, w, h, 8, func(x, y int) int { return rng.Intn(256) })
+		for _, kind := range []int{0, 1, 2} {
+			got := make([]byte, w*h)
+			switch kind {
+			case 0:
+				SixTapHoriz(got, w, 0, src, stride, off, w, h)
+			case 1:
+				SixTapVert(got, w, 0, src, stride, off, w, h)
+			case 2:
+				SixTapHV(got, w, 0, src, stride, off, w, h)
+			}
+			for _, v := range got {
+				if int(v) < 0 || int(v) > 255 {
+					t.Fatalf("size %dx%d kind %d: sample out of range %d", w, h, kind, v)
+				}
+			}
+		}
+	}
+}
+
+func TestSixTapExactMinimumMargin(t *testing.T) {
+	rng := rand.New(rand.NewSource(106))
+	for _, sz := range lumaMCTestSizes {
+		w, h := sz[0], sz[1]
+		stride := w + 5
+		buf := randomPlane(rng, stride*(h+5))
+		off := 2*stride + 2
+		got := make([]byte, w*h)
+		want := make([]byte, w*h)
+
+		SixTapHoriz(got, w, 0, buf, stride, off, w, h)
+		sixTapHorizGeneric(want, w, 0, buf, stride, off, w, h)
+		if !bytes.Equal(got, want) {
+			t.Fatalf("size %dx%d: exact-margin SixTapHoriz mismatch\ngot  %v\nwant %v", w, h, got, want)
+		}
+		SixTapVert(got, w, 0, buf, stride, off, w, h)
+		sixTapVertGeneric(want, w, 0, buf, stride, off, w, h)
+		if !bytes.Equal(got, want) {
+			t.Fatalf("size %dx%d: exact-margin SixTapVert mismatch\ngot  %v\nwant %v", w, h, got, want)
+		}
+		SixTapHV(got, w, 0, buf, stride, off, w, h)
+		sixTapHVGeneric(want, w, 0, buf, stride, off, w, h)
+		if !bytes.Equal(got, want) {
+			t.Fatalf("size %dx%d: exact-margin SixTapHV mismatch\ngot  %v\nwant %v", w, h, got, want)
+		}
+	}
+}
+
+func TestSixTapUnsupportedSizeFallsBackToGeneric(t *testing.T) {
+	rng := rand.New(rand.NewSource(107))
+	w, h := 12, 6
+	src, stride, off := mcPlane(rng, w, h, 8, func(x, y int) int { return rng.Intn(256) })
+	got := make([]byte, w*h)
+	want := make([]byte, w*h)
+	SixTapHoriz(got, w, 0, src, stride, off, w, h)
+	sixTapHorizGeneric(want, w, 0, src, stride, off, w, h)
+	if !bytes.Equal(got, want) {
+		t.Fatalf("unsupported size %dx%d: SixTapHoriz mismatch\ngot  %v\nwant %v", w, h, got, want)
+	}
+}
+
+func FuzzSixTapAgainstGeneric(f *testing.F) {
+	f.Add(int64(1), 0, 0)
+	f.Add(int64(9), 3, 2)
+	f.Fuzz(func(t *testing.T, seed int64, sizeIdx, kind int) {
+		if sizeIdx < 0 {
+			sizeIdx = -sizeIdx
+		}
+		if kind < 0 {
+			kind = -kind
+		}
+		sz := lumaMCTestSizes[sizeIdx%len(lumaMCTestSizes)]
+		w, h := sz[0], sz[1]
+		rng := rand.New(rand.NewSource(seed))
+		src, stride, off := mcPlane(rng, w, h, 8, func(x, y int) int { return rng.Intn(256) })
+		got := make([]byte, w*h)
+		want := make([]byte, w*h)
+		switch kind % 3 {
+		case 0:
+			SixTapHoriz(got, w, 0, src, stride, off, w, h)
+			sixTapHorizGeneric(want, w, 0, src, stride, off, w, h)
+		case 1:
+			SixTapVert(got, w, 0, src, stride, off, w, h)
+			sixTapVertGeneric(want, w, 0, src, stride, off, w, h)
+		case 2:
+			SixTapHV(got, w, 0, src, stride, off, w, h)
+			sixTapHVGeneric(want, w, 0, src, stride, off, w, h)
+		}
+		if !bytes.Equal(got, want) {
+			t.Fatalf("size %dx%d kind %d mismatch\ngot  %v\nwant %v", w, h, kind%3, got, want)
+		}
+	})
+}
+
+func TestBilinearChromaMatchesGeneric(t *testing.T) {
+	rng := rand.New(rand.NewSource(201))
+	for _, sz := range chromaMCTestSizes {
+		w, h := sz[0], sz[1]
+		for yFrac := 0; yFrac < 8; yFrac++ {
+			for xFrac := 0; xFrac < 8; xFrac++ {
+				src, stride, off := mcPlane(rng, w, h, 4, func(x, y int) int { return rng.Intn(256) })
+				got := make([]byte, w*h)
+				want := make([]byte, w*h)
+				BilinearChroma(got, w, 0, src, stride, off, w, h, xFrac, yFrac)
+				bilinearChromaGeneric(want, w, 0, src, stride, off, w, h, xFrac, yFrac)
+				if !bytes.Equal(got, want) {
+					t.Fatalf("size %dx%d frac(%d,%d): mismatch\ngot  %v\nwant %v", w, h, xFrac, yFrac, got, want)
+				}
+			}
+		}
+	}
+}
+
+func TestBilinearChromaExtremes(t *testing.T) {
+	fills := []int{0, 1, 127, 128, 255}
+	rng := rand.New(rand.NewSource(202))
+	for _, fill := range fills {
+		for _, sz := range chromaMCTestSizes {
+			w, h := sz[0], sz[1]
+			src, stride, off := mcPlane(rng, w, h, 4, func(x, y int) int { return fill })
+			for yFrac := 0; yFrac < 8; yFrac += 3 {
+				for xFrac := 0; xFrac < 8; xFrac += 3 {
+					got := make([]byte, w*h)
+					BilinearChroma(got, w, 0, src, stride, off, w, h, xFrac, yFrac)
+					for _, v := range got {
+						if int(v) != fill {
+							t.Fatalf("fill %d size %dx%d frac(%d,%d): constant plane not preserved, got %d", fill, w, h, xFrac, yFrac, v)
+						}
+					}
+				}
+			}
+		}
+	}
+}
+
+func TestBilinearChromaExactMinimumMargin(t *testing.T) {
+	rng := rand.New(rand.NewSource(203))
+	for _, sz := range chromaMCTestSizes {
+		w, h := sz[0], sz[1]
+		stride := w + 1
+		buf := randomPlane(rng, stride*(h+1))
+		got := make([]byte, w*h)
+		want := make([]byte, w*h)
+		BilinearChroma(got, w, 0, buf, stride, 0, w, h, 3, 5)
+		bilinearChromaGeneric(want, w, 0, buf, stride, 0, w, h, 3, 5)
+		if !bytes.Equal(got, want) {
+			t.Fatalf("size %dx%d: exact-margin BilinearChroma mismatch\ngot  %v\nwant %v", w, h, got, want)
+		}
+	}
+}
+
+func TestBilinearChromaUnsupportedSizeFallsBackToGeneric(t *testing.T) {
+	rng := rand.New(rand.NewSource(204))
+	w, h := 6, 3
+	src, stride, off := mcPlane(rng, w, h, 4, func(x, y int) int { return rng.Intn(256) })
+	got := make([]byte, w*h)
+	want := make([]byte, w*h)
+	BilinearChroma(got, w, 0, src, stride, off, w, h, 2, 6)
+	bilinearChromaGeneric(want, w, 0, src, stride, off, w, h, 2, 6)
+	if !bytes.Equal(got, want) {
+		t.Fatalf("unsupported size %dx%d: BilinearChroma mismatch\ngot  %v\nwant %v", w, h, got, want)
+	}
+}
+
+func FuzzBilinearChromaAgainstGeneric(f *testing.F) {
+	f.Add(int64(1), 0, 0, 0)
+	f.Add(int64(9), 3, 5, 2)
+	f.Fuzz(func(t *testing.T, seed int64, sizeIdx, xFracIn, yFracIn int) {
+		if sizeIdx < 0 {
+			sizeIdx = -sizeIdx
+		}
+		sz := chromaMCTestSizes[sizeIdx%len(chromaMCTestSizes)]
+		w, h := sz[0], sz[1]
+		xFrac := ((xFracIn % 8) + 8) % 8
+		yFrac := ((yFracIn % 8) + 8) % 8
+		rng := rand.New(rand.NewSource(seed))
+		src, stride, off := mcPlane(rng, w, h, 4, func(x, y int) int { return rng.Intn(256) })
+		got := make([]byte, w*h)
+		want := make([]byte, w*h)
+		BilinearChroma(got, w, 0, src, stride, off, w, h, xFrac, yFrac)
+		bilinearChromaGeneric(want, w, 0, src, stride, off, w, h, xFrac, yFrac)
+		if !bytes.Equal(got, want) {
+			t.Fatalf("size %dx%d frac(%d,%d) mismatch\ngot  %v\nwant %v", w, h, xFrac, yFrac, got, want)
+		}
+	})
+}
+
+func BenchmarkSixTapHoriz16x16(b *testing.B) {
+	rng := rand.New(rand.NewSource(1))
+	src, stride, off := mcPlane(rng, 16, 16, 8, func(x, y int) int { return rng.Intn(256) })
+	dst := make([]byte, 16*16)
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		SixTapHoriz(dst, 16, 0, src, stride, off, 16, 16)
+	}
+}
+
+func BenchmarkSixTapHoriz16x16Generic(b *testing.B) {
+	rng := rand.New(rand.NewSource(1))
+	src, stride, off := mcPlane(rng, 16, 16, 8, func(x, y int) int { return rng.Intn(256) })
+	dst := make([]byte, 16*16)
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		sixTapHorizGeneric(dst, 16, 0, src, stride, off, 16, 16)
+	}
+}
+
+func BenchmarkSixTapVert16x16(b *testing.B) {
+	rng := rand.New(rand.NewSource(1))
+	src, stride, off := mcPlane(rng, 16, 16, 8, func(x, y int) int { return rng.Intn(256) })
+	dst := make([]byte, 16*16)
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		SixTapVert(dst, 16, 0, src, stride, off, 16, 16)
+	}
+}
+
+func BenchmarkSixTapVert16x16Generic(b *testing.B) {
+	rng := rand.New(rand.NewSource(1))
+	src, stride, off := mcPlane(rng, 16, 16, 8, func(x, y int) int { return rng.Intn(256) })
+	dst := make([]byte, 16*16)
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		sixTapVertGeneric(dst, 16, 0, src, stride, off, 16, 16)
+	}
+}
+
+func BenchmarkSixTapHV16x16(b *testing.B) {
+	rng := rand.New(rand.NewSource(1))
+	src, stride, off := mcPlane(rng, 16, 16, 8, func(x, y int) int { return rng.Intn(256) })
+	dst := make([]byte, 16*16)
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		SixTapHV(dst, 16, 0, src, stride, off, 16, 16)
+	}
+}
+
+func BenchmarkSixTapHV16x16Generic(b *testing.B) {
+	rng := rand.New(rand.NewSource(1))
+	src, stride, off := mcPlane(rng, 16, 16, 8, func(x, y int) int { return rng.Intn(256) })
+	dst := make([]byte, 16*16)
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		sixTapHVGeneric(dst, 16, 0, src, stride, off, 16, 16)
+	}
+}
+
+func BenchmarkBilinearChroma8x8(b *testing.B) {
+	rng := rand.New(rand.NewSource(1))
+	src, stride, off := mcPlane(rng, 8, 8, 4, func(x, y int) int { return rng.Intn(256) })
+	dst := make([]byte, 8*8)
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		BilinearChroma(dst, 8, 0, src, stride, off, 8, 8, 3, 5)
+	}
+}
+
+func BenchmarkBilinearChroma8x8Generic(b *testing.B) {
+	rng := rand.New(rand.NewSource(1))
+	src, stride, off := mcPlane(rng, 8, 8, 4, func(x, y int) int { return rng.Intn(256) })
+	dst := make([]byte, 8*8)
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		bilinearChromaGeneric(dst, 8, 0, src, stride, off, 8, 8, 3, 5)
 	}
 }

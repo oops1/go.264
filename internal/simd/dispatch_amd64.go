@@ -52,3 +52,132 @@ func AddResidual4x4(plane []byte, stride, offset int, b *[16]int32) {
 	}
 	addResidual4x4(plane[offset:], stride, b)
 }
+
+func satd4x4Dispatch(src []byte, srcStride int, ref []byte, refStride int) int {
+	if !spanFits(src, srcStride, 4, 4) || !spanFits(ref, refStride, 4, 4) {
+		return satd4x4Generic(src, srcStride, ref, refStride)
+	}
+	return satd4x4(src, srcStride, ref, refStride)
+}
+
+type sixTapFn func(dst []byte, dstStride int, src []byte, srcStride int)
+
+func sixTapHorizKernel(w, h int) sixTapFn {
+	switch {
+	case w == 16 && h == 16:
+		return sixTapHoriz16x16
+	case w == 16 && h == 8:
+		return sixTapHoriz16x8
+	case w == 8 && h == 16:
+		return sixTapHoriz8x16
+	case w == 8 && h == 8:
+		return sixTapHoriz8x8
+	case w == 8 && h == 4:
+		return sixTapHoriz8x4
+	case w == 4 && h == 8:
+		return sixTapHoriz4x8
+	case w == 4 && h == 4:
+		return sixTapHoriz4x4
+	}
+	return nil
+}
+
+func sixTapVertKernel(w, h int) sixTapFn {
+	switch {
+	case w == 16 && h == 16:
+		return sixTapVert16x16
+	case w == 16 && h == 8:
+		return sixTapVert16x8
+	case w == 8 && h == 16:
+		return sixTapVert8x16
+	case w == 8 && h == 8:
+		return sixTapVert8x8
+	case w == 8 && h == 4:
+		return sixTapVert8x4
+	case w == 4 && h == 8:
+		return sixTapVert4x8
+	case w == 4 && h == 4:
+		return sixTapVert4x4
+	}
+	return nil
+}
+
+func sixTapHVKernel(w, h int) sixTapFn {
+	switch {
+	case w == 16 && h == 16:
+		return sixTapHV16x16
+	case w == 16 && h == 8:
+		return sixTapHV16x8
+	case w == 8 && h == 16:
+		return sixTapHV8x16
+	case w == 8 && h == 8:
+		return sixTapHV8x8
+	case w == 8 && h == 4:
+		return sixTapHV8x4
+	case w == 4 && h == 8:
+		return sixTapHV4x8
+	case w == 4 && h == 4:
+		return sixTapHV4x4
+	}
+	return nil
+}
+
+func sixTapHorizDispatch(dst []byte, dstStride, dstOff int, src []byte, srcStride, srcOff, w, h int) {
+	if spanFitsMargin(src, srcStride, srcOff, w, h, 2, 3, 0, 0) && spanFits(dst[dstOff:], dstStride, w, h) {
+		if fn := sixTapHorizKernel(w, h); fn != nil {
+			fn(dst[dstOff:], dstStride, src[srcOff:], srcStride)
+			return
+		}
+	}
+	sixTapHorizGeneric(dst, dstStride, dstOff, src, srcStride, srcOff, w, h)
+}
+
+func sixTapVertDispatch(dst []byte, dstStride, dstOff int, src []byte, srcStride, srcOff, w, h int) {
+	if spanFitsMargin(src, srcStride, srcOff, w, h, 0, 0, 2, 3) && spanFits(dst[dstOff:], dstStride, w, h) {
+		if fn := sixTapVertKernel(w, h); fn != nil {
+			fn(dst[dstOff:], dstStride, src[srcOff:], srcStride)
+			return
+		}
+	}
+	sixTapVertGeneric(dst, dstStride, dstOff, src, srcStride, srcOff, w, h)
+}
+
+func sixTapHVDispatch(dst []byte, dstStride, dstOff int, src []byte, srcStride, srcOff, w, h int) {
+	if spanFitsMargin(src, srcStride, srcOff, w, h, 2, 3, 2, 3) && spanFits(dst[dstOff:], dstStride, w, h) {
+		if fn := sixTapHVKernel(w, h); fn != nil {
+			fn(dst[dstOff:], dstStride, src[srcOff:], srcStride)
+			return
+		}
+	}
+	sixTapHVGeneric(dst, dstStride, dstOff, src, srcStride, srcOff, w, h)
+}
+
+type bilinearFn func(dst []byte, dstStride int, src []byte, srcStride int, xFrac, yFrac int32)
+
+func bilinearChromaKernel(w, h int) bilinearFn {
+	switch {
+	case w == 8 && h == 8:
+		return bilinearChroma8x8
+	case w == 8 && h == 4:
+		return bilinearChroma8x4
+	case w == 8 && h == 2:
+		return bilinearChroma8x2
+	case w == 4 && h == 8:
+		return bilinearChroma4x8
+	case w == 4 && h == 4:
+		return bilinearChroma4x4
+	case w == 4 && h == 2:
+		return bilinearChroma4x2
+	}
+	return nil
+}
+
+func bilinearChromaDispatch(dst []byte, dstStride, dstOff int, src []byte, srcStride, srcOff, w, h, xFrac, yFrac int) {
+	if spanFitsMargin(src, srcStride, srcOff, w, h, 0, 1, 0, 1) && spanFits(dst[dstOff:], dstStride, w, h) {
+		if fn := bilinearChromaKernel(w, h); fn != nil {
+			fn(dst[dstOff:], dstStride, src[srcOff:], srcStride, int32(xFrac), int32(yFrac))
+			return
+		}
+	}
+	bilinearChromaGeneric(dst, dstStride, dstOff, src, srcStride, srcOff, w, h, xFrac, yFrac)
+}
