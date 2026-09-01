@@ -143,12 +143,21 @@ Done. v1.0.0 tagged the Constrained Baseline codec; v1.1.0 tagged Main
 profile decoding, CABAC encoding, hardware backends on both platforms and
 the screen content interface.
 
+### Phase 13 — Speed, B slices and High profile decoding
+Done. An early skip test in the mode decision, slices encoded in
+parallel, and vector kernels for the transformed difference and
+interpolation together take a 1080p desktop from 0.37 to 29.8 frames a
+second. The encoder writes B slices. The decoder reads High profile:
+the eight by eight transform, the scaling matrices and Intra_8x8, with
+eleven new clips in the corpus, three of them carrying matrices that are
+not flat.
+
 ## What comes next
 
 The phases above are history. [ROADMAP.md](ROADMAP.md) carries the
-forward plan — speed first, then acceptance by a real client, then B
-slices in the encoder, the High profile and wider hardware — with the
-reasoning for that order and the acceptance test for each milestone.
+forward plan — acceptance by a real client, then High profile encoding
+and wider hardware — with the reasoning for that order and the
+acceptance test for each milestone.
 
 ## Standing rules
 

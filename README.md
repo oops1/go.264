@@ -19,21 +19,24 @@ Working today:
 
 | Area | State |
 | --- | --- |
-| Decoder, Main profile | complete, bit-exact against ffmpeg |
-| Encoder, Main profile | complete but for B slices, bit-exact against ffmpeg |
-| Intra prediction, all block sizes | complete |
+| Decoder, High profile | complete, bit-exact against ffmpeg on twenty-nine clips |
+| Encoder, Main profile | complete, bit-exact against ffmpeg |
+| Intra prediction | all block sizes, 4x4, 8x8 and 16x16; 8x8 decoded only |
 | Inter prediction | all P partitions both directions, 8x8 sub-macroblocks, multiple references |
-| B slices | decoded: bi-prediction, spatial and temporal direct, output reordered by picture order count; not yet written by the encoder |
+| B slices | both directions: bi-prediction, spatial direct, output reordered by picture order count |
 | Weighted prediction | explicit for predictive slices, explicit and implicit for bi-predictive |
 | CAVLC | complete, both directions |
 | CABAC | complete in both directions; streams are 18 to 30 per cent smaller than CAVLC |
 | In-loop deblocking filter | complete, shared by encoder and decoder |
 | Reference picture management | sliding window and MMCO, up to sixteen references in the encoder |
+| Slices | any count, encoded in parallel; ten times faster on twenty threads for 1.8 per cent more bits |
 | Hardware acceleration | encoding on Windows through Media Foundation and on Linux through NVENC, chosen automatically, no cgo on either path |
 | Bitrate targeted rate control | complete, within about a fifth of the request |
-| Mode decision | rate-distortion, trial encoding each candidate |
-| SIMD kernels | sum of absolute differences, the 4x4 transform, quantisation and residual add on amd64 |
-| High profile | not started; the 8x8 transform, scaling matrices and lossless bypass are rejected explicitly |
+| Mode decision | rate-distortion, with an early skip test that pays for itself six times over on screen content |
+| SIMD kernels | transformed differences, six-tap and bilinear interpolation, block matching, the 4x4 transform and quantisation |
+| Scaling matrices | resolved and applied when decoding; the encoder writes flat matrices only |
+| High profile encoding | not started; the 8x8 transform and matrices are read but not written |
+| Lossless transform bypass | rejected explicitly, in both directions |
 
 See [docs/ROADMAP.md](docs/ROADMAP.md) for what comes next and why in that
 order, [docs/PLAN.md](docs/PLAN.md) for the phase breakdown and
