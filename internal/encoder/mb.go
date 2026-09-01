@@ -61,6 +61,10 @@ type mbEncoder struct {
 	cb                 *cabac.Encoder
 	prevQPDeltaNonZero bool
 
+	refresh           refreshPlan
+	refreshNoTopRight bool
+	skipAll           bool
+
 	scratch     [256]byte
 	scratchB    [256]byte
 	segs        []motionSegment
@@ -92,7 +96,8 @@ func (e *Encoder) encodeSlice(w *bits.Writer, hdr *syntax.SliceHeader, p sliceJo
 	span := sliceRange{firstMB: p.firstMB, endMB: p.endMB}
 	s := &mbEncoder{e: e, w: w, qpY: qp, isP: hdr.SliceType.IsP(), isB: hdr.SliceType.IsB(),
 		numRefs: p.active, numRefsL1: p.activeL1,
-		hints: hints, sliceQP: qp, prevQP: qp, span: span}
+		hints: hints, sliceQP: qp, prevQP: qp, span: span, refresh: e.refresh,
+		skipAll: p.skipAll}
 	if e.pps.CABAC {
 		s.cb = &cabac.Encoder{}
 		if err := s.cb.Init(w, qp, hdr.SliceType.IsI(), hdr.CABACInitIDC); err != nil {
@@ -109,12 +114,18 @@ func (e *Encoder) encodeSlice(w *bits.Writer, hdr *syntax.SliceHeader, p sliceJo
 			QPY:            s.qpY,
 			ChromaQPOffset: [2]int{int(e.pps.ChromaQPIndexOffset), int(e.pps.SecondChromaQPIndexOffset)},
 			Bipredictive:   s.isB,
+			SliceID:        p.id + 1,
+			DisableDeblock: hdr.DisableDeblockingFilterIDC,
+			AlphaOffset:    int(hdr.SliceAlphaC0OffsetDiv2) * 2,
+			BetaOffset:     int(hdr.SliceBetaOffsetDiv2) * 2,
 		}}
 		for i := range s.cur.refIdx {
 			s.cur.refIdx[i] = -1
 			s.cur.refIdxL1[i] = -1
 		}
 		s.nb = e.around(mbx, mby, span)
+		s.refreshNoTopRight = s.refresh.inBand(mbx) && mbx+1 >= s.refresh.end &&
+			s.refresh.end < e.widthMBs && s.nb.topRight != nil
 		s.reset()
 
 		if err := s.encodeMB(); err != nil {
@@ -183,7 +194,7 @@ func (s *mbEncoder) encodeIntraModes() {
 	lambda := lambdaTable[s.qpY]
 
 	cost8 := -1
-	if s.e.pps.Transform8x8Mode {
+	if s.e.pps.Transform8x8Mode && !s.refreshNoTopRight {
 		cost8 = s.encodeIntra8x8()
 		s.saveIntraLuma(&s.saved8x8)
 	}
@@ -259,6 +270,9 @@ func (s *mbEncoder) encodeIntra4x4() int {
 		bestMode := pred.I4x4DC
 		for mode := 0; mode < 9; mode++ {
 			if !pred.Intra4x4ModeAvailable(mode, a) {
+				continue
+			}
+			if s.refreshNoTopRight && blk == topRightSourceBlock && usesAboveRight4x4(mode) {
 				continue
 			}
 			pred.Intra4x4(s.e.rec.Y, s.e.rec.StrideY, off, mode, a)

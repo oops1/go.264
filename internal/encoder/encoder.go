@@ -38,7 +38,25 @@ type Config struct {
 	Slices        int
 	Transform8x8  bool
 	ScalingMatrix ScalingMatrix
+
+	IntraRefresh int
+
+	Deblocking         DeblockMode
+	DeblockAlphaOffset int
+	DeblockBetaOffset  int
+
+	VBVBufferKbits int
+	VBVMaxrateKbps int
+	CBR            bool
 }
+
+type DeblockMode uint8
+
+const (
+	DeblockingOn DeblockMode = iota
+	DeblockingOff
+	DeblockingNotAcrossSlices
+)
 
 type ModeDecision uint8
 
@@ -79,6 +97,42 @@ func (c *Config) validate() error {
 	if c.BFrames > 0 && c.RefFrames < 2 {
 		c.RefFrames = 2
 	}
+	if c.IntraRefresh < 0 {
+		return fmt.Errorf("%w: IntraRefresh %d is negative", ErrConfig, c.IntraRefresh)
+	}
+	if c.IntraRefresh > 0 && c.BFrames > 0 {
+		return fmt.Errorf("%w: IntraRefresh cannot be combined with BFrames", ErrConfig)
+	}
+	if c.Deblocking > DeblockingNotAcrossSlices {
+		return fmt.Errorf("%w: Deblocking %d outside 0..2", ErrConfig, c.Deblocking)
+	}
+	if c.DeblockAlphaOffset < -6 || c.DeblockAlphaOffset > 6 {
+		return fmt.Errorf("%w: DeblockAlphaOffset %d outside -6..6", ErrConfig, c.DeblockAlphaOffset)
+	}
+	if c.DeblockBetaOffset < -6 || c.DeblockBetaOffset > 6 {
+		return fmt.Errorf("%w: DeblockBetaOffset %d outside -6..6", ErrConfig, c.DeblockBetaOffset)
+	}
+	if c.VBVBufferKbits < 0 || c.VBVMaxrateKbps < 0 {
+		return fmt.Errorf("%w: the buffer model cannot take negative sizes", ErrConfig)
+	}
+	if (c.VBVBufferKbits > 0) != (c.VBVMaxrateKbps > 0) {
+		return fmt.Errorf("%w: VBVBufferKbits and VBVMaxrateKbps must be set together", ErrConfig)
+	}
+	if c.VBVMaxrateKbps > 0 {
+		if c.BitrateKbps <= 0 {
+			c.BitrateKbps = c.VBVMaxrateKbps
+		}
+		if c.BitrateKbps > c.VBVMaxrateKbps {
+			return fmt.Errorf("%w: BitrateKbps %d exceeds VBVMaxrateKbps %d",
+				ErrConfig, c.BitrateKbps, c.VBVMaxrateKbps)
+		}
+	}
+	if c.CBR {
+		if c.VBVMaxrateKbps <= 0 {
+			return fmt.Errorf("%w: CBR needs VBVBufferKbits and VBVMaxrateKbps", ErrConfig)
+		}
+		c.BitrateKbps = c.VBVMaxrateKbps
+	}
 	return nil
 }
 
@@ -112,6 +166,16 @@ type Encoder struct {
 	headers    []byte
 	forceKey   bool
 
+	refresh        refreshPlan
+	refreshPos     int
+	refreshEnd     map[*frame.Picture]int
+	refreshSeq     map[*frame.Picture]int
+	refreshNextSeq int
+	refreshBarrier int
+
+	cpbFrame  int
+	cpbAnchor int
+
 	lastRec        *frame.Picture
 	onPicture      func(display int, rec *frame.Picture)
 	queue          []queuedFrame
@@ -133,12 +197,16 @@ func New(cfg Config) (*Encoder, error) {
 	e := &Encoder{cfg: cfg}
 	e.widthMBs = (cfg.Width + 15) / 16
 	e.heightMBs = (cfg.Height + 15) / 16
+	e.rc = newRateControl(cfg)
 	e.buildParameterSets()
 	e.buildScalingTables()
 	e.src = frame.NewPicture(e.widthMBs, e.heightMBs)
 	e.rec = frame.NewPicture(e.widthMBs, e.heightMBs)
 	e.grid = make([]mbInfo, e.widthMBs*e.heightMBs)
-	e.rc = newRateControl(cfg)
+	if cfg.IntraRefresh > 0 {
+		e.refreshEnd = make(map[*frame.Picture]int)
+		e.refreshSeq = make(map[*frame.Picture]int)
+	}
 	return e, nil
 }
 
@@ -225,6 +293,7 @@ func (e *Encoder) buildParameterSets() {
 	sps.VUI.NumUnitsInTick = uint32(e.cfg.FPSDen)
 	sps.VUI.TimeScale = uint32(e.cfg.FPSNum) * 2
 	sps.VUI.FixedFrameRate = true
+	e.applyHRD(sps)
 
 	pps := &syntax.PPS{
 		ID:                             0,
@@ -302,6 +371,9 @@ func (e *Encoder) EncodeWithHints(yuv []byte, h Hints) ([]byte, error) {
 	e.loadSourceInto(e.src, yuv)
 
 	idr := e.frameIndex%e.cfg.GOPSize == 0 || e.forceKey
+	if e.cfg.IntraRefresh > 0 {
+		idr = e.forceKey
+	}
 	e.forceKey = false
 	if len(e.refs) == 0 {
 		idr = true
@@ -491,17 +563,26 @@ func (e *Encoder) motionField() *frame.Motion {
 
 func (e *Encoder) encodePicture(p picture) ([]byte, error) {
 	e.src = p.src
-	var out []byte
+	var prefix []byte
 	if p.idr {
 		hdrs, err := e.parameterSetBytes()
 		if err != nil {
 			return nil, err
 		}
-		out = append(out, hdrs...)
+		prefix = append(prefix, hdrs...)
 		e.frameNum = 0
 		e.free = append(e.free, e.refs...)
 		e.refs = e.refs[:0]
 	}
+	e.refresh = e.planRefresh(p.idr)
+	if e.refresh.sweep {
+		e.openSweep()
+	}
+	sei, err := e.pictureSEI(p.idr || e.refresh.sweep, e.refresh.sweep)
+	if err != nil {
+		return nil, err
+	}
+	prefix = append(prefix, sei...)
 	hints := e.prepareHints(p.hints)
 	if p.idr {
 		hints = nil
@@ -526,30 +607,52 @@ func (e *Encoder) encodePicture(p picture) ([]byte, error) {
 	if activeL1 < 1 {
 		activeL1 = 1
 	}
-	for i := range e.grid {
-		e.grid[i] = mbInfo{}
-	}
 	e.rec.POC = p.poc
 	e.rec.FrameNum = e.frameNum
 	e.rec.IDR = p.idr
 	e.rec.LongTerm = false
 
 	bounds := e.sliceBounds()
-	jobs := make([]sliceJob, len(bounds))
-	for i, b := range bounds {
-		jobs[i] = sliceJob{id: i, count: len(bounds), firstMB: b[0], endMB: b[1],
-			sliceType: p.sliceType, qp: qp, active: active, activeL1: activeL1,
-			idr: p.idr, refIDC: refIDC, poc: p.poc}
+	reference := p.reference
+	dropped := false
+	var out []byte
+	for attempt := 0; ; attempt++ {
+		for i := range e.grid {
+			e.grid[i] = mbInfo{}
+		}
+		jobs := make([]sliceJob, len(bounds))
+		for i, b := range bounds {
+			jobs[i] = sliceJob{id: i, count: len(bounds), firstMB: b[0], endMB: b[1],
+				sliceType: p.sliceType, qp: qp, active: active, activeL1: activeL1,
+				idr: p.idr, refIDC: refIDC, poc: p.poc, skipAll: dropped}
+		}
+		payloads, err := e.encodeSlices(jobs, hints)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out[:0], prefix...)
+		for _, rbsp := range payloads {
+			out = nal.AppendAnnexB(out, nal.Unit{
+				Header: nal.Header{RefIDC: refIDC, Type: nalType},
+				RBSP:   rbsp,
+			}, true)
+		}
+		if !e.rc.overBudget(len(out)*8) || attempt >= 8 {
+			break
+		}
+		if qp < 51 {
+			qp = e.rc.shrinkQP(len(out)*8, qp, attempt)
+			continue
+		}
+		if dropped || !e.mayDropPicture(p) {
+			break
+		}
+		dropped = true
+		reference = false
+		refIDC = 0
 	}
-	payloads, err := e.encodeSlices(jobs, hints)
-	if err != nil {
-		return nil, err
-	}
-	for _, rbsp := range payloads {
-		out = nal.AppendAnnexB(out, nal.Unit{
-			Header: nal.Header{RefIDC: refIDC, Type: nalType},
-			RBSP:   rbsp,
-		}, true)
+	if n := e.rc.padBytes(len(out) * 8); n > 0 {
+		out = appendFiller(out, n-fillerOverhead)
 	}
 
 	loopfilter.Apply(e.rec, e.widthMBs, e.heightMBs, func(mbx, mby int) *loopfilter.MB {
@@ -564,14 +667,16 @@ func (e *Encoder) encodePicture(p picture) ([]byte, error) {
 	if e.onPicture != nil {
 		e.onPicture(p.display, e.rec)
 	}
-	if p.reference {
+	if reference {
 		e.rec.Motion = e.motionField()
+		e.recordRefreshEnd(e.rec, e.refresh)
 		e.rotateReferences()
 		e.frameNum = (e.frameNum + 1) % e.sps.MaxFrameNum()
 	} else {
 		e.rec.Motion = nil
 	}
-	e.rc.update(len(out)*8, qp, p.idr)
+	e.rc.update(len(out)*8, qp, p.idr, dropped)
+	e.cpbFrame++
 	return out, nil
 }
 
@@ -608,7 +713,13 @@ func (e *Encoder) sliceHeader(p sliceJob) *syntax.SliceHeader {
 		IDR:                        p.idr,
 		NalRefIDC:                  p.refIDC,
 		SliceQPDelta:               int32(p.qp - e.cfg.QP),
-		DisableDeblockingFilterIDC: 0,
+		DisableDeblockingFilterIDC: uint32(e.cfg.Deblocking),
+		SliceAlphaC0OffsetDiv2:     int32(e.cfg.DeblockAlphaOffset),
+		SliceBetaOffsetDiv2:        int32(e.cfg.DeblockBetaOffset),
+	}
+	if e.cfg.Deblocking == DeblockingOff {
+		hdr.SliceAlphaC0OffsetDiv2 = 0
+		hdr.SliceBetaOffsetDiv2 = 0
 	}
 	if e.sps.PicOrderCntType == 0 {
 		hdr.PicOrderCntLsb = uint32(p.poc) & (e.sps.MaxPicOrderCntLsb() - 1)
@@ -654,6 +765,12 @@ type sliceJob struct {
 	idr       bool
 	refIDC    uint8
 	poc       int
+	skipAll   bool
+}
+
+func (e *Encoder) mayDropPicture(p picture) bool {
+	return e.rc.vbv && e.cfg.IntraRefresh == 0 && !p.idr &&
+		p.sliceType.IsP() && len(e.refL0) != 0
 }
 
 func (e *Encoder) encodeSlices(jobs []sliceJob, hints *frameHints) ([][]byte, error) {

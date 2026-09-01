@@ -16,6 +16,13 @@ type rateControl struct {
 
 	framesCoded  int
 	bitsProduced float64
+
+	vbv      bool
+	cbr      bool
+	cpbSize  float64
+	cpbRate  float64
+	perFrame float64
+	fill     float64
 }
 
 func newRateControl(cfg Config) *rateControl {
@@ -24,15 +31,29 @@ func newRateControl(cfg Config) *rateControl {
 		minQP:  8,
 		maxQP:  50,
 	}
-	if cfg.BitrateKbps <= 0 {
-		return rc
-	}
 	fps := float64(cfg.FPSNum) / float64(cfg.FPSDen)
 	if fps <= 0 {
 		fps = 25
 	}
+	if cfg.VBVBufferKbits > 0 && cfg.VBVMaxrateKbps > 0 {
+		rc.vbv = true
+		rc.cbr = cfg.CBR
+		rc.minQP = 0
+		rc.maxQP = 51
+		rc.cpbRate = float64(hrdBitRate(cfg.VBVMaxrateKbps))
+		rc.cpbSize = float64(hrdCPBSize(cfg.VBVBufferKbits))
+		rc.perFrame = rc.cpbRate / fps
+		rc.fill = rc.cpbSize
+	}
+	if cfg.BitrateKbps <= 0 && !rc.vbv {
+		return rc
+	}
 	rc.enabled = true
-	rc.targetBits = float64(cfg.BitrateKbps) * 1000 / fps
+	target := cfg.BitrateKbps
+	if target <= 0 {
+		target = cfg.VBVMaxrateKbps
+	}
+	rc.targetBits = float64(target) * 1000 / fps
 	rc.bufferSize = rc.targetBits * 8
 	return rc
 }
@@ -40,6 +61,9 @@ func newRateControl(cfg Config) *rateControl {
 func (rc *rateControl) intraTarget() float64 { return rc.targetBits * 4 }
 
 func (rc *rateControl) frameQP(idr bool) int {
+	if rc.vbv {
+		return rc.vbvQP(idr)
+	}
 	if !rc.enabled {
 		return rc.baseQP
 	}
@@ -60,6 +84,86 @@ func (rc *rateControl) frameQP(idr bool) int {
 	return rc.clamp(int(math.Round(qp)))
 }
 
+func (rc *rateControl) vbvTarget(idr bool) float64 {
+	target := rc.targetBits
+	if idr {
+		target = rc.intraTarget()
+	}
+	target -= rc.buffer * 0.5
+	if floor := rc.minimumBits(); target < floor {
+		target = floor
+	}
+	if ceiling := rc.maximumBits(); target > ceiling {
+		target = ceiling
+	}
+	if target < 1 {
+		target = 1
+	}
+	return target
+}
+
+func (rc *rateControl) minimumBits() float64 {
+	if !rc.cbr {
+		return 0
+	}
+	need := rc.fill + rc.perFrame - rc.cpbSize
+	if need < 0 {
+		return 0
+	}
+	return need
+}
+
+func (rc *rateControl) maximumBits() float64 { return rc.fill * 0.85 }
+
+func (rc *rateControl) vbvQP(idr bool) int {
+	complexity := rc.complexityInter
+	if idr {
+		complexity = rc.complexityIntra
+	}
+	if complexity <= 0 {
+		return rc.clamp(rc.baseQP)
+	}
+	qp := 6 * math.Log2(complexity/rc.vbvTarget(idr))
+	return rc.clamp(int(math.Round(qp)))
+}
+
+func (rc *rateControl) overBudget(bits int) bool {
+	return rc.vbv && float64(bits) > rc.maximumBits()
+}
+
+func (rc *rateControl) shrinkQP(bits, qp, attempt int) int {
+	step := int(math.Ceil(6 * math.Log2(float64(bits)/rc.maximumBits())))
+	if escalation := 1 << uint(attempt); step < escalation {
+		step = escalation
+	}
+	if step < 1 {
+		step = 1
+	}
+	next := qp + step
+	if next > 51 {
+		next = 51
+	}
+	return next
+}
+
+func (rc *rateControl) padBytes(bits int) int {
+	if !rc.vbv || !rc.cbr {
+		return 0
+	}
+	need := rc.minimumBits() - float64(bits)
+	if need <= 0 {
+		return 0
+	}
+	n := int(math.Ceil(need / 8))
+	if n < fillerOverhead {
+		n = fillerOverhead
+	}
+	if float64(bits+n*8) > rc.fill {
+		return 0
+	}
+	return n
+}
+
 func (rc *rateControl) clamp(qp int) int {
 	if qp < rc.minQP {
 		return rc.minQP
@@ -70,10 +174,20 @@ func (rc *rateControl) clamp(qp int) int {
 	return qp
 }
 
-func (rc *rateControl) update(bits, qp int, idr bool) {
+func (rc *rateControl) update(bits, qp int, idr, dropped bool) {
 	rc.framesCoded++
 	rc.bitsProduced += float64(bits)
-	if !rc.enabled {
+	if rc.vbv {
+		rc.fill -= float64(bits)
+		if rc.fill < 0 {
+			rc.fill = 0
+		}
+		rc.fill += rc.perFrame
+		if rc.fill > rc.cpbSize {
+			rc.fill = rc.cpbSize
+		}
+	}
+	if !rc.enabled || dropped {
 		return
 	}
 	observed := float64(bits) * math.Exp2(float64(qp)/6)

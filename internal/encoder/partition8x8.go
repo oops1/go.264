@@ -68,6 +68,9 @@ func (s *mbEncoder) searchSubMB(ox, oy, lambda int) subResult {
 	entry := s.snapshotMotion()
 
 	for refIdx := 0; refIdx < s.numRefs; refIdx++ {
+		if !s.refreshUsableRef(s.refPictureIn(0, int8(refIdx))) {
+			continue
+		}
 		refCost := 0
 		if s.numRefs > 1 {
 			refCost = lambda * bitsForTE(uint32(refIdx), uint32(s.numRefs-1))

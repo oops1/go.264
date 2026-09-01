@@ -23,6 +23,8 @@ func usage() string {
 	return strings.Join([]string{
 		"usage:",
 		"  go264 encode -s WxH [-qp N | -b KBPS] [-gop N] [-refs N] [-fps N] [-i in.yuv] [-o out.264]",
+		"                     [-intra-refresh N] [-deblock 0|1|2] [-deblock-alpha N] [-deblock-beta N]",
+		"                     [-vbv-bufsize KBIT -vbv-maxrate KBPS [-cbr]]",
 		"  go264 decode [-i in.264] [-o out.yuv]",
 		"  go264 backends",
 		"  go264 hwinfo",
@@ -94,8 +96,18 @@ func runEncode(args []string) error {
 	slices := fs.Int("slices", 1, "slices per picture, encoded in parallel; -1 for one per processor")
 	exhaustive := fs.Bool("exhaustive", false, "try every macroblock mode instead of taking a free skip")
 	nosearch := fs.Bool("nosearch", false, "skip motion search and code zero vectors")
+	refresh := fs.Int("intra-refresh", 0, "sweep a band of intra macroblocks across the picture over N frames instead of sending key frames")
+	deblock := fs.Int("deblock", 0, "deblocking filter: 0 on, 1 off, 2 on but not across slice boundaries")
+	alpha := fs.Int("deblock-alpha", 0, "deblocking alpha offset, -6 to 6")
+	beta := fs.Int("deblock-beta", 0, "deblocking beta offset, -6 to 6")
+	vbvBuffer := fs.Int("vbv-bufsize", 0, "coded picture buffer size in kbit")
+	vbvMaxrate := fs.Int("vbv-maxrate", 0, "peak bitrate in kbit/s for the coded picture buffer")
+	cbr := fs.Bool("cbr", false, "hold the coded picture buffer near full and pad the stream when needed")
 	if err := fs.Parse(args); err != nil {
 		return err
+	}
+	if *deblock < 0 || *deblock > 2 {
+		return errors.New("-deblock must be 0, 1 or 2")
 	}
 	if *size == "" {
 		return errors.New("encode requires -s WxH")
@@ -110,6 +122,14 @@ func runEncode(args []string) error {
 		GOPSize: *gop, QP: *qp, BitrateKbps: *bitrate, RefFrames: *refs,
 		CABAC: *cabac, BFrames: *bframes, Slices: *slices,
 		ForceSoftware: *software,
+		IntraRefresh:  *refresh,
+		Deblocking:    go264.DeblockMode(*deblock),
+
+		DeblockAlphaOffset: *alpha,
+		DeblockBetaOffset:  *beta,
+		VBVBufferKbits:     *vbvBuffer,
+		VBVMaxrateKbps:     *vbvMaxrate,
+		CBR:                *cbr,
 	}
 	if *exhaustive {
 		cfg.ModeDecision = go264.ModeDecisionExhaustive

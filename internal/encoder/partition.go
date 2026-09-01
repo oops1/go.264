@@ -75,6 +75,9 @@ func (s *mbEncoder) partSubPelCost(ref *frame.Picture, px, py, w, h int, mv, mvp
 func (s *mbEncoder) searchPartition(p partition, partIdx, kind, lambda int) partResult {
 	best := partResult{ref: -1}
 	for idx := 0; idx < s.numRefs; idx++ {
+		if !s.refreshUsableRef(s.refPictureIn(0, int8(idx))) {
+			continue
+		}
 		r := s.searchPartitionRef(0, p, partIdx, kind, lambda, int8(idx))
 		if s.numRefs > 1 {
 			r.cost += lambda * bitsForTE(uint32(idx), uint32(s.numRefs-1))
@@ -100,6 +103,12 @@ func (s *mbEncoder) searchPartitionRef(list int, p partition, partIdx, kind, lam
 	ref := s.refPictureIn(list, refIdx)
 	mvp := s.predictMV(list, p.x, p.y, p.w, p.h, refIdx, partIdx, kind)
 	loX, hiX, loY, hiY := s.partLimits(p.x, p.y, p.w, p.h)
+	limitLuma, limitChroma, limited := s.refreshBoundFor(ref)
+	if limited {
+		if m := refreshHiX(s.mbx*16+p.x, p.w, limitLuma, limitChroma); m < hiX {
+			hiX = m
+		}
+	}
 	clampX := func(v int) int {
 		if v < loX {
 			return loX
@@ -152,8 +161,14 @@ func (s *mbEncoder) searchPartitionRef(list int, p partition, partIdx, kind, lam
 	mv := [2]int16{int16(bestX << 2), int16(bestY << 2)}
 	bestCost := s.partSubPelCost(ref, p.x, p.y, p.w, p.h, mv, mvp, lambda)
 	inRange := func(m [2]int16) bool {
-		return int(m[0])>>2 >= loX && int(m[0])>>2 <= hiX &&
-			int(m[1])>>2 >= loY && int(m[1])>>2 <= hiY
+		if int(m[0])>>2 < loX || int(m[0])>>2 > hiX ||
+			int(m[1])>>2 < loY || int(m[1])>>2 > hiY {
+			return false
+		}
+		if !limited {
+			return true
+		}
+		return refreshAllows(s.mbx*16+p.x, p.w, int(m[0]), int(m[1]), limitLuma, limitChroma)
 	}
 	for _, step := range []int16{2, 1} {
 		for improved := true; improved; {

@@ -74,7 +74,31 @@ type EncoderConfig struct {
 	Transform8x8  bool
 	ScalingMatrix ScalingMatrix
 	ForceSoftware bool
+
+	IntraRefresh int
+
+	Deblocking         DeblockMode
+	DeblockAlphaOffset int
+	DeblockBetaOffset  int
+
+	VBVBufferKbits int
+	VBVMaxrateKbps int
+	CBR            bool
 }
+
+func (c EncoderConfig) needsSoftware() bool {
+	return c.IntraRefresh > 0 || c.Deblocking != DeblockingOn ||
+		c.DeblockAlphaOffset != 0 || c.DeblockBetaOffset != 0 ||
+		c.VBVBufferKbits > 0 || c.VBVMaxrateKbps > 0 || c.CBR
+}
+
+type DeblockMode = encoder.DeblockMode
+
+const (
+	DeblockingOn              = encoder.DeblockingOn
+	DeblockingOff             = encoder.DeblockingOff
+	DeblockingNotAcrossSlices = encoder.DeblockingNotAcrossSlices
+)
 
 type ScalingMatrix = encoder.ScalingMatrix
 
@@ -117,7 +141,7 @@ type Encoder struct {
 
 func NewEncoder(cfg EncoderConfig) (*Encoder, error) {
 	e := &Encoder{backend: "cpu"}
-	if !cfg.ForceSoftware {
+	if !cfg.ForceSoftware && !cfg.needsSoftware() {
 		if hw, name, ok := hwaccel.OpenEncoder(hwaccel.EncoderParams{
 			Width:   cfg.Width,
 			Height:  cfg.Height,
@@ -149,6 +173,16 @@ func NewEncoder(cfg EncoderConfig) (*Encoder, error) {
 		Slices:        cfg.Slices,
 		Transform8x8:  cfg.Transform8x8,
 		ScalingMatrix: cfg.ScalingMatrix,
+
+		IntraRefresh: cfg.IntraRefresh,
+
+		Deblocking:         cfg.Deblocking,
+		DeblockAlphaOffset: cfg.DeblockAlphaOffset,
+		DeblockBetaOffset:  cfg.DeblockBetaOffset,
+
+		VBVBufferKbits: cfg.VBVBufferKbits,
+		VBVMaxrateKbps: cfg.VBVMaxrateKbps,
+		CBR:            cfg.CBR,
 	})
 	if err != nil {
 		return nil, err

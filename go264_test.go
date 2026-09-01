@@ -397,3 +397,94 @@ func TestTransform8x8ReachesTheSoftwareEncoder(t *testing.T) {
 		t.Fatalf("decoded %d frames, want 4", len(frames)+len(rest))
 	}
 }
+
+func encodeThroughPublicAPI(t *testing.T, cfg EncoderConfig, count int) ([]byte, int) {
+	t.Helper()
+	cfg.ForceSoftware = true
+	enc, err := NewEncoder(cfg)
+	if err != nil {
+		t.Fatalf("NewEncoder: %v", err)
+	}
+	defer enc.Close()
+	var stream []byte
+	peak := 0
+	for i := 0; i < count; i++ {
+		pkt, err := enc.Encode(pattern(cfg.Width, cfg.Height, i))
+		if err != nil {
+			t.Fatalf("frame %d: %v", i, err)
+		}
+		if len(pkt) > peak {
+			peak = len(pkt)
+		}
+		stream = append(stream, pkt...)
+	}
+	tail, err := enc.Flush()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return append(stream, tail...), peak
+}
+
+func decodeThroughPublicAPI(t *testing.T, stream []byte) int {
+	t.Helper()
+	d := NewDecoderWithConfig(DecoderConfig{ForceSoftware: true})
+	defer d.Close()
+	frames, err := d.Decode(stream)
+	if err != nil {
+		t.Fatalf("our decoder rejected our own stream: %v", err)
+	}
+	rest, err := d.Flush()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return len(frames) + len(rest)
+}
+
+func TestIntraRefreshReachesTheSoftwareEncoder(t *testing.T) {
+	cfg := EncoderConfig{Width: 176, Height: 144, FPSNum: 25, FPSDen: 1,
+		GOPSize: 8, QP: 27, IntraRefresh: 8}
+	refreshed, refreshPeak := encodeThroughPublicAPI(t, cfg, 24)
+	if n := decodeThroughPublicAPI(t, refreshed); n != 24 {
+		t.Fatalf("decoded %d frames, want 24", n)
+	}
+
+	cfg.IntraRefresh = 0
+	keyed, keyedPeak := encodeThroughPublicAPI(t, cfg, 24)
+	if n := decodeThroughPublicAPI(t, keyed); n != 24 {
+		t.Fatalf("decoded %d frames, want 24", n)
+	}
+	if refreshPeak >= keyedPeak {
+		t.Fatalf("intra refresh peaked at %d bytes against %d for key frames", refreshPeak, keyedPeak)
+	}
+	t.Logf("intra refresh %d bytes, peak %d; key frames %d bytes, peak %d",
+		len(refreshed), refreshPeak, len(keyed), keyedPeak)
+}
+
+func TestDeblockingSettingsReachTheSoftwareEncoder(t *testing.T) {
+	for _, mode := range []DeblockMode{DeblockingOn, DeblockingOff, DeblockingNotAcrossSlices} {
+		cfg := EncoderConfig{Width: 176, Height: 144, FPSNum: 25, FPSDen: 1,
+			GOPSize: 6, QP: 30, Slices: 3, Deblocking: mode,
+			DeblockAlphaOffset: 3, DeblockBetaOffset: -3}
+		stream, _ := encodeThroughPublicAPI(t, cfg, 8)
+		if n := decodeThroughPublicAPI(t, stream); n != 8 {
+			t.Fatalf("deblocking %d: decoded %d frames, want 8", mode, n)
+		}
+	}
+	bad := EncoderConfig{Width: 64, Height: 64, QP: 26, DeblockAlphaOffset: 9, ForceSoftware: true}
+	if _, err := NewEncoder(bad); err == nil {
+		t.Fatal("an out of range deblocking offset was accepted")
+	}
+}
+
+func TestBufferModelReachesTheSoftwareEncoder(t *testing.T) {
+	cfg := EncoderConfig{Width: 176, Height: 144, FPSNum: 25, FPSDen: 1,
+		GOPSize: 25, QP: 26, VBVBufferKbits: 300, VBVMaxrateKbps: 900, CBR: true}
+	stream, _ := encodeThroughPublicAPI(t, cfg, 30)
+	if n := decodeThroughPublicAPI(t, stream); n != 30 {
+		t.Fatalf("decoded %d frames, want 30", n)
+	}
+	bad := EncoderConfig{Width: 64, Height: 64, QP: 26, CBR: true, ForceSoftware: true}
+	if _, err := NewEncoder(bad); err == nil {
+		t.Fatal("constant bitrate without a buffer was accepted")
+	}
+}

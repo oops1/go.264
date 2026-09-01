@@ -304,6 +304,15 @@ func (s *mbEncoder) setMotion(mv [2]int16) {
 }
 
 func (s *mbEncoder) encodeInterMB() (bool, error) {
+	if s.skipAll {
+		s.holdQP()
+		s.applySkip(s.skipMV())
+		s.cur.QPY = s.prevQP
+		return true, nil
+	}
+	if s.forcedIntra() {
+		return false, s.encodeForcedIntra()
+	}
 	if s.hints.unchanged(s.mbx, s.mby) {
 		s.holdQP()
 		if s.applyUnchanged() {
@@ -342,6 +351,17 @@ func (s *mbEncoder) encodeInterMB() (bool, error) {
 }
 
 func (s *mbEncoder) encodeInterMBCABAC() error {
+	if s.skipAll {
+		inc := s.skipFlagInc()
+		s.cabacHoldQP()
+		s.applySkip(s.skipMV())
+		s.cur.QPY = s.prevQP
+		s.cb.MBSkipFlagP(inc, true)
+		return nil
+	}
+	if s.forcedIntra() {
+		return s.encodeForcedIntraCABAC()
+	}
 	inc := s.skipFlagInc()
 	if s.hints.unchanged(s.mbx, s.mby) {
 		s.cabacHoldQP()
@@ -382,7 +402,8 @@ func (s *mbEncoder) encodeInterMBCABAC() error {
 
 func (s *mbEncoder) decideInterMB() (int, interCandidate, [2]int16, error) {
 	skipMV := s.skipMV()
-	if s.e.cfg.ModeDecision == ModeDecisionFast && s.skipLeavesNoResidual(skipMV) {
+	skipOK := s.refreshAllowsMB(skipMV)
+	if skipOK && s.e.cfg.ModeDecision == ModeDecisionFast && s.skipLeavesNoResidual(skipMV) {
 		return choiceSkip, interCandidate{}, skipMV, nil
 	}
 	satdLambda := lambdaTable[s.qpY]
@@ -425,8 +446,10 @@ func (s *mbEncoder) decideInterMB() (int, interCandidate, [2]int16, error) {
 		}
 	}
 
-	if j := s.evaluateSkip(skipMV, rdLambda); j < bestCost {
-		bestCost, bestChoice = j, choiceSkip
+	if skipOK {
+		if j := s.evaluateSkip(skipMV, rdLambda); j < bestCost {
+			bestCost, bestChoice = j, choiceSkip
+		}
 	}
 
 	s.clearMotion()
