@@ -117,3 +117,56 @@ func FuzzParseSliceHeader(f *testing.F) {
 		_, _, _, _ = ParseSliceHeader(r, unit, sets)
 	})
 }
+
+func FuzzParseSEI(f *testing.F) {
+	sps := seiHRDSPS(true, true, 2, true, 12)
+	sps.ID = 3
+	lookup := lookupSPSFunc(sps)
+
+	seeds := [][]SEIMessage{
+		{{PayloadType: SEIPayloadTypeRecoveryPoint, RecoveryPoint: &SEIRecoveryPoint{RecoveryFrameCnt: 9, ExactMatch: true}}},
+		{{PayloadType: SEIPayloadTypeUserDataUnregistered, UserDataUnregistered: &SEIUserDataUnregistered{
+			UUID: [16]byte{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16}, Data: []byte("go264"),
+		}}},
+		{{PayloadType: SEIPayloadTypeBufferingPeriod, BufferingPeriod: &SEIBufferingPeriod{
+			SeqParameterSetID: sps.ID,
+			NalHRD:            []SEIInitialCPBDelay{{InitialCPBRemovalDelay: 1, InitialCPBRemovalDelayOffset: 2}, {InitialCPBRemovalDelay: 3, InitialCPBRemovalDelayOffset: 4}},
+			VclHRD:            []SEIInitialCPBDelay{{InitialCPBRemovalDelay: 5, InitialCPBRemovalDelayOffset: 6}, {InitialCPBRemovalDelay: 7, InitialCPBRemovalDelayOffset: 8}},
+		}}},
+		{{PayloadType: SEIPayloadTypePicTiming, PicTiming: &SEIPicTiming{
+			CPBRemovalDelay: 100, DPBOutputDelay: 4, PicStruct: 0,
+			ClockTimestamps: []SEIClockTimestamp{{Present: true, CTType: 1, CountingType: 3, FullTimestamp: true, NFrames: 5, Seconds: 1, Minutes: 2, Hours: 3, TimeOffset: -5}},
+		}}},
+		{{PayloadType: 99, Opaque: []byte{1, 2, 3, 4}}},
+	}
+	for _, msgs := range seeds {
+		var activeSPS *SPS
+		for _, m := range msgs {
+			if m.PicTiming != nil {
+				activeSPS = sps
+			}
+		}
+		if b, err := WriteSEI(msgs, activeSPS, lookup); err == nil {
+			f.Add(b)
+		}
+	}
+	f.Add([]byte{})
+
+	f.Fuzz(func(t *testing.T, data []byte) {
+		msgs, err := ParseSEI(data, sps, lookup)
+		if err != nil {
+			return
+		}
+		b, err := WriteSEI(msgs, sps, lookup)
+		if err != nil {
+			t.Fatalf("WriteSEI failed after successful ParseSEI: %v", err)
+		}
+		msgs2, err := ParseSEI(b, sps, lookup)
+		if err != nil {
+			t.Fatalf("second ParseSEI failed: %v", err)
+		}
+		if !reflect.DeepEqual(msgs, msgs2) {
+			t.Fatalf("round trip mismatch\n first: %+v\nsecond: %+v", msgs, msgs2)
+		}
+	})
+}
