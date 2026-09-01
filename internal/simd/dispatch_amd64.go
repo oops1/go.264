@@ -17,6 +17,10 @@ func sadDispatch(src []byte, srcStride int, ref []byte, refStride, w, h int) int
 		return sad8x8(src, srcStride, ref, refStride)
 	case w == 8 && h == 4:
 		return sad8x4(src, srcStride, ref, refStride)
+	case w == 4 && h == 8:
+		return sad4x8(src, srcStride, ref, refStride)
+	case w == 4 && h == 4:
+		return sad4x4(src, srcStride, ref, refStride)
 	}
 	return sadGeneric(src, srcStride, ref, refStride, w, h)
 }
@@ -32,10 +36,18 @@ func Inverse4x4(b *[16]int32) {
 }
 
 func Quant4x4(b *[16]int32, mf *[16]int32, f int32, qbits uint32) {
+	if !hasSSE41 {
+		quant4x4Generic(b, mf, f, qbits)
+		return
+	}
 	quant4x4(b, mf, f, uint64(qbits))
 }
 
 func Dequant4x4(b *[16]int32, scale *[16]int32, shift uint32) {
+	if !hasSSE41 {
+		dequant4x4Generic(b, scale, shift)
+		return
+	}
 	if shift >= 4 {
 		dequantLeft4x4(b, scale, uint64(shift-4))
 		return
@@ -46,7 +58,7 @@ func Dequant4x4(b *[16]int32, scale *[16]int32, shift uint32) {
 }
 
 func AddResidual4x4(plane []byte, stride, offset int, b *[16]int32) {
-	if !addResidualFits(plane, stride, offset) {
+	if !hasSSE41 || !addResidualFits(plane, stride, offset) {
 		addResidual4x4Generic(plane, stride, offset, b)
 		return
 	}
@@ -54,7 +66,7 @@ func AddResidual4x4(plane []byte, stride, offset int, b *[16]int32) {
 }
 
 func satd4x4Dispatch(src []byte, srcStride int, ref []byte, refStride int) int {
-	if !spanFits(src, srcStride, 4, 4) || !spanFits(ref, refStride, 4, 4) {
+	if !hasSSE41 || !spanFits(src, srcStride, 4, 4) || !spanFits(ref, refStride, 4, 4) {
 		return satd4x4Generic(src, srcStride, ref, refStride)
 	}
 	return satd4x4(src, srcStride, ref, refStride)
@@ -63,6 +75,17 @@ func satd4x4Dispatch(src []byte, srcStride int, ref []byte, refStride int) int {
 type sixTapFn func(dst []byte, dstStride int, src []byte, srcStride int)
 
 func sixTapHorizKernel(w, h int) sixTapFn {
+	if !hasSSE41 {
+		return nil
+	}
+	if hasAVX2 {
+		switch {
+		case w == 16 && h == 16:
+			return sixTapHoriz16x16AVX2
+		case w == 16 && h == 8:
+			return sixTapHoriz16x8AVX2
+		}
+	}
 	switch {
 	case w == 16 && h == 16:
 		return sixTapHoriz16x16
@@ -83,6 +106,17 @@ func sixTapHorizKernel(w, h int) sixTapFn {
 }
 
 func sixTapVertKernel(w, h int) sixTapFn {
+	if !hasSSE41 {
+		return nil
+	}
+	if hasAVX2 {
+		switch {
+		case w == 16 && h == 16:
+			return sixTapVert16x16AVX2
+		case w == 16 && h == 8:
+			return sixTapVert16x8AVX2
+		}
+	}
 	switch {
 	case w == 16 && h == 16:
 		return sixTapVert16x16
@@ -103,6 +137,17 @@ func sixTapVertKernel(w, h int) sixTapFn {
 }
 
 func sixTapHVKernel(w, h int) sixTapFn {
+	if !hasSSE41 {
+		return nil
+	}
+	if hasAVX2 {
+		switch {
+		case w == 16 && h == 16:
+			return sixTapHV16x16AVX2
+		case w == 16 && h == 8:
+			return sixTapHV16x8AVX2
+		}
+	}
 	switch {
 	case w == 16 && h == 16:
 		return sixTapHV16x16
@@ -155,6 +200,9 @@ func sixTapHVDispatch(dst []byte, dstStride, dstOff int, src []byte, srcStride, 
 type bilinearFn func(dst []byte, dstStride int, src []byte, srcStride int, xFrac, yFrac int32)
 
 func bilinearChromaKernel(w, h int) bilinearFn {
+	if !hasSSE41 {
+		return nil
+	}
 	switch {
 	case w == 8 && h == 8:
 		return bilinearChroma8x8

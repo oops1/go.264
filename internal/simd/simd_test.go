@@ -1135,3 +1135,49 @@ func BenchmarkBilinearChroma8x8Generic(b *testing.B) {
 		bilinearChromaGeneric(dst, 8, 0, src, stride, off, 8, 8, 3, 5)
 	}
 }
+
+func benchSixTapSize(b *testing.B, w, h int, fn func(dst []byte, dstStride, dstOff int, src []byte, srcStride, srcOff, w, h int)) {
+	rng := rand.New(rand.NewSource(1))
+	src, stride, off := mcPlane(rng, w, h, 8, func(x, y int) int { return rng.Intn(256) })
+	dst := make([]byte, w*h)
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		fn(dst, w, 0, src, stride, off, w, h)
+	}
+}
+
+func BenchmarkSixTapHV4x4(b *testing.B)           { benchSixTapSize(b, 4, 4, SixTapHV) }
+func BenchmarkSixTapHV4x4Generic(b *testing.B)    { benchSixTapSize(b, 4, 4, sixTapHVGeneric) }
+func BenchmarkSixTapHV8x4(b *testing.B)           { benchSixTapSize(b, 8, 4, SixTapHV) }
+func BenchmarkSixTapHV8x8(b *testing.B)           { benchSixTapSize(b, 8, 8, SixTapHV) }
+func BenchmarkSixTapHV8x8Generic(b *testing.B)    { benchSixTapSize(b, 8, 8, sixTapHVGeneric) }
+func BenchmarkSixTapVert4x4(b *testing.B)         { benchSixTapSize(b, 4, 4, SixTapVert) }
+func BenchmarkSixTapVert8x8(b *testing.B)         { benchSixTapSize(b, 8, 8, SixTapVert) }
+func BenchmarkSixTapHoriz8x8(b *testing.B)        { benchSixTapSize(b, 8, 8, SixTapHoriz) }
+func BenchmarkSixTapHoriz8x8Generic(b *testing.B) { benchSixTapSize(b, 8, 8, sixTapHorizGeneric) }
+
+func BenchmarkSAD4x4(b *testing.B) {
+	rng := rand.New(rand.NewSource(2))
+	const stride = 32
+	src := randomPlane(rng, stride*16)
+	ref := randomPlane(rng, stride*16)
+	b.ResetTimer()
+	sink := 0
+	for i := 0; i < b.N; i++ {
+		sink += SAD(src, stride, 0, ref, stride, 0, 4, 4)
+	}
+	_ = sink
+}
+
+func BenchmarkSAD4x4Generic(b *testing.B) {
+	rng := rand.New(rand.NewSource(2))
+	const stride = 32
+	src := randomPlane(rng, stride*16)
+	ref := randomPlane(rng, stride*16)
+	b.ResetTimer()
+	sink := 0
+	for i := 0; i < b.N; i++ {
+		sink += SADGeneric(src, stride, 0, ref, stride, 0, 4, 4)
+	}
+	_ = sink
+}

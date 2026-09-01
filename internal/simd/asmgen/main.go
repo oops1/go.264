@@ -16,6 +16,11 @@ func main() {
 	} {
 		genSAD(size[0], size[1])
 	}
+	for _, size := range [][2]int{
+		{4, 8}, {4, 4},
+	} {
+		genSAD4(size[0], size[1])
+	}
 
 	genForward4x4()
 	genInverse4x4()
@@ -24,11 +29,17 @@ func main() {
 	genDequantRight4x4()
 	genAddResidual4x4()
 	genSATD4x4()
+	genSATD4x4AVX2()
 
 	for _, size := range lumaMCSizes {
 		genSixTapHoriz(size[0], size[1])
 		genSixTapVert(size[0], size[1])
 		genSixTapHV(size[0], size[1])
+		if size[0] == 16 {
+			genSixTapHorizAVX2(size[0], size[1])
+			genSixTapVertAVX2(size[0], size[1])
+			genSixTapHVAVX2(size[0], size[1])
+		}
 	}
 	for _, size := range chromaMCSizes {
 		genBilinearChroma(size[0], size[1])
@@ -84,6 +95,45 @@ func genSAD(w, h int) {
 		PSRLDQ(Imm(8), hi)
 		PADDD(hi, acc)
 	}
+	out := GP64()
+	MOVQ(acc, out)
+	Store(out, ReturnIndex(0))
+	RET()
+}
+
+func genSAD4(w, h int) {
+	TEXT(fmt.Sprintf("sad%dx%d", w, h), NOSPLIT,
+		"func(src []byte, srcStride int, ref []byte, refStride int) int")
+	Doc("")
+	src := Load(Param("src").Base(), GP64())
+	srcStride := Load(Param("srcStride"), GP64())
+	ref := Load(Param("ref").Base(), GP64())
+	refStride := Load(Param("refStride"), GP64())
+
+	acc := XMM()
+	PXOR(acc, acc)
+
+	for i := 0; i < h; i += 2 {
+		s := XMM()
+		MOVD(Mem{Base: src}, s)
+		r := XMM()
+		MOVD(Mem{Base: ref}, r)
+		ADDQ(srcStride, src)
+		ADDQ(refStride, ref)
+		s2 := XMM()
+		MOVD(Mem{Base: src}, s2)
+		r2 := XMM()
+		MOVD(Mem{Base: ref}, r2)
+		PUNPCKLLQ(s2, s)
+		PUNPCKLLQ(r2, r)
+		PSADBW(r, s)
+		PADDD(s, acc)
+		if i+2 != h {
+			ADDQ(srcStride, src)
+			ADDQ(refStride, ref)
+		}
+	}
+
 	out := GP64()
 	MOVQ(acc, out)
 	Store(out, ReturnIndex(0))
@@ -460,6 +510,121 @@ func genSATD4x4() {
 	RET()
 }
 
+func packFourRows(ptr, stride reg.Register) reg.VecVirtual {
+	r := make([]reg.VecVirtual, 4)
+	p := GP64()
+	MOVQ(ptr, p)
+	for i := 0; i < 4; i++ {
+		v := XMM()
+		VMOVD(Mem{Base: p}, v)
+		r[i] = v
+		if i != 3 {
+			ADDQ(stride, p)
+		}
+	}
+	lo := XMM()
+	VPUNPCKLDQ(r[1], r[0], lo)
+	hi := XMM()
+	VPUNPCKLDQ(r[3], r[2], hi)
+	all := XMM()
+	VPUNPCKLQDQ(hi, lo, all)
+	return all
+}
+
+func butterflyBlend(v, swapped reg.VecVirtual, blend func(a, b, d reg.VecVirtual)) reg.VecVirtual {
+	sum := YMM()
+	VPADDW(swapped, v, sum)
+	diff := YMM()
+	VPSUBW(swapped, v, diff)
+	d := YMM()
+	blend(sum, diff, d)
+	return d
+}
+
+func genSATD4x4AVX2() {
+	TEXT("satd4x4AVX2", NOSPLIT, "func(src []byte, srcStride int, ref []byte, refStride int) int")
+	Pragma("noescape")
+	Doc("")
+	src := Load(Param("src").Base(), GP64())
+	srcStride := Load(Param("srcStride"), GP64())
+	ref := Load(Param("ref").Base(), GP64())
+	refStride := Load(Param("refStride"), GP64())
+
+	sBytes := packFourRows(src, srcStride)
+	rBytes := packFourRows(ref, refStride)
+
+	sw := YMM()
+	VPMOVZXBW(sBytes, sw)
+	rw := YMM()
+	VPMOVZXBW(rBytes, rw)
+	d := YMM()
+	VPSUBW(rw, sw, d)
+
+	t := YMM()
+	VPSHUFLW(Imm(0xB1), d, t)
+	VPSHUFHW(Imm(0xB1), t, t)
+	stage1 := butterflyBlend(d, t, func(a, b, dst reg.VecVirtual) {
+		VPBLENDW(Imm(0xAA), b, a, dst)
+	})
+
+	t2 := YMM()
+	VPSHUFD(Imm(0xB1), stage1, t2)
+	stage2 := butterflyBlend(stage1, t2, func(a, b, dst reg.VecVirtual) {
+		VPBLENDD(Imm(0xAA), b, a, dst)
+	})
+
+	t3 := YMM()
+	VPSHUFD(Imm(0x4E), stage2, t3)
+	stage3 := butterflyBlend(stage2, t3, func(a, b, dst reg.VecVirtual) {
+		VPBLENDD(Imm(0xCC), b, a, dst)
+	})
+
+	t4 := YMM()
+	VPERMQ(Imm(0x4E), stage3, t4)
+	sum := YMM()
+	VPADDW(t4, stage3, sum)
+	diff := YMM()
+	VPSUBW(t4, stage3, diff)
+
+	aSum := YMM()
+	VPABSW(sum, aSum)
+	aDiff := YMM()
+	VPABSW(diff, aDiff)
+	tot := YMM()
+	VPADDW(aDiff, aSum, tot)
+
+	oneGP := GP32()
+	MOVL(U32(1|1<<16), oneGP)
+	oneX := XMM()
+	VMOVD(oneGP, oneX)
+	ones := YMM()
+	VPBROADCASTD(oneX, ones)
+
+	wide := YMM()
+	VPMADDWD(ones, tot, wide)
+
+	hi128 := XMM()
+	VEXTRACTI128(Imm(1), wide, hi128)
+	acc := XMM()
+	VPADDD(hi128, wide.AsX(), acc)
+	sh := XMM()
+	VPSHUFD(Imm(0x0E), acc, sh)
+	VPADDD(sh, acc, acc)
+	VPSHUFD(Imm(0x01), acc, sh)
+	VPADDD(sh, acc, acc)
+
+	out := GP64()
+	sumGP := out.As32()
+	VMOVD(acc, sumGP)
+	VZEROUPPER()
+	SHRL(Imm(1), sumGP)
+	ADDL(Imm(1), sumGP)
+	SARL(Imm(1), sumGP)
+
+	Store(out, ReturnIndex(0))
+	RET()
+}
+
 func loadDW4At(ptr reg.Register, disp int) reg.VecVirtual {
 	v := XMM()
 	if disp == 0 {
@@ -470,37 +635,350 @@ func loadDW4At(ptr reg.Register, disp int) reg.VecVirtual {
 	return v
 }
 
-func shiftLeftDWImm(v reg.VecVirtual, n int) reg.VecVirtual {
+func memAt(p reg.Register, d int) Mem {
+	if d == 0 {
+		return Mem{Base: p}
+	}
+	return Mem{Base: p, Disp: d}
+}
+
+func wAdd(a, b reg.VecVirtual) reg.VecVirtual {
 	d := XMM()
-	MOVOU(v, d)
-	PSLLL(Imm(uint64(n)), d)
+	MOVOU(a, d)
+	PADDW(b, d)
 	return d
 }
 
-func mul5DW(v reg.VecVirtual) reg.VecVirtual {
-	return vAdd(shiftLeftDWImm(v, 2), v)
+func wSub(a, b reg.VecVirtual) reg.VecVirtual {
+	d := XMM()
+	MOVOU(a, d)
+	PSUBW(b, d)
+	return d
 }
 
-func mul20DW(v reg.VecVirtual) reg.VecVirtual {
-	return vAdd(shiftLeftDWImm(v, 4), shiftLeftDWImm(v, 2))
+func wMul(a, b reg.VecVirtual) reg.VecVirtual {
+	d := XMM()
+	MOVOU(a, d)
+	PMULLW(b, d)
+	return d
 }
 
-func combine6Tap(t0, t1, t2, t3, t4, t5 reg.VecVirtual) reg.VecVirtual {
-	a := vSub(t0, mul5DW(t1))
-	b := vAdd(mul20DW(t2), mul20DW(t3))
-	c := vAdd(a, b)
-	d := vSub(c, mul5DW(t4))
-	return vAdd(d, t5)
+func dAdd(a, b reg.VecVirtual) reg.VecVirtual {
+	d := XMM()
+	MOVOU(a, d)
+	PADDD(b, d)
+	return d
 }
 
-func hTapRaw6(ptr reg.Register, x int) reg.VecVirtual {
-	t0 := loadDW4At(ptr, x-2)
-	t1 := loadDW4At(ptr, x-1)
-	t2 := loadDW4At(ptr, x)
-	t3 := loadDW4At(ptr, x+1)
-	t4 := loadDW4At(ptr, x+2)
-	t5 := loadDW4At(ptr, x+3)
-	return combine6Tap(t0, t1, t2, t3, t4, t5)
+type tapLoader func(k int) reg.VecVirtual
+
+func hTapLoader(ptr reg.Register, x, n int) tapLoader {
+	if n >= 8 {
+		return func(k int) reg.VecVirtual {
+			v := XMM()
+			PMOVZXBW(memAt(ptr, x-2+k), v)
+			return v
+		}
+	}
+	a := XMM()
+	PMOVZXBW(memAt(ptr, x-2), a)
+	b := XMM()
+	PMOVZXBW(memAt(ptr, x-1), b)
+	return func(k int) reg.VecVirtual {
+		v := XMM()
+		if k == 5 {
+			MOVOU(b, v)
+			PSRLDQ(Imm(8), v)
+			return v
+		}
+		MOVOU(a, v)
+		if k != 0 {
+			PSRLDQ(Imm(uint64(2*k)), v)
+		}
+		return v
+	}
+}
+
+func vTapLoader(rows []reg.Register, x, n int) tapLoader {
+	return func(k int) reg.VecVirtual {
+		v := XMM()
+		if n >= 8 {
+			PMOVZXBW(memAt(rows[k], x), v)
+			return v
+		}
+		MOVD(memAt(rows[k], x), v)
+		PMOVZXBW(v, v)
+		return v
+	}
+}
+
+func tapSum6W(load tapLoader, c20, c5 reg.VecVirtual) reg.VecVirtual {
+	s := wAdd(load(0), load(5))
+	s = wAdd(s, wMul(wAdd(load(2), load(3)), c20))
+	return wSub(s, wMul(wAdd(load(1), load(4)), c5))
+}
+
+func roundPackW(v, round reg.VecVirtual, sh int) reg.VecVirtual {
+	d := XMM()
+	MOVOU(v, d)
+	PADDW(round, d)
+	PSRAW(Imm(uint64(sh)), d)
+	p := XMM()
+	MOVOU(d, p)
+	PACKUSWB(p, p)
+	return p
+}
+
+func storeBytesN(v reg.VecVirtual, ptr reg.Register, disp, n int) {
+	if n >= 8 {
+		MOVQ(v, memAt(ptr, disp))
+		return
+	}
+	storeBytes4(v, ptr, disp)
+}
+
+func hvPairSum(win []reg.VecVirtual, c1m5, c2020, cm51 reg.VecVirtual, high bool) reg.VecVirtual {
+	mk := func(a, b, coef reg.VecVirtual) reg.VecVirtual {
+		d := XMM()
+		MOVOU(a, d)
+		if high {
+			PUNPCKHWL(b, d)
+		} else {
+			PUNPCKLWL(b, d)
+		}
+		PMADDWL(coef, d)
+		return d
+	}
+	s := dAdd(mk(win[0], win[1], c1m5), mk(win[2], win[3], c2020))
+	return dAdd(s, mk(win[4], win[5], cm51))
+}
+
+func hvRoundPack(lo, hi, round reg.VecVirtual) reg.VecVirtual {
+	rl := XMM()
+	MOVOU(lo, rl)
+	PADDD(round, rl)
+	PSRAL(Imm(10), rl)
+	rh := XMM()
+	MOVOU(hi, rh)
+	PADDD(round, rh)
+	PSRAL(Imm(10), rh)
+	PACKSSLW(rh, rl)
+	PACKUSWB(rl, rl)
+	return rl
+}
+
+const (
+	packed20  = 20 | 20<<16
+	packed5   = 5 | 5<<16
+	packed16  = 16 | 16<<16
+	coef1m5   = 1 | 0xFFFB<<16
+	coef2020  = 20 | 20<<16
+	coefm51   = 0xFFFB | 1<<16
+	roundHV32 = 512
+)
+
+func stripWidth(w int) int {
+	if w > 8 {
+		return 8
+	}
+	return w
+}
+
+func ybroadcastImm32(v uint32) reg.VecVirtual {
+	g := GP32()
+	MOVL(U32(v), g)
+	x := XMM()
+	VMOVD(g, x)
+	y := YMM()
+	VPBROADCASTD(x, y)
+	return y
+}
+
+func yAddW(a, b reg.VecVirtual) reg.VecVirtual {
+	d := YMM()
+	VPADDW(a, b, d)
+	return d
+}
+
+func ySubW(a, b reg.VecVirtual) reg.VecVirtual {
+	d := YMM()
+	VPSUBW(b, a, d)
+	return d
+}
+
+func yMulW(a, b reg.VecVirtual) reg.VecVirtual {
+	d := YMM()
+	VPMULLW(a, b, d)
+	return d
+}
+
+func yAddD(a, b reg.VecVirtual) reg.VecVirtual {
+	d := YMM()
+	VPADDD(a, b, d)
+	return d
+}
+
+func yHTapLoader(ptr reg.Register, x int) tapLoader {
+	return func(k int) reg.VecVirtual {
+		v := YMM()
+		VPMOVZXBW(memAt(ptr, x-2+k), v)
+		return v
+	}
+}
+
+func yVTapLoader(rows []reg.Register, x int) tapLoader {
+	return func(k int) reg.VecVirtual {
+		v := YMM()
+		VPMOVZXBW(memAt(rows[k], x), v)
+		return v
+	}
+}
+
+func yTapSum6W(load tapLoader, c20, c5 reg.VecVirtual) reg.VecVirtual {
+	s := yAddW(load(0), load(5))
+	s = yAddW(s, yMulW(yAddW(load(2), load(3)), c20))
+	return ySubW(s, yMulW(yAddW(load(1), load(4)), c5))
+}
+
+func yStore16(v reg.VecVirtual, ptr reg.Register, disp int) {
+	p := YMM()
+	VPACKUSWB(v, v, p)
+	VPERMQ(Imm(8), p, p)
+	VMOVDQU(p.AsX(), memAt(ptr, disp))
+}
+
+func yRoundPackStore(v, round reg.VecVirtual, sh int, ptr reg.Register, disp int) {
+	d := YMM()
+	VPADDW(round, v, d)
+	VPSRAW(Imm(uint64(sh)), d, d)
+	yStore16(d, ptr, disp)
+}
+
+func yHVPairSum(win []reg.VecVirtual, c1m5, c2020, cm51 reg.VecVirtual, high bool) reg.VecVirtual {
+	mk := func(a, b, coef reg.VecVirtual) reg.VecVirtual {
+		d := YMM()
+		if high {
+			VPUNPCKHWD(b, a, d)
+		} else {
+			VPUNPCKLWD(b, a, d)
+		}
+		e := YMM()
+		VPMADDWD(coef, d, e)
+		return e
+	}
+	s := yAddD(mk(win[0], win[1], c1m5), mk(win[2], win[3], c2020))
+	return yAddD(s, mk(win[4], win[5], cm51))
+}
+
+func yHVRoundPackStore(lo, hi, round reg.VecVirtual, ptr reg.Register, disp int) {
+	rl := YMM()
+	VPADDD(round, lo, rl)
+	VPSRAD(Imm(10), rl, rl)
+	rh := YMM()
+	VPADDD(round, hi, rh)
+	VPSRAD(Imm(10), rh, rh)
+	w := YMM()
+	VPACKSSDW(rh, rl, w)
+	yStore16(w, ptr, disp)
+}
+
+func genSixTapHorizAVX2(w, h int) {
+	name := fmt.Sprintf("sixTapHoriz%dx%dAVX2", w, h)
+	TEXT(name, NOSPLIT, "func(dst []byte, dstStride int, src []byte, srcStride int)")
+	Pragma("noescape")
+	Doc("")
+	dst := Load(Param("dst").Base(), GP64())
+	dstStride := Load(Param("dstStride"), GP64())
+	src := Load(Param("src").Base(), GP64())
+	srcStride := Load(Param("srcStride"), GP64())
+
+	c20 := ybroadcastImm32(packed20)
+	c5 := ybroadcastImm32(packed5)
+	c16 := ybroadcastImm32(packed16)
+
+	for y := 0; y < h; y++ {
+		raw := yTapSum6W(yHTapLoader(src, 0), c20, c5)
+		yRoundPackStore(raw, c16, 5, dst, 0)
+		if y != h-1 {
+			ADDQ(srcStride, src)
+			ADDQ(dstStride, dst)
+		}
+	}
+	VZEROUPPER()
+	RET()
+}
+
+func genSixTapVertAVX2(w, h int) {
+	name := fmt.Sprintf("sixTapVert%dx%dAVX2", w, h)
+	TEXT(name, NOSPLIT, "func(dst []byte, dstStride int, src []byte, srcStride int)")
+	Pragma("noescape")
+	Doc("")
+	dst := Load(Param("dst").Base(), GP64())
+	dstStride := Load(Param("dstStride"), GP64())
+	src := Load(Param("src").Base(), GP64())
+	srcStride := Load(Param("srcStride"), GP64())
+
+	c20 := ybroadcastImm32(packed20)
+	c5 := ybroadcastImm32(packed5)
+	c16 := ybroadcastImm32(packed16)
+
+	m2, m1, z0, p1, p2, p3 := sixRowPointers(src, srcStride)
+	rows := []reg.Register{m2, m1, z0, p1, p2, p3}
+
+	for y := 0; y < h; y++ {
+		raw := yTapSum6W(yVTapLoader(rows, 0), c20, c5)
+		yRoundPackStore(raw, c16, 5, dst, 0)
+		if y != h-1 {
+			advanceSixRowPointers(srcStride, m2, m1, z0, p1, p2, p3)
+			ADDQ(dstStride, dst)
+		}
+	}
+	VZEROUPPER()
+	RET()
+}
+
+func genSixTapHVAVX2(w, h int) {
+	name := fmt.Sprintf("sixTapHV%dx%dAVX2", w, h)
+	TEXT(name, NOSPLIT, "func(dst []byte, dstStride int, src []byte, srcStride int)")
+	Pragma("noescape")
+	Doc("")
+	dst := Load(Param("dst").Base(), GP64())
+	dstStride := Load(Param("dstStride"), GP64())
+	src := Load(Param("src").Base(), GP64())
+	srcStride := Load(Param("srcStride"), GP64())
+
+	c20 := ybroadcastImm32(packed20)
+	c5 := ybroadcastImm32(packed5)
+	c1m5 := ybroadcastImm32(coef1m5)
+	c2020 := ybroadcastImm32(coef2020)
+	cm51 := ybroadcastImm32(coefm51)
+	c512 := ybroadcastImm32(roundHV32)
+
+	p := GP64()
+	MOVQ(src, p)
+	SUBQ(srcStride, p)
+	SUBQ(srcStride, p)
+
+	win := make([]reg.VecVirtual, 6)
+	for k := 0; k < 6; k++ {
+		win[k] = yTapSum6W(yHTapLoader(p, 0), c20, c5)
+		if k != 5 {
+			ADDQ(srcStride, p)
+		}
+	}
+	for y := 0; y < h; y++ {
+		lo := yHVPairSum(win, c1m5, c2020, cm51, false)
+		hi := yHVPairSum(win, c1m5, c2020, cm51, true)
+		yHVRoundPackStore(lo, hi, c512, dst, 0)
+		if y != h-1 {
+			ADDQ(srcStride, p)
+			copy(win, win[1:])
+			win[5] = yTapSum6W(yHTapLoader(p, 0), c20, c5)
+			ADDQ(dstStride, dst)
+		}
+	}
+	VZEROUPPER()
+	RET()
 }
 
 func clipRoundDW(raw reg.VecVirtual, round int32, shiftN int) reg.VecVirtual {
@@ -542,12 +1020,15 @@ func genSixTapHoriz(w, h int) {
 	src := Load(Param("src").Base(), GP64())
 	srcStride := Load(Param("srcStride"), GP64())
 
+	c20 := broadcastImm32(packed20)
+	c5 := broadcastImm32(packed5)
+	c16 := broadcastImm32(packed16)
+	n := stripWidth(w)
+
 	for y := 0; y < h; y++ {
-		for x := 0; x < w; x += 4 {
-			raw := hTapRaw6(src, x)
-			rounded := clipRoundDW(raw, 16, 5)
-			bytes := packClip4(rounded)
-			storeBytes4(bytes, dst, x)
+		for x := 0; x < w; x += n {
+			raw := tapSum6W(hTapLoader(src, x, n), c20, c5)
+			storeBytesN(roundPackW(raw, c16, 5), dst, x, n)
 		}
 		if y != h-1 {
 			ADDQ(srcStride, src)
@@ -597,20 +1078,18 @@ func genSixTapVert(w, h int) {
 	src := Load(Param("src").Base(), GP64())
 	srcStride := Load(Param("srcStride"), GP64())
 
+	c20 := broadcastImm32(packed20)
+	c5 := broadcastImm32(packed5)
+	c16 := broadcastImm32(packed16)
+	n := stripWidth(w)
+
 	m2, m1, z0, p1, p2, p3 := sixRowPointers(src, srcStride)
+	rows := []reg.Register{m2, m1, z0, p1, p2, p3}
 
 	for y := 0; y < h; y++ {
-		for x := 0; x < w; x += 4 {
-			t0 := loadDW4At(m2, x)
-			t1 := loadDW4At(m1, x)
-			t2 := loadDW4At(z0, x)
-			t3 := loadDW4At(p1, x)
-			t4 := loadDW4At(p2, x)
-			t5 := loadDW4At(p3, x)
-			raw := combine6Tap(t0, t1, t2, t3, t4, t5)
-			rounded := clipRoundDW(raw, 16, 5)
-			bytes := packClip4(rounded)
-			storeBytes4(bytes, dst, x)
+		for x := 0; x < w; x += n {
+			raw := tapSum6W(vTapLoader(rows, x, n), c20, c5)
+			storeBytesN(roundPackW(raw, c16, 5), dst, x, n)
 		}
 		if y != h-1 {
 			advanceSixRowPointers(srcStride, m2, m1, z0, p1, p2, p3)
@@ -630,24 +1109,42 @@ func genSixTapHV(w, h int) {
 	src := Load(Param("src").Base(), GP64())
 	srcStride := Load(Param("srcStride"), GP64())
 
-	m2, m1, z0, p1, p2, p3 := sixRowPointers(src, srcStride)
+	c20 := broadcastImm32(packed20)
+	c5 := broadcastImm32(packed5)
+	c1m5 := broadcastImm32(coef1m5)
+	c2020 := broadcastImm32(coef2020)
+	cm51 := broadcastImm32(coefm51)
+	c512 := broadcastImm32(roundHV32)
+	n := stripWidth(w)
 
-	for y := 0; y < h; y++ {
-		for x := 0; x < w; x += 4 {
-			rm2 := hTapRaw6(m2, x)
-			rm1 := hTapRaw6(m1, x)
-			r0 := hTapRaw6(z0, x)
-			rp1 := hTapRaw6(p1, x)
-			rp2 := hTapRaw6(p2, x)
-			rp3 := hTapRaw6(p3, x)
-			raw2 := combine6Tap(rm2, rm1, r0, rp1, rp2, rp3)
-			rounded := clipRoundDW(raw2, 512, 10)
-			bytes := packClip4(rounded)
-			storeBytes4(bytes, dst, x)
+	for x := 0; x < w; x += n {
+		p := GP64()
+		MOVQ(src, p)
+		SUBQ(srcStride, p)
+		SUBQ(srcStride, p)
+		dp := GP64()
+		MOVQ(dst, dp)
+
+		win := make([]reg.VecVirtual, 6)
+		for k := 0; k < 6; k++ {
+			win[k] = tapSum6W(hTapLoader(p, x, n), c20, c5)
+			if k != 5 {
+				ADDQ(srcStride, p)
+			}
 		}
-		if y != h-1 {
-			advanceSixRowPointers(srcStride, m2, m1, z0, p1, p2, p3)
-			ADDQ(dstStride, dst)
+		for y := 0; y < h; y++ {
+			lo := hvPairSum(win, c1m5, c2020, cm51, false)
+			hi := lo
+			if n >= 8 {
+				hi = hvPairSum(win, c1m5, c2020, cm51, true)
+			}
+			storeBytesN(hvRoundPack(lo, hi, c512), dp, x, n)
+			if y != h-1 {
+				ADDQ(srcStride, p)
+				copy(win, win[1:])
+				win[5] = tapSum6W(hTapLoader(p, x, n), c20, c5)
+				ADDQ(dstStride, dp)
+			}
 		}
 	}
 	RET()

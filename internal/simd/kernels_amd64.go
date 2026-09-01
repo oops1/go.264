@@ -14,6 +14,10 @@ func sad8x8(src []byte, srcStride int, ref []byte, refStride int) int
 
 func sad8x4(src []byte, srcStride int, ref []byte, refStride int) int
 
+func sad4x8(src []byte, srcStride int, ref []byte, refStride int) int
+
+func sad4x4(src []byte, srcStride int, ref []byte, refStride int) int
+
 func forward4x4(b *[16]int32)
 
 func inverse4x4(b *[16]int32)
@@ -32,6 +36,10 @@ func satd4x4(src []byte, srcStride int, ref []byte, refStride int) int
 
 //
 //go:noescape
+func satd4x4AVX2(src []byte, srcStride int, ref []byte, refStride int) int
+
+//
+//go:noescape
 func sixTapHoriz16x16(dst []byte, dstStride int, src []byte, srcStride int)
 
 //
@@ -44,6 +52,18 @@ func sixTapHV16x16(dst []byte, dstStride int, src []byte, srcStride int)
 
 //
 //go:noescape
+func sixTapHoriz16x16AVX2(dst []byte, dstStride int, src []byte, srcStride int)
+
+//
+//go:noescape
+func sixTapVert16x16AVX2(dst []byte, dstStride int, src []byte, srcStride int)
+
+//
+//go:noescape
+func sixTapHV16x16AVX2(dst []byte, dstStride int, src []byte, srcStride int)
+
+//
+//go:noescape
 func sixTapHoriz16x8(dst []byte, dstStride int, src []byte, srcStride int)
 
 //
@@ -53,6 +73,18 @@ func sixTapVert16x8(dst []byte, dstStride int, src []byte, srcStride int)
 //
 //go:noescape
 func sixTapHV16x8(dst []byte, dstStride int, src []byte, srcStride int)
+
+//
+//go:noescape
+func sixTapHoriz16x8AVX2(dst []byte, dstStride int, src []byte, srcStride int)
+
+//
+//go:noescape
+func sixTapVert16x8AVX2(dst []byte, dstStride int, src []byte, srcStride int)
+
+//
+//go:noescape
+func sixTapHV16x8AVX2(dst []byte, dstStride int, src []byte, srcStride int)
 
 //
 //go:noescape
