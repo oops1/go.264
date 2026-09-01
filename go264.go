@@ -68,6 +68,8 @@ type EncoderConfig struct {
 
 	CABAC         bool
 	MotionSearch  MotionSearch
+	ModeDecision  ModeDecision
+	Slices        int
 	ForceSoftware bool
 }
 
@@ -76,6 +78,13 @@ type MotionSearch = encoder.MotionSearch
 const (
 	MotionSearchFull = encoder.MotionSearchFull
 	MotionSearchZero = encoder.MotionSearchZero
+)
+
+type ModeDecision = encoder.ModeDecision
+
+const (
+	ModeDecisionFast       = encoder.ModeDecisionFast
+	ModeDecisionExhaustive = encoder.ModeDecisionExhaustive
 )
 
 type RegionKind = encoder.RegionKind
@@ -125,6 +134,8 @@ func NewEncoder(cfg EncoderConfig) (*Encoder, error) {
 		RefFrames:    cfg.RefFrames,
 		CABAC:        cfg.CABAC,
 		MotionSearch: cfg.MotionSearch,
+		ModeDecision: cfg.ModeDecision,
+		Slices:       cfg.Slices,
 	})
 	if err != nil {
 		return nil, err
@@ -143,6 +154,16 @@ func (e *Encoder) Encode(i420 []byte) ([]byte, error) {
 		return e.hw.Encode(i420)
 	}
 	return e.cpu.Encode(i420)
+}
+
+func (e *Encoder) EncodeWithHints(i420 []byte, changed []image.Rectangle, regions []Region) ([]byte, error) {
+	if e.closed {
+		return nil, ErrClosed
+	}
+	if e.hw != nil {
+		return e.hw.Encode(i420)
+	}
+	return e.cpu.EncodeWithHints(i420, encoder.Hints{Changed: changed, Regions: regions})
 }
 
 func (e *Encoder) EncodeFrame(f *Frame, changed []image.Rectangle, regions []Region) ([]byte, error) {

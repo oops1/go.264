@@ -38,7 +38,7 @@ func BenchmarkMotionEstimation(b *testing.B) {
 				for k := range s.cur.refIdx {
 					s.cur.refIdx[k] = -1
 				}
-				s.nb = e.around(mbx, mby)
+				s.nb = e.around(mbx, mby, sliceRange{0, e.widthMBs * e.heightMBs})
 				r := s.searchPartition(part, 0, mbTypeP16x16, lambda)
 				s.storePartitionMotion(part, r.mv, r.ref)
 				s.cur.Decoded = true

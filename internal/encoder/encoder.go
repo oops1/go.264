@@ -3,6 +3,8 @@ package encoder
 import (
 	"errors"
 	"fmt"
+	"runtime"
+	"sync"
 
 	"github.com/oops1/go.264/internal/bits"
 	"github.com/oops1/go.264/internal/frame"
@@ -29,7 +31,16 @@ type Config struct {
 
 	CABAC        bool
 	MotionSearch MotionSearch
+	ModeDecision ModeDecision
+	Slices       int
 }
+
+type ModeDecision uint8
+
+const (
+	ModeDecisionFast ModeDecision = iota
+	ModeDecisionExhaustive
+)
 
 func (c *Config) validate() error {
 	if c.Width <= 0 || c.Height <= 0 {
@@ -258,37 +269,25 @@ func (e *Encoder) EncodeWithHints(yuv []byte, h Hints) ([]byte, error) {
 	if active < 1 {
 		active = 1
 	}
-	hdr := &syntax.SliceHeader{
-		FirstMBInSlice:             0,
-		SliceType:                  sliceType + 5,
-		PPSID:                      0,
-		FrameNum:                   e.frameNum,
-		IDR:                        idr,
-		NalRefIDC:                  1,
-		SliceQPDelta:               int32(qp - e.cfg.QP),
-		DisableDeblockingFilterIDC: 0,
+	for i := range e.grid {
+		e.grid[i] = mbInfo{}
 	}
-	if !idr && active != e.cfg.RefFrames {
-		hdr.NumRefIdxActiveOverride = true
-		hdr.NumRefIdxL0ActiveMinus1 = uint32(active - 1)
+	bounds := e.sliceBounds()
+	jobs := make([]sliceJob, len(bounds))
+	for i, b := range bounds {
+		jobs[i] = sliceJob{id: i, count: len(bounds), firstMB: b[0], endMB: b[1],
+			sliceType: sliceType, qp: qp, active: active, idr: idr}
 	}
-
-	w := bits.NewWriterSize(e.cfg.Width * e.cfg.Height / 2)
-	if err := syntax.WriteSliceHeader(w, hdr, e.sps, e.pps); err != nil {
+	payloads, err := e.encodeSlices(jobs, hints)
+	if err != nil {
 		return nil, err
 	}
-	if err := e.encodeSlice(w, hdr, qp, active, hints); err != nil {
-		return nil, err
+	for _, rbsp := range payloads {
+		out = nal.AppendAnnexB(out, nal.Unit{
+			Header: nal.Header{RefIDC: 1, Type: nalType},
+			RBSP:   rbsp,
+		}, true)
 	}
-	w.WriteRBSPTrailingBits()
-	if err := w.Err(); err != nil {
-		return nil, err
-	}
-
-	out = nal.AppendAnnexB(out, nal.Unit{
-		Header: nal.Header{RefIDC: 1, Type: nalType},
-		RBSP:   w.Bytes(),
-	}, true)
 
 	loopfilter.Apply(e.rec, e.widthMBs, e.heightMBs, func(mbx, mby int) *loopfilter.MB {
 		m := e.at(mbx, mby)
@@ -303,6 +302,103 @@ func (e *Encoder) EncodeWithHints(yuv []byte, h Hints) ([]byte, error) {
 	e.frameIndex++
 	e.frameNum = (e.frameNum + 1) % e.sps.MaxFrameNum()
 	return out, nil
+}
+
+func (e *Encoder) sliceBounds() [][2]int {
+	n := e.cfg.Slices
+	if n < 0 {
+		n = runtime.GOMAXPROCS(0)
+	}
+	total := e.widthMBs * e.heightMBs
+	if n <= 1 || e.heightMBs < 2 {
+		return [][2]int{{0, total}}
+	}
+	if n > e.heightMBs {
+		n = e.heightMBs
+	}
+	bounds := make([][2]int, 0, n)
+	for i := 0; i < n; i++ {
+		firstRow := i * e.heightMBs / n
+		endRow := (i + 1) * e.heightMBs / n
+		if firstRow == endRow {
+			continue
+		}
+		bounds = append(bounds, [2]int{firstRow * e.widthMBs, endRow * e.widthMBs})
+	}
+	return bounds
+}
+
+func (e *Encoder) sliceHeader(sliceType syntax.SliceType, firstMB, qp, active int, idr bool) *syntax.SliceHeader {
+	hdr := &syntax.SliceHeader{
+		FirstMBInSlice:             uint32(firstMB),
+		SliceType:                  sliceType + 5,
+		PPSID:                      0,
+		FrameNum:                   e.frameNum,
+		IDR:                        idr,
+		NalRefIDC:                  1,
+		SliceQPDelta:               int32(qp - e.cfg.QP),
+		DisableDeblockingFilterIDC: 0,
+	}
+	if !idr && active != e.cfg.RefFrames {
+		hdr.NumRefIdxActiveOverride = true
+		hdr.NumRefIdxL0ActiveMinus1 = uint32(active - 1)
+	}
+	return hdr
+}
+
+func (e *Encoder) encodeOneSlice(p sliceJob, hints *frameHints) ([]byte, error) {
+	hdr := e.sliceHeader(p.sliceType, p.firstMB, p.qp, p.active, p.idr)
+	w := bits.NewWriterSize(e.cfg.Width*e.cfg.Height/2/p.count + 64)
+	if err := syntax.WriteSliceHeader(w, hdr, e.sps, e.pps); err != nil {
+		return nil, err
+	}
+	if err := e.encodeSlice(w, hdr, p.qp, p.active, hints, p.firstMB, p.endMB); err != nil {
+		return nil, err
+	}
+	w.WriteRBSPTrailingBits()
+	if err := w.Err(); err != nil {
+		return nil, err
+	}
+	return w.Bytes(), nil
+}
+
+type sliceJob struct {
+	id        int
+	count     int
+	firstMB   int
+	endMB     int
+	sliceType syntax.SliceType
+	qp        int
+	active    int
+	idr       bool
+}
+
+func (e *Encoder) encodeSlices(jobs []sliceJob, hints *frameHints) ([][]byte, error) {
+	payloads := make([][]byte, len(jobs))
+	if len(jobs) == 1 {
+		rbsp, err := e.encodeOneSlice(jobs[0], hints)
+		if err != nil {
+			return nil, err
+		}
+		payloads[0] = rbsp
+		return payloads, nil
+	}
+	errs := make([]error, len(jobs))
+	var wg sync.WaitGroup
+	for i, job := range jobs {
+		wg.Add(1)
+		go func(i int, job sliceJob) {
+			defer wg.Done()
+			payloads[i], errs[i] = e.encodeOneSlice(job, hints)
+		}(i, job)
+	}
+	wg.Wait()
+	for _, err := range errs {
+		if err != nil {
+			return nil, err
+		}
+	}
+	return payloads, nil
 }
 
 func (e *Encoder) loadSource(yuv []byte) {

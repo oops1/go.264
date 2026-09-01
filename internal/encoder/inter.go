@@ -378,9 +378,12 @@ func (s *mbEncoder) encodeInterMBCABAC() error {
 }
 
 func (s *mbEncoder) decideInterMB() (int, interCandidate, [2]int16, error) {
+	skipMV := s.skipMV()
+	if s.e.cfg.ModeDecision == ModeDecisionFast && s.skipLeavesNoResidual(skipMV) {
+		return choiceSkip, interCandidate{}, skipMV, nil
+	}
 	satdLambda := lambdaTable[s.qpY]
 	rdLambda := lambdaRDTable[s.qpY]
-	skipMV := s.skipMV()
 
 	bestCost := math.Inf(1)
 	var bestCand interCandidate

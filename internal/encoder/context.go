@@ -64,20 +64,32 @@ func (e *Encoder) at(mbx, mby int) *mbInfo {
 	return &e.grid[mby*e.widthMBs+mbx]
 }
 
-func (e *Encoder) coded(mbx, mby int) *mbInfo {
-	m := e.at(mbx, mby)
-	if m == nil || !m.Decoded {
+type sliceRange struct {
+	firstMB int
+	endMB   int
+}
+
+func (e *Encoder) coded(mbx, mby int, r sliceRange) *mbInfo {
+	if mbx < 0 || mby < 0 || mbx >= e.widthMBs || mby >= e.heightMBs {
+		return nil
+	}
+	addr := mby*e.widthMBs + mbx
+	if addr < r.firstMB || addr >= r.endMB {
+		return nil
+	}
+	m := &e.grid[addr]
+	if !m.Decoded {
 		return nil
 	}
 	return m
 }
 
-func (e *Encoder) around(mbx, mby int) neighbours {
+func (e *Encoder) around(mbx, mby int, r sliceRange) neighbours {
 	return neighbours{
-		left:     e.coded(mbx-1, mby),
-		top:      e.coded(mbx, mby-1),
-		topLeft:  e.coded(mbx-1, mby-1),
-		topRight: e.coded(mbx+1, mby-1),
+		left:     e.coded(mbx-1, mby, r),
+		top:      e.coded(mbx, mby-1, r),
+		topLeft:  e.coded(mbx-1, mby-1, r),
+		topRight: e.coded(mbx+1, mby-1, r),
 	}
 }
 

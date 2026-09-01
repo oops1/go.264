@@ -133,6 +133,25 @@ func (s *mbEncoder) evaluateInter(c interCandidate, lambda float64) (float64, er
 	return rdCost(ssd, n, lambda), nil
 }
 
+func (s *mbEncoder) skipLeavesNoResidual(mv [2]int16) bool {
+	s.reset()
+	s.cur.kind = mbTypePSkip
+	s.cur.Intra = false
+	s.clearMotion()
+	s.setMotion(mv)
+	s.motionCompensateMB(mv)
+	s.quantiseInterLuma()
+	s.quantiseInterChroma()
+	if s.cur.cbpLuma != 0 || s.cur.cbpChroma != 0 {
+		return false
+	}
+	s.cur.skipped = true
+	s.cur.NzY = [16]uint8{}
+	s.cur.nzCb = [4]uint8{}
+	s.cur.nzCr = [4]uint8{}
+	return true
+}
+
 func (s *mbEncoder) applySkip(mv [2]int16) {
 	s.reset()
 	s.cur.kind = mbTypePSkip

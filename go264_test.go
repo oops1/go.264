@@ -1,6 +1,7 @@
 package go264
 
 import (
+	"image"
 	"math"
 	"testing"
 )
@@ -255,4 +256,56 @@ func TestCABACCostsFewerBitsThanCAVLC(t *testing.T) {
 	}
 	t.Logf("CAVLC %d bytes, CABAC %d bytes, saving %.1f%%",
 		sizes[false], sizes[true], 100*float64(sizes[false]-sizes[true])/float64(sizes[false]))
+}
+
+func TestSlicesTradeBitsForThreads(t *testing.T) {
+	const w, h = 1920, 1080
+	video := image.Rect(640, 300, 1280, 660)
+	frames := make([][]byte, 6)
+	for i := range frames {
+		frames[i] = desktopFrame(w, h, i, video)
+	}
+	sizes := map[int]int{}
+	for _, slices := range []int{1, 68} {
+		enc, err := NewEncoder(EncoderConfig{Width: w, Height: h, FPSNum: 30, FPSDen: 1,
+			GOPSize: 100, QP: 26, RefFrames: 1, Slices: slices, ForceSoftware: true})
+		if err != nil {
+			t.Fatal(err)
+		}
+		var stream []byte
+		for i, f := range frames {
+			pkt, err := enc.Encode(f)
+			if err != nil {
+				t.Fatalf("slices %d frame %d: %v", slices, i, err)
+			}
+			sizes[slices] += len(pkt)
+			stream = append(stream, pkt...)
+		}
+		enc.Close()
+
+		dec := NewDecoderWithConfig(DecoderConfig{ForceSoftware: true})
+		decoded, err := dec.Decode(stream)
+		if err != nil {
+			t.Fatalf("slices %d: decoding our own stream: %v", slices, err)
+		}
+		rest, err := dec.Flush()
+		if err != nil {
+			t.Fatal(err)
+		}
+		dec.Close()
+		decoded = append(decoded, rest...)
+		if len(decoded) != len(frames) {
+			t.Fatalf("slices %d: decoded %d frames, want %d", slices, len(decoded), len(frames))
+		}
+		for i, f := range decoded {
+			if q := psnr(frames[i], f.AppendI420(nil)); q < 32 {
+				t.Errorf("slices %d frame %d: PSNR only %.2f dB", slices, i, q)
+			}
+		}
+	}
+	overhead := 100 * float64(sizes[68]-sizes[1]) / float64(sizes[1])
+	if overhead > 25 {
+		t.Fatalf("one slice per macroblock row cost %.1f%% more bits, which is too much to pay for threads", overhead)
+	}
+	t.Logf("one slice %d bytes, 68 slices %d bytes, %.1f%% more", sizes[1], sizes[68], overhead)
 }

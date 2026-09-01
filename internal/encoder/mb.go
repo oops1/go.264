@@ -51,6 +51,7 @@ type mbEncoder struct {
 	isP            bool
 	numRefs        int
 	hints          *frameHints
+	span           sliceRange
 	sliceQP        int
 	prevQP         int
 	pendingSkipRun uint32
@@ -74,42 +75,38 @@ func (s *mbEncoder) reset() {
 	s.chromaScan = [2][4][16]int32{}
 }
 
-func (e *Encoder) encodeSlice(w *bits.Writer, hdr *syntax.SliceHeader, qp, numRefs int, hints *frameHints) error {
-	for i := range e.grid {
-		e.grid[i] = mbInfo{}
-	}
+func (e *Encoder) encodeSlice(w *bits.Writer, hdr *syntax.SliceHeader, qp, numRefs int, hints *frameHints, firstMB, endMB int) error {
+	span := sliceRange{firstMB: firstMB, endMB: endMB}
 	s := &mbEncoder{e: e, w: w, qpY: qp, isP: hdr.SliceType.IsP(), numRefs: numRefs,
-		hints: hints, sliceQP: qp, prevQP: qp}
+		hints: hints, sliceQP: qp, prevQP: qp, span: span}
 	if e.pps.CABAC {
 		s.cb = &cabac.Encoder{}
 		if err := s.cb.Init(w, qp, !s.isP, hdr.CABACInitIDC); err != nil {
 			return err
 		}
 	}
-	last := e.widthMBs*e.heightMBs - 1
-	for mby := 0; mby < e.heightMBs; mby++ {
-		for mbx := 0; mbx < e.widthMBs; mbx++ {
-			s.mbx = mbx
-			s.mby = mby
-			s.qpY = clampQP(s.sliceQP + hints.qpDelta(mbx, mby))
-			s.cur = e.at(mbx, mby)
-			*s.cur = mbInfo{MB: loopfilter.MB{
-				QPY:            s.qpY,
-				ChromaQPOffset: [2]int{int(e.pps.ChromaQPIndexOffset), int(e.pps.SecondChromaQPIndexOffset)},
-			}}
-			for i := range s.cur.refIdx {
-				s.cur.refIdx[i] = -1
-			}
-			s.nb = e.around(mbx, mby)
-			s.reset()
+	for addr := firstMB; addr < endMB; addr++ {
+		mbx, mby := addr%e.widthMBs, addr/e.widthMBs
+		s.mbx = mbx
+		s.mby = mby
+		s.qpY = clampQP(s.sliceQP + hints.qpDelta(mbx, mby))
+		s.cur = e.at(mbx, mby)
+		*s.cur = mbInfo{MB: loopfilter.MB{
+			QPY:            s.qpY,
+			ChromaQPOffset: [2]int{int(e.pps.ChromaQPIndexOffset), int(e.pps.SecondChromaQPIndexOffset)},
+		}}
+		for i := range s.cur.refIdx {
+			s.cur.refIdx[i] = -1
+		}
+		s.nb = e.around(mbx, mby, span)
+		s.reset()
 
-			if err := s.encodeMB(); err != nil {
-				return err
-			}
-			s.cur.Decoded = true
-			if s.cb != nil {
-				s.cb.EndOfSlice(mby*e.widthMBs+mbx == last)
-			}
+		if err := s.encodeMB(); err != nil {
+			return err
+		}
+		s.cur.Decoded = true
+		if s.cb != nil {
+			s.cb.EndOfSlice(addr == endMB-1)
 		}
 	}
 	if s.cb != nil {

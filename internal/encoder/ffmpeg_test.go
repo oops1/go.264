@@ -296,3 +296,46 @@ func TestFFmpegReportsMainProfileForCABAC(t *testing.T) {
 		t.Errorf("ffprobe does not call our CABAC stream Main profile:\n%s", out)
 	}
 }
+
+func TestFFmpegDecodesSlicedPicturesIdentically(t *testing.T) {
+	for _, cabac := range []bool{false, true} {
+		for _, slices := range []int{2, 4, 9} {
+			cfg := slicedConfig(176, 144, 26, slices, cabac)
+			var frames [][]byte
+			for i := 0; i < 6; i++ {
+				frames = append(frames, syntheticFrame(cfg.Width, cfg.Height, i))
+			}
+			enc, err := New(cfg)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var stream []byte
+			for _, f := range frames {
+				pkt, err := enc.Encode(f)
+				if err != nil {
+					t.Fatal(err)
+				}
+				stream = append(stream, pkt...)
+			}
+			ref := decodeWithFFmpeg(t, stream)
+			frameSize := cfg.Width * cfg.Height * 3 / 2
+			if len(ref) != frameSize*len(frames) {
+				t.Fatalf("cabac %v, %d slices: ffmpeg produced %d bytes, want %d",
+					cabac, slices, len(ref), frameSize*len(frames))
+			}
+			pics, _, _ := encodeAndDecode(t, cfg, frames)
+			for i := range pics {
+				got := make([]byte, pics[i].Size())
+				pics[i].CopyOut(got)
+				want := ref[i*frameSize : (i+1)*frameSize]
+				for j := range got {
+					if got[j] != want[j] {
+						t.Fatalf("cabac %v, %d slices, frame %d: ffmpeg and our decoder disagree at sample %d, ffmpeg %d ours %d",
+							cabac, slices, i, j, want[j], got[j])
+					}
+				}
+			}
+			t.Logf("cabac %v, %d slices: %d bytes decode identically in ffmpeg", cabac, slices, len(stream))
+		}
+	}
+}
