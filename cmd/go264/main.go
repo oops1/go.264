@@ -89,6 +89,11 @@ func runEncode(args []string) error {
 	in := fs.String("i", "-", "raw I420 input, - for standard input")
 	out := fs.String("o", "-", "Annex B output, - for standard output")
 	software := fs.Bool("software", false, "never use a hardware encoder")
+	cabac := fs.Bool("cabac", false, "use arithmetic coding instead of variable length coding")
+	bframes := fs.Int("bframes", 0, "bi-predictive pictures between anchors, 0 to 7")
+	slices := fs.Int("slices", 1, "slices per picture, encoded in parallel; -1 for one per processor")
+	exhaustive := fs.Bool("exhaustive", false, "try every macroblock mode instead of taking a free skip")
+	nosearch := fs.Bool("nosearch", false, "skip motion search and code zero vectors")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -100,11 +105,19 @@ func runEncode(args []string) error {
 		return err
 	}
 
-	enc, err := go264.NewEncoder(go264.EncoderConfig{
+	cfg := go264.EncoderConfig{
 		Width: w, Height: h, FPSNum: *fps, FPSDen: 1,
 		GOPSize: *gop, QP: *qp, BitrateKbps: *bitrate, RefFrames: *refs,
+		CABAC: *cabac, BFrames: *bframes, Slices: *slices,
 		ForceSoftware: *software,
-	})
+	}
+	if *exhaustive {
+		cfg.ModeDecision = go264.ModeDecisionExhaustive
+	}
+	if *nosearch {
+		cfg.MotionSearch = go264.MotionSearchZero
+	}
+	enc, err := go264.NewEncoder(cfg)
 	if err != nil {
 		return err
 	}
@@ -149,6 +162,16 @@ func runEncode(args []string) error {
 		}
 		frames++
 		total += len(pkt)
+	}
+	rest, err := enc.Flush()
+	if err != nil {
+		return err
+	}
+	if len(rest) != 0 {
+		if _, err := writer.Write(rest); err != nil {
+			return err
+		}
+		total += len(rest)
 	}
 	fmt.Fprintf(os.Stderr, "encoded %d frames, %d bytes\n", frames, total)
 	return nil

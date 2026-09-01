@@ -537,3 +537,71 @@ func TestMainSucceedsForBackends(t *testing.T) {
 		t.Fatalf("subprocess output = %q, want it to contain \"cpu\"", output)
 	}
 }
+
+func encodeWithFlagsThenDecode(t *testing.T, w, h, frames int, encodeArgs ...string) (src, decoded []byte) {
+	t.Helper()
+	dir := t.TempDir()
+	inPath := filepath.Join(dir, "in.yuv")
+	outPath := filepath.Join(dir, "out.264")
+	yuvPath := filepath.Join(dir, "out.yuv")
+
+	src = syntheticI420(w, h, frames)
+	if err := os.WriteFile(inPath, src, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	args := append([]string{"encode", "-s", fmt.Sprintf("%dx%d", w, h), "-qp", "26",
+		"-gop", "8", "-i", inPath, "-o", outPath}, encodeArgs...)
+	if err := runQuiet(t, args); err != nil {
+		t.Fatalf("encode with %v failed: %v", encodeArgs, err)
+	}
+	if err := runQuiet(t, []string{"decode", "-i", outPath, "-o", yuvPath}); err != nil {
+		t.Fatalf("decode after %v failed: %v", encodeArgs, err)
+	}
+	decoded, err := os.ReadFile(yuvPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return src, decoded
+}
+
+func TestEveryEncodeFlagProducesAStreamThatDecodesBack(t *testing.T) {
+	const w, h, frames = 96, 64, 12
+	cases := [][]string{
+		{},
+		{"-cabac"},
+		{"-slices", "3"},
+		{"-slices", "-1"},
+		{"-bframes", "2"},
+		{"-bframes", "3", "-cabac", "-refs", "2"},
+		{"-exhaustive"},
+		{"-nosearch"},
+		{"-cabac", "-slices", "2", "-bframes", "1", "-refs", "2"},
+	}
+	frameSize := w * h * 3 / 2
+	for _, args := range cases {
+		t.Run(fmt.Sprint(args), func(t *testing.T) {
+			src, decoded := encodeWithFlagsThenDecode(t, w, h, frames, args...)
+			if len(decoded) != frameSize*frames {
+				t.Fatalf("%v: decoded %d frames, want %d; a frame the encoder buffered never came out",
+					args, len(decoded)/frameSize, frames)
+			}
+			for i := 0; i < frames; i++ {
+				a := src[i*frameSize : (i+1)*frameSize]
+				b := decoded[i*frameSize : (i+1)*frameSize]
+				if q := psnr(a, b); q < 30 {
+					t.Errorf("%v frame %d: PSNR only %.2f dB", args, i, q)
+				}
+			}
+		})
+	}
+}
+
+func TestBFramesWithoutFlushingWouldLoseFrames(t *testing.T) {
+	const w, h, frames = 96, 64, 10
+	_, withB := encodeWithFlagsThenDecode(t, w, h, frames, "-bframes", "3", "-refs", "2", "-gop", "100")
+	_, withoutB := encodeWithFlagsThenDecode(t, w, h, frames, "-gop", "100")
+	if len(withB) != len(withoutB) {
+		t.Fatalf("bi-predictive coding returned %d bytes of pictures against %d without it",
+			len(withB), len(withoutB))
+	}
+}
