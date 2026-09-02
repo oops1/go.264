@@ -210,33 +210,18 @@ transform a Direct3D device and copying textures back.
 
 Smaller than a milestone each, listed so none of it is forgotten.
 
-**Explicit weighting for bi-predictive slices.** Weighting is written for
-predictive slices, where it saves 38 to 55 per cent on a fade, and
-implicitly for bi-predictive ones. The explicit bi-predictive mode is
-written but disabled, because our reconstruction and ffmpeg's disagree on
-one to eighteen chroma samples per clip.
-
-The weighting arithmetic is not the cause and is no longer a suspect: it
-is checked against both the specification's formula and the reference
-decoder's own arithmetic, which arranges the same expression differently,
-across eight and a half million combinations of weight, offset,
-denominator and sample value, and they agree everywhere.
-
-The cause is narrower than that. Every differing sample instrumented so
-far sits in a macroblock whose motion is derived rather than transmitted,
-B_Direct_16x16 or B_Skip, and ffmpeg's value is exactly what the
-single-list weighted formula produces from our own list zero prediction
-and list zero weights, to the unit, on every sample checked. So the two
-sides disagree about whether those blocks use the second list at all,
-which is a question about the derivation of direct motion and not about
-weighting. Weighting only makes the disagreement visible, by changing
-which macroblocks the mode decision leaves to the derivation.
-
-That points at a difference in the derived reference indices for a block
-whose neighbours use only one list, which the conformance corpus does not
-reach because x264 does not produce that arrangement. **If it is real it
-is a decoder fault, not merely a missing encoder feature**, and it would
-be worth more than the mode it currently blocks.
+**Explicit weighting for bi-predictive slices** is done, and the
+disagreement with ffmpeg that held it back turned out to be our own
+fault, in the encoder rather than the decoder. Equation 8-298 requires
+the two weights of a bi-predicted block to sum to no more than 128, and
+the encoder was fitting the two lists independently and reaching 176.
+The reference decoder's assembly accumulates in sixteen bits, which that
+bound is exactly what makes safe, so it was within its rights and our
+stream was not conforming. The weights are now clamped as a pair with
+the offsets rederived, every sum lands on the bound, and ffmpeg agrees
+on every sample at every quantiser under both entropy coders. The
+clamped weights are also better: the saving on a fade went from ten to
+twenty two per cent up to nineteen to thirty.
 
 **Quantisation with rate and distortion (trellis).** Not present.
 Usually five to ten per cent of the bitrate.

@@ -5,7 +5,10 @@ import (
 	"image"
 	"testing"
 
+	"github.com/oops1/go.264/internal/bits"
 	"github.com/oops1/go.264/internal/frame"
+	"github.com/oops1/go.264/internal/nal"
+	"github.com/oops1/go.264/internal/syntax"
 )
 
 func weightConfig(qp, bframes int, cabac bool, mode WeightedPrediction) Config {
@@ -36,7 +39,7 @@ func TestWeightedPredictionAnnouncesItselfInTheParameterSets(t *testing.T) {
 		{WeightedPredictionOff, 0, false, 0},
 		{WeightedPredictionOff, 2, false, 0},
 		{WeightedPredictionExplicit, 0, true, 0},
-		{WeightedPredictionExplicit, 2, true, 0},
+		{WeightedPredictionExplicit, 2, true, 1},
 		{WeightedPredictionImplicit, 0, true, 0},
 		{WeightedPredictionImplicit, 2, true, 2},
 	}
@@ -318,5 +321,85 @@ func TestFFmpegAgreesOnWeightsWithIntraRefreshAndHints(t *testing.T) {
 		stream, recons := encodeBStream(t, cfg, frames, hints)
 		assertFFmpegMatchesRecons(t, fmt.Sprintf("intra refresh with hints, cabac %v", cabac),
 			stream, recons, cfg.Width, cfg.Height)
+	}
+}
+
+type fixedSets struct {
+	sps *syntax.SPS
+	pps *syntax.PPS
+}
+
+func (f fixedSets) SPS(uint32) *syntax.SPS { return f.sps }
+func (f fixedSets) PPS(uint32) *syntax.PPS { return f.pps }
+
+func TestExplicitBiWeightsObeyTheConformanceBound(t *testing.T) {
+	frames := fadeFrames(t)
+	for _, qp := range []int{22, 30, 38, 44, 51} {
+		cfg := Config{Width: 176, Height: 144, FPSNum: 25, FPSDen: 1, GOPSize: 100, QP: qp,
+			RefFrames: 2, BFrames: 2, WeightedPrediction: WeightedPredictionExplicit}
+		enc, err := New(cfg)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if enc.PPS().WeightedBipredIDC != 1 {
+			t.Fatal("explicit weighting with B pictures did not announce weighted_bipred_idc 1")
+		}
+		var stream []byte
+		for _, f := range frames {
+			pkt, err := enc.Encode(f)
+			if err != nil {
+				t.Fatal(err)
+			}
+			stream = append(stream, pkt...)
+		}
+		rest, err := enc.Flush()
+		if err != nil {
+			t.Fatal(err)
+		}
+		stream = append(stream, rest...)
+
+		sets := fixedSets{sps: enc.SPS(), pps: enc.PPS()}
+		checked, worst := 0, int32(0)
+		for _, ebsp := range nal.SplitAnnexB(stream) {
+			u, err := nal.Parse(ebsp)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if u.Header.Type != nal.TypeSliceNonIDR {
+				continue
+			}
+			hdr, _, _, err := syntax.ParseSliceHeader(bits.NewReader(u.RBSP), u.Header, sets)
+			if err != nil {
+				t.Fatalf("qp %d: parsing our own slice header: %v", qp, err)
+			}
+			if !hdr.SliceType.IsB() {
+				continue
+			}
+			for c := 0; c < 3; c++ {
+				denom := hdr.PredWeight.LumaLog2WeightDenom
+				if c > 0 {
+					denom = hdr.PredWeight.ChromaLog2WeightDenom
+				}
+				limit := biWeightLimit(denom)
+				for i := range hdr.PredWeight.L0 {
+					for j := range hdr.PredWeight.L1 {
+						sum := componentWeight(&hdr.PredWeight.L0[i], c) +
+							componentWeight(&hdr.PredWeight.L1[j], c)
+						checked++
+						if sum > worst {
+							worst = sum
+						}
+						if sum < -128 || sum > limit {
+							t.Fatalf("qp %d: a bi-predicted weight pair in the stream sums to %d, outside the -128..%d that equation 8-298 allows",
+								qp, sum, limit)
+						}
+					}
+				}
+			}
+		}
+		if checked == 0 {
+			t.Fatalf("qp %d: the stream carried no bi-predictive weight table", qp)
+		}
+		t.Logf("qp %2d: %d weight pairs checked, largest sum %d", qp, checked, worst)
 	}
 }

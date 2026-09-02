@@ -318,6 +318,9 @@ func (e *Encoder) buildParameterSets() {
 	switch e.cfg.WeightedPrediction {
 	case WeightedPredictionExplicit:
 		pps.WeightedPred = true
+		if e.cfg.BFrames > 0 {
+			pps.WeightedBipredIDC = 1
+		}
 	case WeightedPredictionImplicit:
 		pps.WeightedPred = true
 		if e.cfg.BFrames > 0 {

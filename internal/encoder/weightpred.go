@@ -144,17 +144,22 @@ func defaultWeightEntry() syntax.WeightEntry {
 	}
 }
 
-func (e *Encoder) estimateWeightEntry(src, ref *frame.Picture, y0, y1 int) syntax.WeightEntry {
+func (e *Encoder) estimateWeightEntry(src, ref *frame.Picture, y0, y1 int) (syntax.WeightEntry, weightMeans) {
 	entry := defaultWeightEntry()
+	var means weightMeans
 	w := e.width()
 	h := y1 - y0
 	if h <= 0 || ref == nil {
-		return entry
+		return entry, means
 	}
 
 	var luma planeSums
 	accumulateSums(&luma, src.Y, src.StrideY, src.LumaOffset(0, y0),
 		ref.Y, ref.StrideY, ref.LumaOffset(0, y0), w, h)
+	means.ok = true
+	if luma.n > 0 {
+		means.ref[0] = float64(luma.ref) / float64(luma.n)
+	}
 	lw, lo := fitWeight(luma, lumaLog2Denom)
 	plain, shaped := compareWeighted(src.Y, src.StrideY, src.LumaOffset(0, y0),
 		ref.Y, ref.StrideY, ref.LumaOffset(0, y0), w, h, lw, lo, lumaLog2Denom)
@@ -175,6 +180,9 @@ func (e *Encoder) estimateWeightEntry(src, ref *frame.Picture, y0, y1 int) synta
 		var sums planeSums
 		accumulateSums(&sums, srcPlanes[i], src.StrideC, src.ChromaOffset(0, cy),
 			refPlanes[i], ref.StrideC, ref.ChromaOffset(0, cy), cw, ch)
+		if sums.n > 0 {
+			means.ref[i+1] = float64(sums.ref) / float64(sums.n)
+		}
 		cWeight[i], cOffset[i] = fitWeight(sums, chromaLog2Denom)
 		p, s := compareWeighted(srcPlanes[i], src.StrideC, src.ChromaOffset(0, cy),
 			refPlanes[i], ref.StrideC, ref.ChromaOffset(0, cy), cw, ch,
@@ -190,7 +198,7 @@ func (e *Encoder) estimateWeightEntry(src, ref *frame.Picture, y0, y1 int) synta
 		entry.ChromaWeight = cWeight
 		entry.ChromaOffset = cOffset
 	}
-	return entry
+	return entry, means
 }
 
 func (e *Encoder) sliceRows(p sliceJob) (int, int) {
@@ -205,16 +213,111 @@ func (e *Encoder) sliceRows(p sliceJob) (int, int) {
 	return y0, y1
 }
 
-func (e *Encoder) weightList(list []*frame.Picture, n, y0, y1 int) []syntax.WeightEntry {
+type weightMeans struct {
+	ref [3]float64
+	ok  bool
+}
+
+func (e *Encoder) weightList(list []*frame.Picture, n, y0, y1 int) ([]syntax.WeightEntry, []weightMeans) {
 	out := make([]syntax.WeightEntry, n)
+	means := make([]weightMeans, n)
 	for i := range out {
 		if i < len(list) && list[i] != nil {
-			out[i] = e.estimateWeightEntry(e.src, list[i], y0, y1)
+			out[i], means[i] = e.estimateWeightEntry(e.src, list[i], y0, y1)
 			continue
 		}
 		out[i] = defaultWeightEntry()
 	}
-	return out
+	return out, means
+}
+
+func biWeightLimit(denom uint32) int32 {
+	if denom == 7 {
+		return 127
+	}
+	return 128
+}
+
+func componentWeight(entry *syntax.WeightEntry, c int) int32 {
+	if c == 0 {
+		return entry.LumaWeight
+	}
+	return entry.ChromaWeight[c-1]
+}
+
+func setComponentWeight(entry *syntax.WeightEntry, c int, w, o int32) {
+	if c == 0 {
+		entry.LumaWeight, entry.LumaOffset = w, o
+		return
+	}
+	entry.ChromaWeight[c-1], entry.ChromaOffset[c-1] = w, o
+}
+
+func reoffset(entry *syntax.WeightEntry, c int, w int32, m weightMeans, denom uint32, unit int32) int32 {
+	if !m.ok {
+		return 0
+	}
+	meanS := m.ref[c]*float64(componentWeight(entry, c))/float64(unit) + float64(offsetOf(entry, c))
+	o := int32(math.Round(meanS - float64(w)/float64(unit)*m.ref[c]))
+	return int32(clip3(-128, 127, int(o)))
+}
+
+func offsetOf(entry *syntax.WeightEntry, c int) int32 {
+	if c == 0 {
+		return entry.LumaOffset
+	}
+	return entry.ChromaOffset[c-1]
+}
+
+func enforceBiWeightLimit(t *syntax.PredWeightTable, m0, m1 []weightMeans) {
+	for c := 0; c < 3; c++ {
+		denom := t.LumaLog2WeightDenom
+		if c > 0 {
+			denom = t.ChromaLog2WeightDenom
+		}
+		unit := int32(1) << denom
+		limit := biWeightLimit(denom)
+		for i := range t.L0 {
+			for j := range t.L1 {
+				w0 := componentWeight(&t.L0[i], c)
+				w1 := componentWeight(&t.L1[j], c)
+				sum := w0 + w1
+				if sum >= -128 && sum <= limit {
+					continue
+				}
+				target := limit
+				if sum < -128 {
+					target = -128
+				}
+				n0, n1 := shareWeights(w0, w1, target)
+				var s0, s1 weightMeans
+				if i < len(m0) {
+					s0 = m0[i]
+				}
+				if j < len(m1) {
+					s1 = m1[j]
+				}
+				setComponentWeight(&t.L0[i], c, n0, reoffset(&t.L0[i], c, n0, s0, denom, unit))
+				setComponentWeight(&t.L1[j], c, n1, reoffset(&t.L1[j], c, n1, s1, denom, unit))
+			}
+		}
+	}
+}
+
+func shareWeights(w0, w1, target int32) (int32, int32) {
+	sum := w0 + w1
+	if sum == 0 {
+		return target / 2, target - target/2
+	}
+	n0 := int32(math.Round(float64(target) * float64(w0) / float64(sum)))
+	n0 = int32(clip3(-128, 127, int(n0)))
+	n1 := target - n0
+	if n1 < -128 || n1 > 127 {
+		n1 = int32(clip3(-128, 127, int(n1)))
+		n0 = target - n1
+		n0 = int32(clip3(-128, 127, int(n0)))
+	}
+	return n0, n1
 }
 
 func (e *Encoder) weightModeFor(t syntax.SliceType) int {
@@ -234,9 +337,13 @@ func (e *Encoder) fillPredWeightTable(hdr *syntax.SliceHeader, p sliceJob) {
 	t.LumaLog2WeightDenom = lumaLog2Denom
 	t.ChromaLog2WeightDenom = chromaLog2Denom
 	y0, y1 := e.sliceRows(p)
-	t.L0 = e.weightList(e.refL0, p.active, y0, y1)
+	var m0, m1 []weightMeans
+	t.L0, m0 = e.weightList(e.refL0, p.active, y0, y1)
 	if p.sliceType.IsB() {
-		t.L1 = e.weightList(e.refL1, p.activeL1, y0, y1)
+		t.L1, m1 = e.weightList(e.refL1, p.activeL1, y0, y1)
+		if e.pps.WeightedBipredIDC == 1 {
+			enforceBiWeightLimit(t, m0, m1)
+		}
 	}
 	if anyWeightSent(t.L0) || anyWeightSent(t.L1) {
 		return
