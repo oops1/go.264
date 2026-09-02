@@ -210,41 +210,61 @@ transform a Direct3D device and copying textures back.
 
 Smaller than a milestone each, listed so none of it is forgotten.
 
-**Explicit weighting for bi-predictive slices** is done, and the
-disagreement with ffmpeg that held it back turned out to be our own
-fault, in the encoder rather than the decoder. Equation 8-298 requires
-the two weights of a bi-predicted block to sum to no more than 128, and
-the encoder was fitting the two lists independently and reaching 176.
-The reference decoder's assembly accumulates in sixteen bits, which that
-bound is exactly what makes safe, so it was within its rights and our
-stream was not conforming. The weights are now clamped as a pair with
-the offsets rederived, every sum lands on the bound, and ffmpeg agrees
-on every sample at every quantiser under both entropy coders. The
-clamped weights are also better: the saving on a fade went from ten to
-twenty two per cent up to nineteen to thirty.
+**An 8x8 transformed difference for the intra mode decision.** Intra_8x8
+is scored with 4x4 sums, which under-rates the transform it is choosing.
+The kernel exists and is used for inter partitions; the intra search
+still calls the 4x4 one sixteen times.
 
-**Quantisation with rate and distortion (trellis).** Not present.
-Usually five to ten per cent of the bitrate.
+**Temporal direct is spatial-only in one place**: the encoder derives
+either, but the decoder's rule that swaps the second reference list when
+both come out identical is now mirrored, so the divergence noted in
+earlier versions is closed.
 
-**Long term references and the memory management operations** in the
-encoder. The decoder handles both; the encoder does sliding window only.
+**Long-term references do not compose with two other features.** They
+are kept out of the bi-predictive reference lists, which are one entry
+deep in this encoder, so bi-predicted pictures gain nothing from them.
+And under intra refresh a long-term picture is unusable until it is
+promoted again after a sweep, so the two do not help each other.
 
-**Level limits against the bitrate.** The buffer model does not check
-the announced level's maximum bitrate or buffer size, because those
-tables were not transcribed from a verified source.
-
-**Parameter sets alongside a recovery point.** A late joiner needs them
-in band. The decoder no longer throws away its references when they are
-repeated, which was the blocker; the encoder does not yet send them.
-
-**An 8x8 transformed difference kernel.** The Intra_8x8 mode decision
-scores with 4x4 sums, which under-rates the transform it is choosing.
+**MMCO 6, marking the current picture long term, is not implemented** in
+either direction. The encoder promotes the previous picture instead,
+which costs nothing here but is a gap against the specification.
 
 **Rejected on purpose, both directions**: lossless transform bypass, the
 4:2:2 and 4:4:4 chroma formats, bit depths above eight, interlaced and
 macroblock adaptive coding, slice groups, and data partitioning. Each
 has a test that feeds a real stream of that kind and requires the
 refusal.
+
+## What was missing and is not any more
+
+Kept as a record of what each thing cost and what it bought.
+
+**Quantisation by rate and distortion**: two to seven per cent of the
+bitrate at equal quality, four to six and a half on a fade and on moving
+pictures, essentially nothing on screen content. The first attempt was
+thrown away for saving a third of the bits at the cost of twenty six
+decibels, because distortion among the coefficients and lambda against
+the error of pixels are not the same scale.
+
+**Weighted prediction**, both directions and both forms: thirty eight to
+fifty five per cent on a fade with predictive pictures, nineteen to
+thirty with bi-predictive ones. The explicit bi-predictive form was held
+back by a disagreement with ffmpeg that turned out to be our own
+non-conforming weights, not its arithmetic.
+
+**Long-term references and the memory management operations**: thirty
+five per cent fewer bits on screen content, twenty six against an encode
+given the same buffer size in short-term references instead.
+
+**Level limits against the bitrate**: the level is now chosen from the
+bitrate and the buffer as well as the picture size, so a stream can no
+longer announce limits it exceeds. Transcribing table A-1 turned up that
+level 4.1 had been missing entirely.
+
+**Parameter sets alongside a recovery point**, which is what makes intra
+refresh usable by a receiver that joins late, and which was blocked by
+the decoder discarding its references whenever a set was repeated.
 
 ## Open questions that are not the codec's to answer
 

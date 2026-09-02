@@ -29,7 +29,9 @@ Working today:
 | CAVLC | complete, both directions |
 | CABAC | complete in both directions; streams are 18 to 30 per cent smaller than CAVLC |
 | In-loop deblocking filter | complete, shared by encoder and decoder |
-| Reference picture management | sliding window and MMCO, up to sixteen references in the encoder |
+| Reference picture management | sliding window and the memory management operations in both directions, including long-term references |
+| Rate-distortion quantisation | two to seven per cent of the bitrate at equal quality |
+| Level selection | from the picture size, the reference count, the bitrate and the buffer |
 | Slices | any count, encoded in parallel; ten times faster on twenty threads for 1.8 per cent more bits |
 | Hardware acceleration | encoding on Windows through Media Foundation and on Linux through NVENC, chosen automatically, no cgo on either path |
 | Bitrate targeted rate control | complete, and under a buffer model the long run rate never exceeds the request |
