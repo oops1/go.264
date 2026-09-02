@@ -659,3 +659,26 @@ func TestEncodeRejectsUnknownPredictionFlagValues(t *testing.T) {
 		}
 	}
 }
+
+func TestEncodeAcceptsTheTrellisFlag(t *testing.T) {
+	for _, extra := range [][]string{
+		{"-trellis"},
+		{"-trellis", "-cabac"},
+		{"-trellis", "-cabac", "-bframes", "2", "-refs", "2"},
+		{"-trellis", "-slices", "2"},
+	} {
+		if n := len(encodeWithFlags(t, 64, 48, 8, extra...)); n == 0 {
+			t.Fatalf("encode %v produced an empty stream", extra)
+		}
+	}
+}
+
+func TestTrellisFlagShrinksTheStream(t *testing.T) {
+	const w, h, frames = 96, 64, 10
+	plain := encodeWithFlags(t, w, h, frames, "-cabac")
+	refined := encodeWithFlags(t, w, h, frames, "-cabac", "-trellis")
+	if len(refined) == len(plain) {
+		t.Fatalf("-trellis changed nothing, both streams are %d bytes", len(plain))
+	}
+	t.Logf("cabac: %d bytes becomes %d bytes with -trellis", len(plain), len(refined))
+}

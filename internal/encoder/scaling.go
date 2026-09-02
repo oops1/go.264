@@ -71,14 +71,18 @@ func dequant4x4(b *transform.Block, qp int, ls *scale4x4, skipDC bool) {
 	}
 }
 
-func quantLumaDC(b *transform.Block, qp int, qs *scale4x4, intra bool) {
-	transform.HadamardForwardDC4x4(b)
+func quantDCLevels(v []int32, qp int, qs *scale4x4, intra bool) {
 	mf := qs[qp%6][0]
 	qbits := uint(16 + qp/6)
 	f := quantRound(qbits, intra)
-	for i := range b {
-		b[i] = quantValue(b[i], mf, f, qbits)
+	for i := range v {
+		v[i] = quantValue(v[i], mf, f, qbits)
 	}
+}
+
+func quantLumaDC(b *transform.Block, qp int, qs *scale4x4, intra bool) {
+	transform.HadamardForwardDC4x4(b)
+	quantDCLevels(b[:], qp, qs, intra)
 }
 
 func dequantLumaDC(b *transform.Block, qp int, ls *scale4x4) {
@@ -101,12 +105,7 @@ func dequantLumaDC(b *transform.Block, qp int, ls *scale4x4) {
 
 func quantChromaDC(b *transform.ChromaDC, qp int, qs *scale4x4, intra bool) {
 	transform.Hadamard2x2(b)
-	mf := qs[qp%6][0]
-	qbits := uint(16 + qp/6)
-	f := quantRound(qbits, intra)
-	for i := range b {
-		b[i] = quantValue(b[i], mf, f, qbits)
-	}
+	quantDCLevels(b[:], qp, qs, intra)
 }
 
 func dequantChromaDC(b *transform.ChromaDC, qp int, ls *scale4x4) {

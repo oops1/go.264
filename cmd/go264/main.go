@@ -23,6 +23,7 @@ func usage() string {
 	return strings.Join([]string{
 		"usage:",
 		"  go264 encode -s WxH [-qp N | -b KBPS] [-gop N] [-refs N] [-fps N] [-i in.yuv] [-o out.264]",
+		"                     [-cabac] [-trellis] [-bframes N] [-slices N]",
 		"                     [-intra-refresh N] [-deblock 0|1|2] [-deblock-alpha N] [-deblock-beta N]",
 		"                     [-vbv-bufsize KBIT -vbv-maxrate KBPS [-cbr]]",
 		"  go264 decode [-i in.264] [-o out.yuv]",
@@ -114,6 +115,7 @@ func runEncode(args []string) error {
 	out := fs.String("o", "-", "Annex B output, - for standard output")
 	software := fs.Bool("software", false, "never use a hardware encoder")
 	cabac := fs.Bool("cabac", false, "use arithmetic coding instead of variable length coding")
+	trellis := fs.Bool("trellis", false, "choose each coefficient by rate and distortion instead of rounding")
 	bframes := fs.Int("bframes", 0, "bi-predictive pictures between anchors, 0 to 7")
 	slices := fs.Int("slices", 1, "slices per picture, encoded in parallel; -1 for one per processor")
 	exhaustive := fs.Bool("exhaustive", false, "try every macroblock mode instead of taking a free skip")
@@ -153,7 +155,7 @@ func runEncode(args []string) error {
 	cfg := go264.EncoderConfig{
 		Width: w, Height: h, FPSNum: *fps, FPSDen: 1,
 		GOPSize: *gop, QP: *qp, BitrateKbps: *bitrate, RefFrames: *refs,
-		CABAC: *cabac, BFrames: *bframes, Slices: *slices,
+		CABAC: *cabac, BFrames: *bframes, Slices: *slices, Trellis: *trellis,
 		ForceSoftware: *software,
 		IntraRefresh:  *refresh,
 		Deblocking:    go264.DeblockMode(*deblock),

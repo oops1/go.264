@@ -553,3 +553,40 @@ func TestRepeatedParameterSetsReachTheSoftwareEncoder(t *testing.T) {
 	t.Logf("intra refresh over 24 frames: %d bytes plain, %d bytes with repeated parameter sets (+%.1f%%)",
 		len(plain), len(repeated), 100*float64(len(repeated)-len(plain))/float64(len(plain)))
 }
+
+func TestTrellisReachesTheSoftwareEncoder(t *testing.T) {
+	cfg := EncoderConfig{Width: 96, Height: 80, FPSNum: 25, FPSDen: 1, GOPSize: 4, QP: 28}
+	if cfg.needsSoftware() {
+		t.Fatal("a plain configuration already demands the software encoder, so this test proves nothing")
+	}
+	cfg.Trellis = true
+	if !cfg.needsSoftware() {
+		t.Fatal("the trellis does not force the software encoder, so a hardware backend could silently ignore it")
+	}
+
+	plain, _ := encodeThroughPublicAPI(t, EncoderConfig{Width: 96, Height: 80, FPSNum: 25, FPSDen: 1,
+		GOPSize: 4, QP: 28, CABAC: true}, 6)
+	refined, _ := encodeThroughPublicAPI(t, EncoderConfig{Width: 96, Height: 80, FPSNum: 25, FPSDen: 1,
+		GOPSize: 4, QP: 28, CABAC: true, Trellis: true}, 6)
+	if len(refined) == len(plain) {
+		t.Fatalf("the trellis changed nothing, both streams are %d bytes", len(plain))
+	}
+	if n := decodeThroughPublicAPI(t, refined); n != 6 {
+		t.Fatalf("decoded %d frames from the trellis stream, want 6", n)
+	}
+	t.Logf("qp 28: %d bytes becomes %d bytes with the trellis", len(plain), len(refined))
+}
+
+func TestTrellisIsOffUnlessAsked(t *testing.T) {
+	cfg := EncoderConfig{Width: 96, Height: 80, FPSNum: 25, FPSDen: 1, GOPSize: 4, QP: 28, CABAC: true}
+	first, _ := encodeThroughPublicAPI(t, cfg, 5)
+	second, _ := encodeThroughPublicAPI(t, cfg, 5)
+	if string(first) != string(second) {
+		t.Fatal("the default encoder is not byte for byte repeatable")
+	}
+	cfg.Trellis = true
+	third, _ := encodeThroughPublicAPI(t, cfg, 5)
+	if string(third) == string(first) {
+		t.Fatal("asking for the trellis produced the same stream as not asking")
+	}
+}

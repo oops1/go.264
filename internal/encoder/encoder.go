@@ -38,6 +38,7 @@ type Config struct {
 	Slices        int
 	Transform8x8  bool
 	ScalingMatrix ScalingMatrix
+	Trellis       bool
 
 	WeightedPrediction WeightedPrediction
 	DirectMode         DirectMode

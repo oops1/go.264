@@ -247,8 +247,13 @@ func (s *mbEncoder) encodeIntra8x8() int {
 		pred.Intra8x8(s.e.rec.Y, s.e.rec.StrideY, off, bestMode, a)
 		residual8x8(&block, s.e.src.Y, s.e.src.StrideY, srcOff, s.e.rec.Y, s.e.rec.StrideY, off)
 		transform.Forward8x8(&block)
+		orig := block
 		transform.Quant8x8(&block, s.qpY, s.e.quantScale8x8(true), true)
 		block8x8ToScan(&s.luma8x8Scan[i8], &block)
+		if s.trellis {
+			s.trellisLuma8x8(i8, &orig, true)
+			scanToBlock8x8(&block, &s.luma8x8Scan[i8])
+		}
 		s.setNz8x8(i8)
 		if countNonZero(s.luma8x8Scan[i8][:]) == 0 {
 			continue
@@ -269,8 +274,12 @@ func (s *mbEncoder) quantiseInterLuma8x8() {
 		srcOff := s.source8x8Offset(i8)
 		residual8x8(&block, s.e.src.Y, s.e.src.StrideY, srcOff, s.e.rec.Y, s.e.rec.StrideY, off)
 		transform.Forward8x8(&block)
+		orig := block
 		transform.Quant8x8(&block, s.qpY, s.e.quantScale8x8(false), false)
 		block8x8ToScan(&s.luma8x8Scan[i8], &block)
+		if s.trellis {
+			s.trellisLuma8x8(i8, &orig, false)
+		}
 		s.setNz8x8(i8)
 		if countNonZero(s.luma8x8Scan[i8][:]) != 0 {
 			s.cur.cbpLuma |= 1 << uint(i8)

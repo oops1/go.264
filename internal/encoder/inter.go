@@ -3,6 +3,7 @@ package encoder
 import (
 	"math"
 
+	"github.com/oops1/go.264/internal/cabac"
 	"github.com/oops1/go.264/internal/mc"
 	"github.com/oops1/go.264/internal/syntax"
 	"github.com/oops1/go.264/internal/transform"
@@ -172,11 +173,13 @@ func (s *mbEncoder) quantiseInterLuma() bool {
 		srcOff := s.e.src.LumaOffset(s.mbx*16+blockX[blk], s.mby*16+blockY[blk])
 		transform.Residual4x4(&block, s.e.src.Y, s.e.src.StrideY, srcOff, s.e.rec.Y, s.e.rec.StrideY, off)
 		transform.Forward4x4(&block)
+		orig := block
 		quant4x4(&block, s.qpY, s.e.lumaQuant4x4(false), false)
-		var scan [16]int32
-		transform.BlockToScan(&scan, &block)
-		s.lumaScan[blk] = scan
-		n := countNonZero(scan[:])
+		transform.BlockToScan(&s.lumaScan[blk], &block)
+		if s.trellis {
+			s.trellisLuma4x4(blk, &orig, 0, false, cabac.CatLuma4x4)
+		}
+		n := countNonZero(s.lumaScan[blk][:])
 		s.cur.NzY[blk] = uint8(n)
 		if n != 0 {
 			any = true
@@ -228,21 +231,28 @@ func (s *mbEncoder) quantiseInterChroma() {
 			transform.Forward4x4(&blocks[blk])
 			dc[blk] = blocks[blk][0]
 		}
-		quantChromaDC(&dc, qpc, s.e.chromaQuant4x4(false, plane), false)
+		transform.Hadamard2x2(&dc)
+		dcOrig := dc
+		quantDCLevels(dc[:], qpc, s.e.chromaQuant4x4(false, plane), false)
 		s.chromaDC[plane] = dc
+		if s.trellis {
+			s.trellisChromaDC(plane, qpc, &dcOrig, false)
+		}
 		for i := 0; i < 4; i++ {
-			if dc[i] != 0 {
+			if s.chromaDC[plane][i] != 0 {
 				anyDC = true
 			}
 		}
 		for blk := 0; blk < 4; blk++ {
+			orig := blocks[blk]
 			blocks[blk][0] = 0
 			quant4x4(&blocks[blk], qpc, s.e.chromaQuant4x4(false, plane), false)
 			blocks[blk][0] = 0
-			var scan [16]int32
-			transform.BlockToScan(&scan, &blocks[blk])
-			s.chromaScan[plane][blk] = scan
-			n := countNonZero(scan[1:])
+			transform.BlockToScan(&s.chromaScan[plane][blk], &blocks[blk])
+			if s.trellis {
+				s.trellisChromaAC(plane, blk, qpc, &orig, false)
+			}
+			n := countNonZero(s.chromaScan[plane][blk][1:])
 			if plane == 0 {
 				s.cur.nzCb[blk] = uint8(n)
 			} else {

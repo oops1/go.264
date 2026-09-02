@@ -64,6 +64,10 @@ type mbEncoder struct {
 	cb                 *cabac.Encoder
 	prevQPDeltaNonZero bool
 
+	trellis bool
+	tb      trellisBlock
+	tw      *bits.Writer
+
 	refresh           refreshPlan
 	refreshNoTopRight bool
 	skipAll           bool
@@ -100,7 +104,7 @@ func (e *Encoder) encodeSlice(w *bits.Writer, hdr *syntax.SliceHeader, p sliceJo
 	s := &mbEncoder{e: e, w: w, qpY: qp, isP: hdr.SliceType.IsP(), isB: hdr.SliceType.IsB(),
 		numRefs: p.active, numRefsL1: p.activeL1,
 		hints: hints, sliceQP: qp, prevQP: qp, span: span, refresh: e.refresh,
-		skipAll: p.skipAll}
+		skipAll: p.skipAll, trellis: e.cfg.Trellis}
 	s.weightMode = e.weightModeFor(hdr.SliceType)
 	if s.weightMode == weightExplicit {
 		s.weights = &hdr.PredWeight
@@ -298,11 +302,14 @@ func (s *mbEncoder) encodeIntra4x4() int {
 		pred.Intra4x4(s.e.rec.Y, s.e.rec.StrideY, off, bestMode, a)
 		transform.Residual4x4(&block, s.e.src.Y, s.e.src.StrideY, srcOff, s.e.rec.Y, s.e.rec.StrideY, off)
 		transform.Forward4x4(&block)
+		orig := block
 		quant4x4(&block, s.qpY, s.e.lumaQuant4x4(true), true)
-		var scan [16]int32
-		transform.BlockToScan(&scan, &block)
-		s.lumaScan[blk] = scan
-		s.cur.NzY[blk] = uint8(countNonZero(scan[:]))
+		transform.BlockToScan(&s.lumaScan[blk], &block)
+		if s.trellis {
+			s.trellisLuma4x4(blk, &orig, 0, true, cabac.CatLuma4x4)
+			transform.ScanToBlock(&block, &s.lumaScan[blk])
+		}
+		s.cur.NzY[blk] = uint8(countNonZero(s.lumaScan[blk][:]))
 		dequant4x4(&block, s.qpY, s.e.lumaLevel4x4(true), false)
 		transform.Inverse4x4(&block)
 		transform.AddResidual4x4(s.e.rec.Y, s.e.rec.StrideY, off, &block)
@@ -335,18 +342,25 @@ func (s *mbEncoder) encodeIntra16x16(mode int) {
 		dcIdx := (blockY[blk]>>2)*4 + blockX[blk]>>2
 		dc[dcIdx] = blocks[blk][0]
 	}
-	quantLumaDC(&dc, s.qpY, s.e.lumaQuant4x4(true), true)
+	transform.HadamardForwardDC4x4(&dc)
+	dcOrig := dc
+	quantDCLevels(dc[:], s.qpY, s.e.lumaQuant4x4(true), true)
 	transform.BlockToScan(&s.lumaDCScan, &dc)
+	if s.trellis {
+		s.trellisLumaDC(&dcOrig)
+	}
 
 	acNonZero := false
 	for blk := 0; blk < 16; blk++ {
+		orig := blocks[blk]
 		blocks[blk][0] = 0
 		quant4x4(&blocks[blk], s.qpY, s.e.lumaQuant4x4(true), true)
 		blocks[blk][0] = 0
-		var scan [16]int32
-		transform.BlockToScan(&scan, &blocks[blk])
-		s.lumaScan[blk] = scan
-		n := countNonZero(scan[1:])
+		transform.BlockToScan(&s.lumaScan[blk], &blocks[blk])
+		if s.trellis {
+			s.trellisLuma4x4(blk, &orig, 1, true, cabac.CatIntra16x16AC)
+		}
+		n := countNonZero(s.lumaScan[blk][1:])
 		s.cur.NzY[blk] = uint8(n)
 		if n != 0 {
 			acNonZero = true
@@ -420,21 +434,28 @@ func (s *mbEncoder) encodeChroma(mode int) {
 			transform.Forward4x4(&blocks[plane][blk])
 			dc[blk] = blocks[plane][blk][0]
 		}
-		quantChromaDC(&dc, qpc, s.e.chromaQuant4x4(true, plane), true)
+		transform.Hadamard2x2(&dc)
+		dcOrig := dc
+		quantDCLevels(dc[:], qpc, s.e.chromaQuant4x4(true, plane), true)
 		s.chromaDC[plane] = dc
+		if s.trellis {
+			s.trellisChromaDC(plane, qpc, &dcOrig, true)
+		}
 		for i := 0; i < 4; i++ {
-			if dc[i] != 0 {
+			if s.chromaDC[plane][i] != 0 {
 				anyDC = true
 			}
 		}
 		for blk := 0; blk < 4; blk++ {
+			orig := blocks[plane][blk]
 			blocks[plane][blk][0] = 0
 			quant4x4(&blocks[plane][blk], qpc, s.e.chromaQuant4x4(true, plane), true)
 			blocks[plane][blk][0] = 0
-			var scan [16]int32
-			transform.BlockToScan(&scan, &blocks[plane][blk])
-			s.chromaScan[plane][blk] = scan
-			n := countNonZero(scan[1:])
+			transform.BlockToScan(&s.chromaScan[plane][blk], &blocks[plane][blk])
+			if s.trellis {
+				s.trellisChromaAC(plane, blk, qpc, &orig, true)
+			}
+			n := countNonZero(s.chromaScan[plane][blk][1:])
 			if plane == 0 {
 				s.cur.nzCb[blk] = uint8(n)
 			} else {

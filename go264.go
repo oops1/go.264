@@ -73,6 +73,7 @@ type EncoderConfig struct {
 	Slices        int
 	Transform8x8  bool
 	ScalingMatrix ScalingMatrix
+	Trellis       bool
 	ForceSoftware bool
 
 	WeightedPrediction WeightedPrediction
@@ -91,7 +92,7 @@ type EncoderConfig struct {
 }
 
 func (c EncoderConfig) needsSoftware() bool {
-	return c.WeightedPrediction != WeightedPredictionOff ||
+	return c.Trellis || c.WeightedPrediction != WeightedPredictionOff ||
 		c.DirectMode != DirectSpatial || c.RepeatParameterSets ||
 		c.IntraRefresh > 0 || c.Deblocking != DeblockingOn ||
 		c.DeblockAlphaOffset != 0 || c.DeblockBetaOffset != 0 ||
@@ -194,6 +195,7 @@ func NewEncoder(cfg EncoderConfig) (*Encoder, error) {
 		Slices:        cfg.Slices,
 		Transform8x8:  cfg.Transform8x8,
 		ScalingMatrix: cfg.ScalingMatrix,
+		Trellis:       cfg.Trellis,
 
 		WeightedPrediction: cfg.WeightedPrediction,
 		DirectMode:         cfg.DirectMode,
