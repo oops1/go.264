@@ -8,6 +8,8 @@ import (
 	"github.com/oops1/go.264/internal/encoder"
 	"github.com/oops1/go.264/internal/frame"
 	"github.com/oops1/go.264/internal/hwaccel"
+	"github.com/oops1/go.264/internal/nal"
+	"github.com/oops1/go.264/internal/syntax"
 )
 
 var ErrClosed = errors.New("go264: use of a closed codec")
@@ -291,25 +293,56 @@ type Decoder struct {
 	hw      hwaccel.Decoder
 	backend string
 	closed  bool
+	settled bool
+	cfg     DecoderConfig
 }
 
 type DecoderConfig struct {
 	ForceSoftware bool
+
+	Width  int
+	Height int
 }
 
 func NewDecoder() *Decoder { return NewDecoderWithConfig(DecoderConfig{}) }
 
 func NewDecoderWithConfig(cfg DecoderConfig) *Decoder {
-	d := &Decoder{backend: "cpu"}
-	if !cfg.ForceSoftware {
-		if hw, name, ok := hwaccel.OpenDecoder(); ok {
-			d.hw = hw
-			d.backend = name
-			return d
-		}
+	d := &Decoder{backend: "cpu", cfg: cfg, cpu: decoder.New()}
+	if cfg.ForceSoftware {
+		d.settled = true
+		return d
 	}
-	d.cpu = decoder.New()
+	d.settle(cfg.Width, cfg.Height)
 	return d
+}
+
+func (d *Decoder) settle(width, height int) {
+	if d.settled || width <= 0 || height <= 0 {
+		return
+	}
+	d.settled = true
+	hw, name, ok := hwaccel.OpenDecoder(hwaccel.DecoderParams{Width: width, Height: height})
+	if !ok {
+		return
+	}
+	d.hw = hw
+	d.backend = name
+	d.cpu = nil
+}
+
+func streamPictureSize(annexB []byte) (int, int) {
+	for _, ebsp := range nal.SplitAnnexB(annexB) {
+		u, err := nal.Parse(ebsp)
+		if err != nil || u.Header.Type != nal.TypeSPS {
+			continue
+		}
+		sps, err := syntax.ParseSPS(u.RBSP)
+		if err != nil {
+			continue
+		}
+		return sps.CroppedWidth(), sps.CroppedHeight()
+	}
+	return 0, 0
 }
 
 func (d *Decoder) Backend() string { return d.backend }
@@ -317,6 +350,10 @@ func (d *Decoder) Backend() string { return d.backend }
 func (d *Decoder) Decode(annexB []byte) ([]*Frame, error) {
 	if d.closed {
 		return nil, ErrClosed
+	}
+	if !d.settled {
+		w, h := streamPictureSize(annexB)
+		d.settle(w, h)
 	}
 	if d.hw != nil {
 		pics, err := d.hw.Decode(annexB)

@@ -26,11 +26,18 @@ func I420ToNV12(dst []byte, dstStride int, src []byte, w, h int) {
 }
 
 func NV12ToI420(dst []byte, src []byte, srcStride int, w, h int) {
+	NV12ToI420Offset(dst, src, srcStride, srcStride*h, w, h)
+}
+
+func NV12ToI420Offset(dst []byte, src []byte, srcStride, chromaOffset int, w, h int) {
 	if w <= 0 || h <= 0 || w%2 != 0 || h%2 != 0 || srcStride < w {
 		return
 	}
 	cw, ch := w/2, h/2
-	if len(dst) < I420Size(w, h) || len(src) < NV12Size(srcStride, h) {
+	if chromaOffset < srcStride*h {
+		return
+	}
+	if len(dst) < I420Size(w, h) || len(src) < chromaOffset+srcStride*ch {
 		return
 	}
 	for y := 0; y < h; y++ {
@@ -38,9 +45,8 @@ func NV12ToI420(dst []byte, src []byte, srcStride int, w, h int) {
 	}
 	cbOff := w * h
 	crOff := w*h + cw*ch
-	chromaBase := srcStride * h
 	for y := 0; y < ch; y++ {
-		row := chromaBase + y*srcStride
+		row := chromaOffset + y*srcStride
 		drow := y * cw
 		for x := 0; x < cw; x++ {
 			dst[cbOff+drow+x] = src[row+2*x]

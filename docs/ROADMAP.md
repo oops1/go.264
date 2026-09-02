@@ -195,16 +195,40 @@ no encoder, and the proprietary branch that would has been dropped from
 the distribution. Verification waits for the P40 or V100 planned for
 that machine.
 
-**VA-API for Intel and AMD.** Reached the same way as NVENC, through
-`purego` dlopen, in its own nested module so the core `go.mod` stays
-empty. This is what makes hardware encoding mean something on a Linux
-box that is not NVIDIA.
+**VA-API for Intel and AMD** is written, in its own nested module
+loading libva at run time, but has never met a driver. The structures
+are transcribed from the installed headers with their sizes and offsets
+measured by compiling C against those same headers, and the library
+loads and marshals arguments against a live libva; what is unproven is
+everything a driver would answer.
 
-**Direct3D 11 for decoding on Windows.** The platform's only decoder
-transform is Microsoft's software one, and it is about four times slower
-than our own decoder, which is why it is kept as a test oracle and not
-registered as a backend. Real hardware decoding means handing that
-transform a Direct3D device and copying textures back.
+**Direct3D 11 for decoding on Windows** is done. Handing the decoder
+transform a Direct3D 11 device makes it bind the adapter, and the
+textures are copied back through a staging surface. Registered as
+`mediafoundation-d3d11`, but only above 640x480, because below that our
+own decoder is faster and registering it there would repeat the mistake
+described next.
+
+## A measurement that was wrong, and what it cost
+
+Worth keeping because the shape of the mistake is general.
+
+The decoder transform on Windows was recorded as four times slower than
+our own decoder, and that number decided against registering it. The
+benchmark that produced it ran only on the conformance corpus, which is
+entirely small pictures, and charged every iteration with about one and
+a third seconds of opening and closing the transform.
+
+Measured properly, in frames a second: at 176x144 our decoder does 2723
+against the transform's 643, and at 1920x1080 it does 74 against the
+transform's 321. The transform was never slow. Our decoder is very fast
+on tiny pictures, and the fixed cost of a decode cycle dominated
+everything else at that size. Bound to the adapter through Direct3D the
+same transform reaches 733 frames a second at 1080p, nine times ours.
+
+The lesson is not about video: a benchmark that measures one size, with
+setup inside the loop, produced a number that stood in the documents as
+a fact for weeks and shaped a design decision.
 
 ## What is still missing
 

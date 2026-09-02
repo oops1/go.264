@@ -33,7 +33,7 @@ Working today:
 | Rate-distortion quantisation | two to seven per cent of the bitrate at equal quality |
 | Level selection | from the picture size, the reference count, the bitrate and the buffer |
 | Slices | any count, encoded in parallel; ten times faster on twenty threads for 1.8 per cent more bits |
-| Hardware acceleration | encoding on Windows through Media Foundation and on Linux through NVENC, chosen automatically, no cgo on either path |
+| Hardware acceleration | encoding on Windows through Media Foundation, on Linux through NVENC and VA-API; decoding on Windows through Direct3D, nine times our own decoder at 1080p. No cgo on any path |
 | Bitrate targeted rate control | complete, and under a buffer model the long run rate never exceeds the request |
 | Mode decision | rate-distortion, with an early skip test that pays for itself six times over on screen content |
 | SIMD kernels | transformed differences, six-tap and bilinear interpolation, block matching, the 4x4 transform and quantisation |

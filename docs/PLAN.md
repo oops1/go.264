@@ -115,14 +115,18 @@ taken at will, and the synchronous path is kept only for the software
 transform. The public encoder picks the hardware up on its own and falls
 back without complaint when it refuses a picture size.
 
-Decoding does not, and the measurements are the reason. The only decoder
-transform this platform offers is Microsoft's software one, which takes
-about four times as long as our own decoder on the same clip. It is kept
-and tested as an oracle rather than registered as a backend: it agrees
-with our decoder on every clip in the corpus, sample for sample, which
-makes three implementations in agreement counting ffmpeg. Real hardware
-decoding here means handing that transform a direct3d device and copying
-the resulting textures back, which is separate work.
+Decoding did not, and the measurement that said so was wrong. It was
+taken on the corpus, which is entirely small pictures, and it charged
+every iteration with the cost of opening and closing the transform,
+which is about one and a third seconds. On a quarter of a common
+intermediate format our decoder really is four times faster; at 1080p
+the same software transform is four times faster than us. The
+conclusion drawn from that measurement, that the transform is slow, was
+a conclusion about the benchmark.
+
+The transform is kept and tested as an oracle regardless: it agrees with
+our decoder on every clip in the corpus, sample for sample, which makes
+three implementations in agreement counting ffmpeg.
 
 Two faults cost real time and are worth remembering. A goroutine does not
 stay on one operating system thread and the component object model

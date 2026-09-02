@@ -178,3 +178,27 @@ func (f EncoderFormat) OutputType() (*MediaType, error) {
 func (f EncoderFormat) InputType() (*MediaType, error) {
 	return f.baseType(MFVideoFormatNV12)
 }
+
+type VideoOffset struct {
+	Fract uint16
+	Value int16
+}
+
+type VideoArea struct {
+	OffsetX VideoOffset
+	OffsetY VideoOffset
+	Width   int32
+	Height  int32
+}
+
+func (m *MediaType) VideoArea(key *GUID) (VideoArea, bool) {
+	blob, err := m.Blob(key)
+	if err != nil || len(blob) < int(unsafe.Sizeof(VideoArea{})) {
+		return VideoArea{}, false
+	}
+	area := *(*VideoArea)(unsafe.Pointer(&blob[0]))
+	if area.Width <= 0 || area.Height <= 0 {
+		return VideoArea{}, false
+	}
+	return area, true
+}

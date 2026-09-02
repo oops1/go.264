@@ -623,3 +623,115 @@ func TestLongTermReferencesAreOffUnlessAsked(t *testing.T) {
 		t.Fatal("naming zero long-term slots changed the stream")
 	}
 }
+
+func TestStreamPictureSizeReadsTheSequenceParameterSet(t *testing.T) {
+	stream, _ := encodeThroughPublicAPI(t, EncoderConfig{Width: 176, Height: 144, FPSNum: 25, FPSDen: 1,
+		GOPSize: 30, QP: 28}, 2)
+	w, h := streamPictureSize(stream)
+	if w != 176 || h != 144 {
+		t.Fatalf("the stream reported %dx%d, want 176x144", w, h)
+	}
+}
+
+func TestStreamPictureSizeIsZeroWithoutASequenceParameterSet(t *testing.T) {
+	if w, h := streamPictureSize(nil); w != 0 || h != 0 {
+		t.Fatalf("an empty stream reported %dx%d", w, h)
+	}
+	if w, h := streamPictureSize([]byte{0, 0, 0, 1, 0x41, 0x80}); w != 0 || h != 0 {
+		t.Fatalf("a stream of one slice reported %dx%d", w, h)
+	}
+}
+
+func TestTheDecoderWaitsForAPictureSizeBeforeChoosingABackend(t *testing.T) {
+	d := NewDecoder()
+	defer d.Close()
+	if d.Backend() != "cpu" {
+		t.Fatalf("a decoder with no stream yet chose %q", d.Backend())
+	}
+	stream, _ := encodeThroughPublicAPI(t, EncoderConfig{Width: 176, Height: 144, FPSNum: 25, FPSDen: 1,
+		GOPSize: 30, QP: 28}, 4)
+	if _, err := d.Decode(stream); err != nil {
+		t.Fatalf("Decode: %v", err)
+	}
+	if d.Backend() != "cpu" {
+		t.Fatalf("a 176x144 stream chose %q over our own decoder", d.Backend())
+	}
+}
+
+func TestForcingSoftwareKeepsTheProcessorEvenWithASizeHint(t *testing.T) {
+	d := NewDecoderWithConfig(DecoderConfig{ForceSoftware: true, Width: 1920, Height: 1080})
+	defer d.Close()
+	if d.Backend() != "cpu" {
+		t.Fatalf("ForceSoftware with a size hint chose %q", d.Backend())
+	}
+}
+
+func TestASizeHintSettlesTheBackendAtOnce(t *testing.T) {
+	d := NewDecoderWithConfig(DecoderConfig{Width: 1920, Height: 1080})
+	defer d.Close()
+	t.Logf("a 1920x1080 hint chose %q from %v", d.Backend(), Backends())
+}
+
+func TestTheHardwareDecoderAgreesWithOursThroughThePublicAPI(t *testing.T) {
+	if testing.Short() {
+		t.Skip("encoding a 640x480 clip is not short")
+	}
+	const w, h = 640, 480
+	probe := NewDecoderWithConfig(DecoderConfig{Width: w, Height: h})
+	backend := probe.Backend()
+	probe.Close()
+	if backend == "cpu" {
+		t.Skip("no hardware decoding backend answered")
+	}
+
+	stream, _ := encodeThroughPublicAPI(t, EncoderConfig{Width: w, Height: h, FPSNum: 25, FPSDen: 1,
+		GOPSize: 8, QP: 28, CABAC: true}, 6)
+
+	hw := NewDecoderWithConfig(DecoderConfig{Width: w, Height: h})
+	defer hw.Close()
+	if hw.Backend() != backend {
+		t.Fatalf("the decoder chose %q, want %q", hw.Backend(), backend)
+	}
+	theirs, err := hw.Decode(stream)
+	if err != nil {
+		t.Fatalf("%s: Decode: %v", backend, err)
+	}
+	rest, err := hw.Flush()
+	if err != nil {
+		t.Fatalf("%s: Flush: %v", backend, err)
+	}
+	theirs = append(theirs, rest...)
+
+	sw := NewDecoderWithConfig(DecoderConfig{ForceSoftware: true})
+	defer sw.Close()
+	ours, err := sw.Decode(stream)
+	if err != nil {
+		t.Fatalf("our decoder refused the stream: %v", err)
+	}
+	more, err := sw.Flush()
+	if err != nil {
+		t.Fatal(err)
+	}
+	ours = append(ours, more...)
+
+	n := len(theirs)
+	if len(ours) < n {
+		n = len(ours)
+	}
+	if n == 0 {
+		t.Fatalf("%s produced %d frames, ours %d", backend, len(theirs), len(ours))
+	}
+	for i := 0; i < n; i++ {
+		got := theirs[i].AppendI420(nil)
+		want := ours[i].AppendI420(nil)
+		if len(got) != len(want) {
+			t.Fatalf("frame %d holds %d bytes against %d", i, len(got), len(want))
+		}
+		for j := range want {
+			if got[j] != want[j] {
+				t.Fatalf("frame %d: %s says %d at sample %d, ours says %d", i, backend, got[j], j, want[j])
+			}
+		}
+	}
+	t.Logf("%s and our decoder agree sample for sample on %d frames of %dx%d", backend, n, w, h)
+}

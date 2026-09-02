@@ -100,9 +100,9 @@ func TestEmptyRegistryReportsNothing(t *testing.T) {
 		t.Fatalf("OpenEncoder() = (%v, %q, %v), want (nil, \"\", false)", enc, name, ok)
 	}
 
-	dec, name, ok := OpenDecoder()
+	dec, name, ok := OpenDecoder(DecoderParams{Width: 1280, Height: 720})
 	if ok || dec != nil || name != "" {
-		t.Fatalf("OpenDecoder() = (%v, %q, %v), want (nil, \"\", false)", dec, name, ok)
+		t.Fatalf("OpenDecoder(DecoderParams{Width: 1280, Height: 720}) = (%v, %q, %v), want (nil, \"\", false)", dec, name, ok)
 	}
 }
 
@@ -233,8 +233,8 @@ func TestBackendNilProbeIsSkippedButOtherProbeStillWorks(t *testing.T) {
 		ProbeDecode: nil,
 	})
 
-	if _, _, ok := OpenDecoder(); ok {
-		t.Fatal("OpenDecoder() succeeded using a backend with a nil ProbeDecode")
+	if _, _, ok := OpenDecoder(DecoderParams{Width: 1280, Height: 720}); ok {
+		t.Fatal("OpenDecoder(DecoderParams{Width: 1280, Height: 720}) succeeded using a backend with a nil ProbeDecode")
 	}
 	if _, name, ok := OpenEncoder(EncoderParams{}); !ok || name != "encode-only" {
 		t.Fatalf("OpenEncoder() = (_, %q, %v), want (_, \"encode-only\", true)", name, ok)
@@ -245,14 +245,14 @@ func TestBackendNilProbeIsSkippedButOtherProbeStillWorks(t *testing.T) {
 	Register(Backend{
 		Name:        "decode-only",
 		ProbeEncode: nil,
-		ProbeDecode: func() (Decoder, bool) { return md, true },
+		ProbeDecode: func(DecoderParams) (Decoder, bool) { return md, true },
 	})
 
 	if _, _, ok := OpenEncoder(EncoderParams{}); ok {
 		t.Fatal("OpenEncoder() succeeded using a backend with a nil ProbeEncode")
 	}
-	if _, name, ok := OpenDecoder(); !ok || name != "decode-only" {
-		t.Fatalf("OpenDecoder() = (_, %q, %v), want (_, \"decode-only\", true)", name, ok)
+	if _, name, ok := OpenDecoder(DecoderParams{Width: 1280, Height: 720}); !ok || name != "decode-only" {
+		t.Fatalf("OpenDecoder(DecoderParams{Width: 1280, Height: 720}) = (_, %q, %v), want (_, \"decode-only\", true)", name, ok)
 	}
 }
 
@@ -262,12 +262,12 @@ func TestDisableAndEnableAreReversibleAndPreserveRegistry(t *testing.T) {
 	Register(Backend{
 		Name:        "a",
 		ProbeEncode: func(EncoderParams) (Encoder, bool) { return &mockEncoder{}, true },
-		ProbeDecode: func() (Decoder, bool) { return &mockDecoder{}, true },
+		ProbeDecode: func(DecoderParams) (Decoder, bool) { return &mockDecoder{}, true },
 	})
 	Register(Backend{
 		Name:        "b",
 		ProbeEncode: func(EncoderParams) (Encoder, bool) { return &mockEncoder{}, true },
-		ProbeDecode: func() (Decoder, bool) { return &mockDecoder{}, true },
+		ProbeDecode: func(DecoderParams) (Decoder, bool) { return &mockDecoder{}, true },
 	})
 
 	before := Available()
@@ -282,8 +282,8 @@ func TestDisableAndEnableAreReversibleAndPreserveRegistry(t *testing.T) {
 	if _, _, ok := OpenEncoder(EncoderParams{}); ok {
 		t.Fatal("OpenEncoder() succeeded while the registry was disabled")
 	}
-	if _, _, ok := OpenDecoder(); ok {
-		t.Fatal("OpenDecoder() succeeded while the registry was disabled")
+	if _, _, ok := OpenDecoder(DecoderParams{Width: 1280, Height: 720}); ok {
+		t.Fatal("OpenDecoder(DecoderParams{Width: 1280, Height: 720}) succeeded while the registry was disabled")
 	}
 
 	Enable()
@@ -294,8 +294,8 @@ func TestDisableAndEnableAreReversibleAndPreserveRegistry(t *testing.T) {
 	if _, name, ok := OpenEncoder(EncoderParams{}); !ok || name != "a" {
 		t.Fatalf("OpenEncoder() after Enable = (_, %q, %v), want (_, \"a\", true)", name, ok)
 	}
-	if _, name, ok := OpenDecoder(); !ok || name != "a" {
-		t.Fatalf("OpenDecoder() after Enable = (_, %q, %v), want (_, \"a\", true)", name, ok)
+	if _, name, ok := OpenDecoder(DecoderParams{Width: 1280, Height: 720}); !ok || name != "a" {
+		t.Fatalf("OpenDecoder(DecoderParams{Width: 1280, Height: 720}) after Enable = (_, %q, %v), want (_, \"a\", true)", name, ok)
 	}
 }
 
@@ -360,7 +360,7 @@ func TestRegistryIsConcurrencySafe(t *testing.T) {
 						ProbeEncode: func(EncoderParams) (Encoder, bool) {
 							return &mockEncoder{}, true
 						},
-						ProbeDecode: func() (Decoder, bool) {
+						ProbeDecode: func(DecoderParams) (Decoder, bool) {
 							return &mockDecoder{}, true
 						},
 					})
@@ -369,7 +369,7 @@ func TestRegistryIsConcurrencySafe(t *testing.T) {
 				case 2:
 					_, _, _ = OpenEncoder(EncoderParams{Width: id, Height: n})
 				case 3:
-					_, _, _ = OpenDecoder()
+					_, _, _ = OpenDecoder(DecoderParams{Width: 1280, Height: 720})
 				case 4:
 					Disable()
 				case 5:

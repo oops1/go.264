@@ -19,6 +19,11 @@ type Encoder interface {
 	Close() error
 }
 
+type DecoderParams struct {
+	Width  int
+	Height int
+}
+
 type Decoder interface {
 	Decode(annexB []byte) ([]*Picture, error)
 	Flush() ([]*Picture, error)
@@ -38,7 +43,7 @@ type Picture struct {
 type Backend struct {
 	Name        string
 	ProbeEncode func(EncoderParams) (Encoder, bool)
-	ProbeDecode func() (Decoder, bool)
+	ProbeDecode func(DecoderParams) (Decoder, bool)
 }
 
 var (
@@ -96,12 +101,12 @@ func OpenEncoder(p EncoderParams) (Encoder, string, bool) {
 	return nil, "", false
 }
 
-func OpenDecoder() (Decoder, string, bool) {
+func OpenDecoder(p DecoderParams) (Decoder, string, bool) {
 	for _, b := range snapshot() {
 		if b.ProbeDecode == nil {
 			continue
 		}
-		if dec, ok := b.ProbeDecode(); ok {
+		if dec, ok := b.ProbeDecode(p); ok {
 			return dec, b.Name, true
 		}
 	}
