@@ -210,13 +210,33 @@ transform a Direct3D device and copying textures back.
 
 Smaller than a milestone each, listed so none of it is forgotten.
 
-**Weighted prediction in the encoder.** The decoder applies explicit and
-implicit weights; the encoder never writes a weight table. The
-repository even carries a fade clip, which is exactly the case weights
-exist for, and the encoder spends bits on it for nothing.
+**Explicit weighting for bi-predictive slices.** Weighting is written for
+predictive slices, where it saves 38 to 55 per cent on a fade, and
+implicitly for bi-predictive ones. The explicit bi-predictive mode is
+written but disabled, because our reconstruction and ffmpeg's disagree on
+one to eighteen chroma samples per clip.
 
-**Temporal direct in the encoder.** Spatial only today. It needs the
-distance scaling and the colocated picture order count mapping.
+The weighting arithmetic is not the cause and is no longer a suspect: it
+is checked against both the specification's formula and the reference
+decoder's own arithmetic, which arranges the same expression differently,
+across eight and a half million combinations of weight, offset,
+denominator and sample value, and they agree everywhere.
+
+The cause is narrower than that. Every differing sample instrumented so
+far sits in a macroblock whose motion is derived rather than transmitted,
+B_Direct_16x16 or B_Skip, and ffmpeg's value is exactly what the
+single-list weighted formula produces from our own list zero prediction
+and list zero weights, to the unit, on every sample checked. So the two
+sides disagree about whether those blocks use the second list at all,
+which is a question about the derivation of direct motion and not about
+weighting. Weighting only makes the disagreement visible, by changing
+which macroblocks the mode decision leaves to the derivation.
+
+That points at a difference in the derived reference indices for a block
+whose neighbours use only one list, which the conformance corpus does not
+reach because x264 does not produce that arrangement. **If it is real it
+is a decoder fault, not merely a missing encoder feature**, and it would
+be worth more than the mode it currently blocks.
 
 **Quantisation with rate and distortion (trellis).** Not present.
 Usually five to ten per cent of the bitrate.
