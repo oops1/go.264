@@ -23,7 +23,7 @@ func usage() string {
 	return strings.Join([]string{
 		"usage:",
 		"  go264 encode -s WxH [-qp N | -b KBPS] [-gop N] [-refs N] [-fps N] [-i in.yuv] [-o out.264]",
-		"                     [-cabac] [-trellis] [-bframes N] [-slices N]",
+		"                     [-cabac] [-trellis] [-bframes N] [-slices N] [-long-term-refs N]",
 		"                     [-intra-refresh N] [-deblock 0|1|2] [-deblock-alpha N] [-deblock-beta N]",
 		"                     [-vbv-bufsize KBIT -vbv-maxrate KBPS [-cbr]]",
 		"  go264 decode [-i in.264] [-o out.yuv]",
@@ -110,6 +110,7 @@ func runEncode(args []string) error {
 	bitrate := fs.Int("b", 0, "target bitrate in kbit/s, zero for constant quantiser")
 	gop := fs.Int("gop", 30, "distance between IDR pictures")
 	refs := fs.Int("refs", 1, "number of reference frames, 1 to 16")
+	longTerm := fs.Int("long-term-refs", 0, "long-term reference slots held outside the sliding window, 0 for none")
 	fps := fs.Int("fps", 25, "frame rate")
 	in := fs.String("i", "-", "raw I420 input, - for standard input")
 	out := fs.String("o", "-", "Annex B output, - for standard output")
@@ -159,6 +160,8 @@ func runEncode(args []string) error {
 		ForceSoftware: *software,
 		IntraRefresh:  *refresh,
 		Deblocking:    go264.DeblockMode(*deblock),
+
+		LongTermReferences: *longTerm,
 
 		WeightedPrediction:  weights,
 		DirectMode:          directMode,

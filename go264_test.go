@@ -590,3 +590,36 @@ func TestTrellisIsOffUnlessAsked(t *testing.T) {
 		t.Fatal("asking for the trellis produced the same stream as not asking")
 	}
 }
+
+func TestLongTermReferencesReachTheSoftwareEncoder(t *testing.T) {
+	cfg := EncoderConfig{Width: 176, Height: 144, FPSNum: 25, FPSDen: 1, GOPSize: 30, QP: 28}
+	if cfg.needsSoftware() {
+		t.Fatal("a plain configuration already demands the software encoder, so this test proves nothing")
+	}
+	cfg.LongTermReferences = 1
+	if !cfg.needsSoftware() {
+		t.Fatal("long-term references do not force the software encoder, so a hardware backend could silently ignore them")
+	}
+
+	plain, _ := encodeThroughPublicAPI(t, EncoderConfig{Width: 176, Height: 144, FPSNum: 25, FPSDen: 1,
+		GOPSize: 30, QP: 28, CABAC: true}, 16)
+	held, _ := encodeThroughPublicAPI(t, EncoderConfig{Width: 176, Height: 144, FPSNum: 25, FPSDen: 1,
+		GOPSize: 30, QP: 28, CABAC: true, LongTermReferences: 1}, 16)
+	if string(held) == string(plain) {
+		t.Fatal("asking for a long-term reference produced the same stream as not asking")
+	}
+	if n := decodeThroughPublicAPI(t, held); n != 16 {
+		t.Fatalf("decoded %d frames from the long-term stream, want 16", n)
+	}
+	t.Logf("sliding window %d bytes, one long-term slot %d bytes", len(plain), len(held))
+}
+
+func TestLongTermReferencesAreOffUnlessAsked(t *testing.T) {
+	cfg := EncoderConfig{Width: 176, Height: 144, FPSNum: 25, FPSDen: 1, GOPSize: 30, QP: 28}
+	first, _ := encodeThroughPublicAPI(t, cfg, 8)
+	cfg.LongTermReferences = 0
+	second, _ := encodeThroughPublicAPI(t, cfg, 8)
+	if string(first) != string(second) {
+		t.Fatal("naming zero long-term slots changed the stream")
+	}
+}

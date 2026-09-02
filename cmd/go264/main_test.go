@@ -682,3 +682,34 @@ func TestTrellisFlagShrinksTheStream(t *testing.T) {
 	}
 	t.Logf("cabac: %d bytes becomes %d bytes with -trellis", len(plain), len(refined))
 }
+
+func TestEncodeAcceptsTheLongTermReferenceFlag(t *testing.T) {
+	const w, h, frames = 96, 64, 16
+	frameSize := w * h * 3 / 2
+	for _, extra := range [][]string{
+		{"-long-term-refs", "1"},
+		{"-long-term-refs", "2", "-cabac"},
+		{"-long-term-refs", "1", "-refs", "2", "-bframes", "2", "-cabac"},
+		{"-long-term-refs", "2", "-slices", "2"},
+	} {
+		src, decoded := encodeWithFlagsThenDecode(t, w, h, frames, extra...)
+		if len(decoded) != frameSize*frames {
+			t.Fatalf("%v: decoded %d frames, want %d", extra, len(decoded)/frameSize, frames)
+		}
+		for i := 0; i < frames; i++ {
+			a := src[i*frameSize : (i+1)*frameSize]
+			b := decoded[i*frameSize : (i+1)*frameSize]
+			if q := psnr(a, b); q < 30 {
+				t.Errorf("%v frame %d: PSNR only %.2f dB", extra, i, q)
+			}
+		}
+	}
+}
+
+func TestEncodeRejectsTooManyLongTermReferences(t *testing.T) {
+	err := runQuiet(t, []string{"encode", "-s", "64x48", "-refs", "8", "-long-term-refs", "12",
+		"-i", os.DevNull, "-o", filepath.Join(t.TempDir(), "out.264")})
+	if err == nil {
+		t.Fatal("a reference count above sixteen was accepted")
+	}
+}

@@ -67,6 +67,8 @@ type EncoderConfig struct {
 	RefFrames   int
 	BFrames     int
 
+	LongTermReferences int
+
 	CABAC         bool
 	MotionSearch  MotionSearch
 	ModeDecision  ModeDecision
@@ -92,7 +94,8 @@ type EncoderConfig struct {
 }
 
 func (c EncoderConfig) needsSoftware() bool {
-	return c.Trellis || c.WeightedPrediction != WeightedPredictionOff ||
+	return c.Trellis || c.LongTermReferences > 0 ||
+		c.WeightedPrediction != WeightedPredictionOff ||
 		c.DirectMode != DirectSpatial || c.RepeatParameterSets ||
 		c.IntraRefresh > 0 || c.Deblocking != DeblockingOn ||
 		c.DeblockAlphaOffset != 0 || c.DeblockBetaOffset != 0 ||
@@ -196,6 +199,8 @@ func NewEncoder(cfg EncoderConfig) (*Encoder, error) {
 		Transform8x8:  cfg.Transform8x8,
 		ScalingMatrix: cfg.ScalingMatrix,
 		Trellis:       cfg.Trellis,
+
+		LongTermReferences: cfg.LongTermReferences,
 
 		WeightedPrediction: cfg.WeightedPrediction,
 		DirectMode:         cfg.DirectMode,

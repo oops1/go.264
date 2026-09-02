@@ -32,6 +32,8 @@ type Config struct {
 	RefFrames   int
 	BFrames     int
 
+	LongTermReferences int
+
 	CABAC         bool
 	MotionSearch  MotionSearch
 	ModeDecision  ModeDecision
@@ -102,6 +104,13 @@ func (c *Config) validate() error {
 	if c.BFrames > 0 && c.RefFrames < 2 {
 		c.RefFrames = 2
 	}
+	if c.LongTermReferences < 0 {
+		return fmt.Errorf("%w: LongTermReferences %d is negative", ErrConfig, c.LongTermReferences)
+	}
+	if c.RefFrames+c.LongTermReferences > 16 {
+		return fmt.Errorf("%w: RefFrames %d plus LongTermReferences %d exceeds 16",
+			ErrConfig, c.RefFrames, c.LongTermReferences)
+	}
 	if c.IntraRefresh < 0 {
 		return fmt.Errorf("%w: IntraRefresh %d is negative", ErrConfig, c.IntraRefresh)
 	}
@@ -169,6 +178,10 @@ type Encoder struct {
 	refL1     []*frame.Picture
 	colocated *frame.Picture
 
+	ltSlots   []longTermSlot
+	ltMaxSent bool
+	mark      refMarking
+
 	grid []mbInfo
 
 	rc         *rateControl
@@ -208,8 +221,13 @@ func New(cfg Config) (*Encoder, error) {
 	e := &Encoder{cfg: cfg}
 	e.widthMBs = (cfg.Width + 15) / 16
 	e.heightMBs = (cfg.Height + 15) / 16
+	if cfg.LongTermReferences > 0 {
+		e.ltSlots = make([]longTermSlot, cfg.LongTermReferences)
+	}
 	e.rc = newRateControl(cfg)
-	e.buildParameterSets()
+	if err := e.buildParameterSets(); err != nil {
+		return nil, err
+	}
 	e.buildScalingTables()
 	e.src = frame.NewPicture(e.widthMBs, e.heightMBs)
 	e.rec = frame.NewPicture(e.widthMBs, e.heightMBs)
@@ -227,43 +245,86 @@ func (e *Encoder) PPS() *syntax.PPS { return e.pps }
 
 var levelLimits = []struct {
 	level     uint8
-	maxMBs    int
-	maxMBS    int
+	maxMBPS   int
+	maxFS     int
 	maxDpbMbs int
+	maxBR     int
+	maxCPB    int
 }{
-	{10, 99, 1485, 396},
-	{11, 396, 3000, 900},
-	{12, 396, 6000, 2376},
-	{13, 396, 11880, 2376},
-	{20, 396, 11880, 2376},
-	{21, 792, 19800, 4752},
-	{22, 1620, 20250, 8100},
-	{30, 1620, 40500, 8100},
-	{31, 3600, 108000, 18000},
-	{32, 5120, 216000, 20480},
-	{40, 8192, 245760, 32768},
-	{42, 8704, 522240, 34816},
-	{50, 22080, 589824, 110400},
-	{51, 36864, 983040, 184320},
-	{52, 36864, 2073600, 184320},
+	{10, 1485, 99, 396, 64, 175},
+	{11, 3000, 396, 900, 192, 500},
+	{12, 6000, 396, 2376, 384, 1000},
+	{13, 11880, 396, 2376, 768, 2000},
+	{20, 11880, 396, 2376, 2000, 2000},
+	{21, 19800, 792, 4752, 4000, 4000},
+	{22, 20250, 1620, 8100, 4000, 4000},
+	{30, 40500, 1620, 8100, 10000, 10000},
+	{31, 108000, 3600, 18000, 14000, 14000},
+	{32, 216000, 5120, 20480, 20000, 20000},
+	{40, 245760, 8192, 32768, 20000, 25000},
+	{41, 245760, 8192, 32768, 50000, 62500},
+	{42, 522240, 8704, 34816, 50000, 62500},
+	{50, 589824, 22080, 110400, 135000, 135000},
+	{51, 983040, 36864, 184320, 240000, 240000},
+	{52, 2073600, 36864, 184320, 240000, 240000},
+	{60, 4177920, 139264, 696320, 240000, 240000},
+	{61, 8355840, 139264, 696320, 480000, 480000},
+	{62, 16711680, 139264, 696320, 800000, 800000},
 }
 
-func (e *Encoder) pickLevel() uint8 {
+func cpbBrNalFactor(profile uint8) int64 {
+	if profile == syntax.ProfileHigh {
+		return 1500
+	}
+	return 1200
+}
+
+func (e *Encoder) peakBitrateKbps() int {
+	peak := e.cfg.BitrateKbps
+	if e.cfg.VBVMaxrateKbps > peak {
+		peak = e.cfg.VBVMaxrateKbps
+	}
+	return peak
+}
+
+func (e *Encoder) pickLevel(profile uint8) (uint8, error) {
 	frameMBs := e.widthMBs * e.heightMBs
 	rate := frameMBs * e.cfg.FPSNum / e.cfg.FPSDen
+	factor := cpbBrNalFactor(profile)
+	bitrate := int64(e.peakBitrateKbps()) * 1000
+	buffer := int64(e.cfg.VBVBufferKbits) * 1000
 	for _, l := range levelLimits {
+		if frameMBs > l.maxFS || rate > l.maxMBPS {
+			continue
+		}
+		if e.widthMBs*e.widthMBs > 8*l.maxFS || e.heightMBs*e.heightMBs > 8*l.maxFS {
+			continue
+		}
 		dpbFrames := l.maxDpbMbs / frameMBs
 		if dpbFrames > 16 {
 			dpbFrames = 16
 		}
-		if frameMBs <= l.maxMBs && rate <= l.maxMBS && e.cfg.RefFrames <= dpbFrames {
-			return l.level
+		if e.refCap() > dpbFrames {
+			continue
 		}
+		if bitrate > int64(l.maxBR)*factor {
+			continue
+		}
+		if buffer > int64(l.maxCPB)*factor {
+			continue
+		}
+		return l.level, nil
 	}
-	return 52
+	top := levelLimits[len(levelLimits)-1]
+	return 0, fmt.Errorf("%w: no level carries %dx%d at %d/%d frames per second, %d reference frames, "+
+		"%d kbit/s and a %d kbit buffer; the highest level allows %d macroblocks, %d macroblocks per second, "+
+		"%d kbit/s and %d kbit",
+		ErrConfig, e.cfg.Width, e.cfg.Height, e.cfg.FPSNum, e.cfg.FPSDen, e.refCap(),
+		e.peakBitrateKbps(), e.cfg.VBVBufferKbits,
+		top.maxFS, top.maxMBPS, int64(top.maxBR)*factor/1000, int64(top.maxCPB)*factor/1000)
 }
 
-func (e *Encoder) buildParameterSets() {
+func (e *Encoder) buildParameterSets() error {
 	profile := uint8(syntax.ProfileBaseline)
 	constraints := uint8(0xC0)
 	if e.cfg.CABAC || e.cfg.BFrames > 0 || e.cfg.WeightedPrediction != WeightedPredictionOff {
@@ -274,15 +335,19 @@ func (e *Encoder) buildParameterSets() {
 		profile = syntax.ProfileHigh
 		constraints = 0
 	}
+	level, err := e.pickLevel(profile)
+	if err != nil {
+		return err
+	}
 	sps := &syntax.SPS{
 		ProfileIDC:                profile,
 		ConstraintSet:             constraints,
-		LevelIDC:                  e.pickLevel(),
+		LevelIDC:                  level,
 		ID:                        0,
 		ChromaFormatIDC:           syntax.Chroma420,
 		Log2MaxFrameNumMinus4:     4,
 		PicOrderCntType:           2,
-		MaxNumRefFrames:           uint32(e.cfg.RefFrames),
+		MaxNumRefFrames:           uint32(e.refCap()),
 		PicWidthInMbsMinus1:       uint32(e.widthMBs - 1),
 		PicHeightInMapUnitsMinus1: uint32(e.heightMBs - 1),
 		FrameMbsOnly:              true,
@@ -309,7 +374,7 @@ func (e *Encoder) buildParameterSets() {
 	pps := &syntax.PPS{
 		ID:                             0,
 		SPSID:                          0,
-		NumRefIdxL0DefaultActiveMinus1: uint32(e.cfg.RefFrames - 1),
+		NumRefIdxL0DefaultActiveMinus1: uint32(e.refCap() - 1),
 		NumRefIdxL1DefaultActiveMinus1: 0,
 		PicInitQPMinus26:               int32(e.cfg.QP - 26),
 		DeblockingFilterControlPresent: true,
@@ -349,6 +414,7 @@ func (e *Encoder) buildParameterSets() {
 	}
 	e.sps = sps
 	e.pps = pps
+	return nil
 }
 
 func (e *Encoder) parameterSetBytes() ([]byte, error) {
@@ -527,6 +593,7 @@ func (e *Encoder) setReferenceLists(p picture) {
 	}
 	if !p.sliceType.IsB() {
 		e.refL0 = append(e.refL0, e.refs[:e.activeRefs()]...)
+		e.refL0 = e.appendLongTerm(e.refL0)
 		return
 	}
 	var before, after []*frame.Picture
@@ -539,19 +606,41 @@ func (e *Encoder) setReferenceLists(p picture) {
 	}
 	sort.SliceStable(before, func(i, j int) bool { return before[i].POC > before[j].POC })
 	sort.SliceStable(after, func(i, j int) bool { return after[i].POC < after[j].POC })
-	if len(before) != 0 {
-		e.refL0 = append(e.refL0, before[0])
-	} else if len(after) != 0 {
-		e.refL0 = append(e.refL0, after[0])
+
+	list0 := make([]*frame.Picture, 0, len(e.refs)+len(e.ltSlots))
+	list0 = append(list0, before...)
+	list0 = append(list0, after...)
+	list0 = e.appendLongTerm(list0)
+
+	list1 := make([]*frame.Picture, 0, len(e.refs)+len(e.ltSlots))
+	list1 = append(list1, after...)
+	list1 = append(list1, before...)
+	list1 = e.appendLongTerm(list1)
+
+	if len(list1) > 1 && samePictures(list0, list1) {
+		list1[0], list1[1] = list1[1], list1[0]
 	}
-	if len(after) != 0 {
-		e.refL1 = append(e.refL1, after[0])
-	} else if len(before) != 0 {
-		e.refL1 = append(e.refL1, before[0])
+	if len(list0) != 0 {
+		e.refL0 = append(e.refL0, list0[0])
+	}
+	if len(list1) != 0 {
+		e.refL1 = append(e.refL1, list1[0])
 	}
 	if len(e.refL1) != 0 {
 		e.colocated = e.refL1[0]
 	}
+}
+
+func samePictures(a, b []*frame.Picture) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }
 
 func (e *Encoder) motionField() *frame.Motion {
@@ -590,6 +679,7 @@ func (e *Encoder) encodePicture(p picture) ([]byte, error) {
 		e.frameNum = 0
 		e.free = append(e.free, e.refs...)
 		e.refs = e.refs[:0]
+		e.resetLongTerm()
 	}
 	e.refresh = e.planRefresh(p.idr)
 	if e.refresh.sweep {
@@ -613,6 +703,7 @@ func (e *Encoder) encodePicture(p picture) ([]byte, error) {
 		hints = nil
 	}
 	e.setReferenceLists(p)
+	e.mark = e.planMarking(p, hints)
 
 	nalType := nal.TypeSliceNonIDR
 	if p.idr {
@@ -749,13 +840,17 @@ func (e *Encoder) sliceHeader(p sliceJob) *syntax.SliceHeader {
 	if e.sps.PicOrderCntType == 0 {
 		hdr.PicOrderCntLsb = uint32(p.poc) & (e.sps.MaxPicOrderCntLsb() - 1)
 	}
+	if !p.idr && p.refIDC != 0 && e.mark.adaptive {
+		hdr.AdaptiveRefPicMarking = true
+		hdr.MMCOs = e.mark.mmcos
+	}
 	switch {
 	case p.sliceType.IsB():
 		hdr.DirectSpatialMvPred = e.cfg.DirectMode != DirectTemporal
 		hdr.NumRefIdxActiveOverride = true
 		hdr.NumRefIdxL0ActiveMinus1 = uint32(p.active - 1)
 		hdr.NumRefIdxL1ActiveMinus1 = uint32(p.activeL1 - 1)
-	case !p.idr && p.active != e.cfg.RefFrames:
+	case !p.idr && p.active != e.refCap():
 		hdr.NumRefIdxActiveOverride = true
 		hdr.NumRefIdxL0ActiveMinus1 = uint32(p.active - 1)
 	}
@@ -864,8 +959,9 @@ func (e *Encoder) loadSourceInto(dst *frame.Picture, yuv []byte) {
 }
 
 func (e *Encoder) rotateReferences() {
+	e.applyMarking()
 	e.refs = append([]*frame.Picture{e.rec}, e.refs...)
-	for len(e.refs) > e.cfg.RefFrames {
+	for len(e.refs)+e.longTermCount() > e.refCap() {
 		e.free = append(e.free, e.refs[len(e.refs)-1])
 		e.refs = e.refs[:len(e.refs)-1]
 	}
@@ -878,10 +974,14 @@ func (e *Encoder) rotateReferences() {
 }
 
 func (e *Encoder) activeRefs() int {
-	if len(e.refs) < e.cfg.RefFrames {
+	limit := e.cfg.RefFrames
+	if len(e.ltSlots) != 0 {
+		limit = e.refCap() - e.longTermCount()
+	}
+	if len(e.refs) < limit {
 		return len(e.refs)
 	}
-	return e.cfg.RefFrames
+	return limit
 }
 
 func (e *Encoder) width() int { return e.widthMBs * 16 }

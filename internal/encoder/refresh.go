@@ -61,6 +61,11 @@ func (e *Encoder) openSweep() {
 	for _, r := range e.refs {
 		e.refreshEnd[r] = 0
 	}
+	for _, s := range e.ltSlots {
+		if s.pic != nil {
+			e.refreshEnd[s.pic] = 0
+		}
+	}
 }
 
 func (e *Encoder) refreshSettled(ref *frame.Picture) bool {
