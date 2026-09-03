@@ -11,6 +11,9 @@ type Encoder struct {
 	firstBitFlag bool
 	bitsOutstand int
 	ctx          [NumContexts]context
+
+	estBuf   *bits.Writer
+	estTrial *Encoder
 }
 
 type State struct {
@@ -146,12 +149,20 @@ func (e *Encoder) Finish() {
 }
 
 func (e *Encoder) EstimateBits(fn func(*Encoder)) int {
-	scratch := bits.NewWriterSize(64)
-	trial := Encoder{w: scratch}
+	if e.estBuf == nil {
+		e.estBuf = bits.NewWriterSize(64)
+	} else {
+		e.estBuf.Reset()
+	}
+	if e.estTrial == nil {
+		e.estTrial = &Encoder{}
+	}
+	trial := e.estTrial
+	trial.w = e.estBuf
 	trial.Restore(e.Snapshot())
 	beforeOutstand := trial.bitsOutstand
-	fn(&trial)
-	return scratch.BitsWritten() + (trial.bitsOutstand - beforeOutstand)
+	fn(trial)
+	return e.estBuf.BitsWritten() + (trial.bitsOutstand - beforeOutstand)
 }
 
 func boolToUint32(b bool) uint32 {

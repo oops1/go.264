@@ -48,11 +48,17 @@ func bitsForUE(v uint32) int {
 	return n
 }
 
-func subPartitionsOf(shape subMbShape, ox, oy int) []partition {
+type subPartitions struct {
+	items [4]partition
+	n     int
+}
+
+func subPartitionsOf(shape subMbShape, ox, oy int) subPartitions {
 	cols := 8 / shape.w
-	out := make([]partition, shape.numParts)
+	var out subPartitions
+	out.n = shape.numParts
 	for p := 0; p < shape.numParts; p++ {
-		out[p] = partition{
+		out.items[p] = partition{
 			x: ox + p%cols*shape.w,
 			y: oy + p/cols*shape.h,
 			w: shape.w,
@@ -77,10 +83,11 @@ func (s *mbEncoder) searchSubMB(ox, oy, lambda int) subResult {
 		}
 		for subType, shape := range subMbShapes {
 			s.restoreMotion(entry)
-			parts := subPartitionsOf(shape, ox, oy)
-			results := make([]partResult, len(parts))
+			sp := subPartitionsOf(shape, ox, oy)
+			results := make([]partResult, sp.n)
 			cost := lambda*bitsForUE(uint32(subType)) + refCost
-			for i, p := range parts {
+			for i := 0; i < sp.n; i++ {
+				p := sp.items[i]
 				r := s.searchPartitionRef(0, p, i, mbTypeP8x8, lambda, int8(refIdx))
 				s.storePartitionMotion(p, r.mv, r.ref)
 				results[i] = r
@@ -94,8 +101,9 @@ func (s *mbEncoder) searchSubMB(ox, oy, lambda int) subResult {
 	}
 
 	s.restoreMotion(entry)
-	for i, p := range subPartitionsOf(subMbShapes[best.subType], ox, oy) {
-		s.storePartitionMotion(p, best.parts[i].mv, best.ref)
+	sp := subPartitionsOf(subMbShapes[best.subType], ox, oy)
+	for i := 0; i < sp.n; i++ {
+		s.storePartitionMotion(sp.items[i], best.parts[i].mv, best.ref)
 	}
 	return best
 }
@@ -119,7 +127,9 @@ func (s *mbEncoder) applySubMotion(subs []subResult) {
 	s.clearMotion()
 	for i, sub := range subs {
 		ox, oy := i%2*8, i/2*8
-		for j, p := range subPartitionsOf(subMbShapes[sub.subType], ox, oy) {
+		sp := subPartitionsOf(subMbShapes[sub.subType], ox, oy)
+		for j := 0; j < sp.n; j++ {
+			p := sp.items[j]
 			s.storePartitionMotion(p, sub.parts[j].mv, sub.ref)
 			s.storeMVD(p.x, p.y, p.w, p.h, sub.parts[j].mvd)
 		}
@@ -129,8 +139,9 @@ func (s *mbEncoder) applySubMotion(subs []subResult) {
 func (s *mbEncoder) compensateSubMBs(subs []subResult) {
 	for i, sub := range subs {
 		ox, oy := i%2*8, i/2*8
-		for j, p := range subPartitionsOf(subMbShapes[sub.subType], ox, oy) {
-			s.compensatePartition(p, sub.parts[j].mv, sub.ref)
+		sp := subPartitionsOf(subMbShapes[sub.subType], ox, oy)
+		for j := 0; j < sp.n; j++ {
+			s.compensatePartition(sp.items[j], sub.parts[j].mv, sub.ref)
 		}
 	}
 }

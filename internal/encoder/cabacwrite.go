@@ -160,7 +160,9 @@ func (s *mbEncoder) writeInterMBCABAC() {
 		}
 		for i, sub := range s.subs {
 			ox, oy := i%2*8, i/2*8
-			for j, p := range subPartitionsOf(subMbShapes[sub.subType], ox, oy) {
+			sp := subPartitionsOf(subMbShapes[sub.subType], ox, oy)
+			for j := 0; j < sp.n; j++ {
+				p := sp.items[j]
 				s.writeMVDCABAC(p.x, p.y, sub.parts[j].mvd)
 			}
 		}

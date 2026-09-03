@@ -68,7 +68,7 @@ type subShapeResult struct {
 
 func (s *mbEncoder) searchSubShape(list, shape, idx, lambda int) subShapeResult {
 	ox, oy := idx%2*8, idx/2*8
-	parts := subPartitionsOf(subMbShapes[shape], ox, oy)
+	sp := subPartitionsOf(subMbShapes[shape], ox, oy)
 	entry := s.snapshotBMotion()
 	best := subShapeResult{ref: -1}
 	n := s.numRefsFor(list)
@@ -78,8 +78,9 @@ func (s *mbEncoder) searchSubShape(list, shape, idx, lambda int) subShapeResult 
 		}
 		s.restoreBMotion(entry, ox, oy, 8, 8)
 		cost := s.refIdxBits(list, int8(refIdx), lambda)
-		results := make([]partResult, len(parts))
-		for i, p := range parts {
+		results := make([]partResult, sp.n)
+		for i := 0; i < sp.n; i++ {
+			p := sp.items[i]
 			r := s.searchPartitionRef(list, p, i, mbTypeB8x8, lambda, int8(refIdx))
 			s.storeMotionIn(list, p.x, p.y, p.w, p.h, r.mv, int8(refIdx))
 			results[i] = r
@@ -92,8 +93,9 @@ func (s *mbEncoder) searchSubShape(list, shape, idx, lambda int) subShapeResult 
 	if best.ref < 0 {
 		s.restoreBMotion(entry, ox, oy, 8, 8)
 		cost := 0
-		results := make([]partResult, len(parts))
-		for i, p := range parts {
+		results := make([]partResult, sp.n)
+		for i := 0; i < sp.n; i++ {
+			p := sp.items[i]
 			r := s.searchPartitionRef(list, p, i, mbTypeB8x8, lambda, 0)
 			s.storeMotionIn(list, p.x, p.y, p.w, p.h, r.mv, 0)
 			results[i] = r
@@ -102,7 +104,8 @@ func (s *mbEncoder) searchSubShape(list, shape, idx, lambda int) subShapeResult 
 		best = subShapeResult{ref: 0, parts: results, cost: cost}
 	}
 	s.restoreBMotion(entry, ox, oy, 8, 8)
-	for i, p := range parts {
+	for i := 0; i < sp.n; i++ {
+		p := sp.items[i]
 		s.storeMotionIn(list, p.x, p.y, p.w, p.h, best.parts[i].mv, best.ref)
 	}
 	return best
@@ -120,14 +123,14 @@ func (s *mbEncoder) searchBSubMB(idx, lambda int, allowDirect bool, direct bMoti
 		for list := 0; list < 2; list++ {
 			uni[list] = s.searchSubShape(list, shape, idx, lambda)
 		}
-		parts := subPartitionsOf(subMbShapes[shape], ox, oy)
+		sp := subPartitionsOf(subMbShapes[shape], ox, oy)
 		for _, pred := range [3]uint8{predL0, predL1, predBi} {
 			t := bSubTypeOf[shape][pred]
 			if t < 0 {
 				continue
 			}
 			cost := lambda * bitsForUE(uint32(t))
-			results := make([]bPartResult, len(parts))
+			results := make([]bPartResult, sp.n)
 			switch pred {
 			case predL0:
 				cost += uni[0].cost
@@ -136,7 +139,8 @@ func (s *mbEncoder) searchBSubMB(idx, lambda int, allowDirect bool, direct bMoti
 			default:
 				cost += s.refIdxBits(0, uni[0].ref, lambda) + s.refIdxBits(1, uni[1].ref, lambda)
 			}
-			for i, p := range parts {
+			for i := 0; i < sp.n; i++ {
+				p := sp.items[i]
 				r := bPartResult{pred: pred, ref: [2]int8{-1, -1}}
 				switch pred {
 				case predL0:
@@ -169,7 +173,9 @@ func (s *mbEncoder) searchBSubMB(idx, lambda int, allowDirect bool, direct bMoti
 			s.storeMotionIn(list, ox, oy, 8, 8, [2]int16{}, -1)
 			continue
 		}
-		for i, p := range subPartitionsOf(subMbShapes[subShapeOf(best.subType)], ox, oy) {
+		sp := subPartitionsOf(subMbShapes[subShapeOf(best.subType)], ox, oy)
+		for i := 0; i < sp.n; i++ {
+			p := sp.items[i]
 			s.storeMotionIn(list, p.x, p.y, p.w, p.h, best.parts[i].mv[list], best.parts[i].ref[list])
 			s.storeMVDIn(list, p.x, p.y, p.w, p.h, best.parts[i].mvd[list])
 		}
@@ -252,7 +258,9 @@ func (s *mbEncoder) applyB8x8(c bCandidate) {
 				s.storeMotionIn(list, ox, oy, 8, 8, [2]int16{}, -1)
 				continue
 			}
-			for j, p := range subPartitionsOf(subMbShapes[subShapeOf(sub.subType)], ox, oy) {
+			sp := subPartitionsOf(subMbShapes[subShapeOf(sub.subType)], ox, oy)
+			for j := 0; j < sp.n; j++ {
+				p := sp.items[j]
 				s.storeMVDIn(list, p.x, p.y, p.w, p.h, sub.parts[j].mvd[list])
 				s.storeMotionIn(list, p.x, p.y, p.w, p.h, sub.parts[j].mv[list], sub.parts[j].ref[list])
 			}
@@ -277,7 +285,8 @@ func (s *mbEncoder) writeB8x8() {
 			if sub.subType == 0 || sub.pred&(1<<uint(list)) == 0 {
 				continue
 			}
-			for j := range subPartitionsOf(subMbShapes[subShapeOf(sub.subType)], i%2*8, i/2*8) {
+			sp := subPartitionsOf(subMbShapes[subShapeOf(sub.subType)], i%2*8, i/2*8)
+			for j := 0; j < sp.n; j++ {
 				s.w.WriteSE(int32(sub.parts[j].mvd[list][0]))
 				s.w.WriteSE(int32(sub.parts[j].mvd[list][1]))
 			}
@@ -302,7 +311,9 @@ func (s *mbEncoder) writeB8x8CABAC() {
 			if sub.subType == 0 || sub.pred&(1<<uint(list)) == 0 {
 				continue
 			}
-			for j, p := range subPartitionsOf(subMbShapes[subShapeOf(sub.subType)], i%2*8, i/2*8) {
+			sp := subPartitionsOf(subMbShapes[subShapeOf(sub.subType)], i%2*8, i/2*8)
+			for j := 0; j < sp.n; j++ {
+				p := sp.items[j]
 				s.writeMVDCABACIn(list, p.x, p.y, sub.parts[j].mvd[list])
 			}
 		}

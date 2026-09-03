@@ -67,6 +67,7 @@ type mbEncoder struct {
 	trellis bool
 	tb      trellisBlock
 	tw      *bits.Writer
+	trialW  *bits.Writer
 
 	refresh           refreshPlan
 	refreshNoTopRight bool

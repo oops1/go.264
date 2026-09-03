@@ -43,7 +43,12 @@ func (s *mbEncoder) trialBits(write func() error) (int, error) {
 	savedPrevQP := s.prevQP
 	savedQP := s.qpY
 	savedMBQP := s.cur.QPY
-	scratch := bits.NewWriterSize(512)
+	if s.trialW == nil {
+		s.trialW = bits.NewWriterSize(512)
+	} else {
+		s.trialW.Reset()
+	}
+	scratch := s.trialW
 	s.w = scratch
 	err := write()
 	s.w = saved
