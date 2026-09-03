@@ -386,20 +386,68 @@ NAL unit, so that the fuzzer spends its time on decoding logic rather than
 on memset. The level check and the allocation bounds are covered by
 `internal/decoder/hardening_test.go` instead.
 
-Checked-in regression inputs live under each package's
-`testdata/fuzz/<Target>/`.
+### What was run, and what came out
+
+Two findings came out of fuzzing: the `se(v)` floor, from `FuzzParseSPS`
+after 4.6 seconds, and the quadratic Annex B scanner, which surfaced as the
+decoder fuzzer stalling at zero executions per second rather than as a
+failure. Everything else in this document came from reading the code and
+was confirmed by measurement. No target has produced a panic.
+
+Four targets cover code that changed after the first sweep — the level
+resolution in `ParseSPS`, the variable length table in `cavlc`, and the
+buffer reuse in the decoder — so they were run again against the code as it
+now stands, each with the machine to itself:
+
+| Target | Time | Executions |
+| --- | ---: | ---: |
+| `syntax.FuzzParseSPS` | 10 min | 686,716,108 |
+| `cavlc.FuzzReadBlock` | 6 min 40 s | 620,210,319 |
+| `cavlc.FuzzWriteReadBlock` | 5 min | 229,026,831 |
+| `decoder.FuzzDecoderNeverPanics` | 25 min 6 s | 99,427,608 |
+
+The rest cover code that has not moved since the first sweep, which ran
+several targets at once and so divided twenty cores between them. Their
+counts are an order of magnitude lower for that reason, not because those
+targets are slower:
+
+| Target | Time | Executions |
+| --- | ---: | ---: |
+| `syntax.FuzzParseSliceHeader` | 10 min | 106,138,255 |
+| `syntax.FuzzParsePPS` | 10 min | 92,651,495 |
+| `syntax.FuzzParseSEI` | 10 min | 68,101,891 |
+| `bits.FuzzReaderNeverPanics` | 6 min 40 s | 82,675,233 |
+| `nal.FuzzSplitAVCC` | 5 min | 57,398,765 |
+| `bits.FuzzWriteReadSE` | 3 min 20 s | 50,527,837 |
+| `bits.FuzzWriteReadUE` | 3 min 20 s | 48,409,427 |
+| `nal.FuzzEscapeUnescapeRoundTrip` | 5 min | 42,454,607 |
+| `nal.FuzzScannerNeverPanics` | 6 min 40 s | 26,449,643 |
+| `nal.FuzzSplitAnnexB` | 5 min | 26,022,377 |
+
+The decoder target is three orders of magnitude slower per execution than
+the parser targets, because each execution decodes video. Its corpus
+reached 1171 entries.
+
+341 coverage-expanding inputs are checked in under each package's
+`testdata/fuzz/<Target>/`, capped at 8 KiB each and 40 per target, so
+`go test` replays them without measurably slowing down. The two minimised
+failing inputs — `syntax/FuzzParseSPS/686a1fc0ed7a6c9f` for the `se(v)`
+floor and the pre-existing `decoder/FuzzDecoderNeverPanics/fbe69a9491c2cbce`
+— sit alongside them.
 
 ## Regression tests
 
 - `internal/decoder/hardening_test.go` — the level and caller ceilings, the
   reorder clamp, the reference buffer cap under adaptive and long-term
-  marking, the CABAC end-of-data check, the scanner cost and the scanner's
-  buffer release.
+  marking, the CABAC end-of-data check, the scanner cost, the scanner's
+  buffer release, a mid-stream dimension change, and a slice continuing
+  into a picture whose sequence parameter set was replaced underneath it.
 - `internal/level/check_test.go` — `CheckSPS` at each level's own maximum
-  and one macroblock beyond it, level 1b resolution, and the buffer size
-  derivation.
-- `internal/syntax/hardening_test.go` — the `se(v)` floor, the reorder
-  clamp, the level 1b profile rule, and the prediction weight ranges.
+  and one macroblock beyond it, level 1b resolution including the High
+  profile rule, and the buffer size derivation.
+- `internal/syntax/hardening_test.go` — the `se(v)` floor, the frame
+  cropping bound including the offsets that used to wrap, the reorder
+  clamp, the unknown-level buffer size, and the prediction weight ranges.
 - `internal/nal/bounds_test.go` — scanner cost, buffer release, and that
   the rewritten scanner splits identically to `SplitAnnexB` at every chunk
   size.

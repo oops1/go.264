@@ -304,6 +304,60 @@ unconfigured state directly, so they fail with or without an adapter.
 The same three runs also hit the forty minute test timeout, which was not
 a fault: the encoder suite genuinely grew past it. Raised to ninety.
 
+## What the allocation profile said
+
+The performance pass started with a profile rather than a guess, and the
+guess would have been wrong. In the decoder, the pictures themselves were
+not the cost: the bookkeeping around them allocated four times as much.
+Two structures were rebuilt where reuse is safe — the motion segment list,
+which was a fresh slice for every inter macroblock, and the macroblock
+grid, which was fresh for every picture although nothing retains it. Ten
+frames of `base_ip_qp26` went from 3.19 ms, 2503 KB and 1096 objects to
+2.41 ms, 1282 KB and 279. At 1080p the whole decode dropped from 86,398
+allocations to 363.
+
+Then fifteen and a half per cent of the decode turned out to be
+`runtime.mapaccess2_fast32`. The CAVLC reader walked the bitstream a bit
+at a time and consulted a map after each one, so a sixteen bit code cost
+sixteen hash lookups. The same keys in a flat slice, 169 KB for all thirty
+tables, took 1080p decoding from 26.1 to 29.3 frames per second.
+
+The encoder had one allocation worth three and a half gigabytes per frame.
+With CABAC, B pictures, the eight by eight transform and trellis together,
+every trellis trial built its own bit estimate writer and its own trial
+arithmetic coder. Both are now kept and reset, which is sound because
+`Restore` already overwrites every field that affects encoding. That frame
+now allocates eight megabytes and encodes sixteen per cent faster. The
+encoder and cabac packages were run for twenty five minutes under the race
+detector, parallel slices included, to establish that nothing shares the
+buffers being reused.
+
+The next item is named rather than done: deblocking is about a third of
+decode time and has no accelerated kernel at all, while the transforms,
+motion compensation and the cost metrics all do. It is a good candidate,
+because the filter is a pure function of eight samples and four
+parameters, so the scalar version is an exhaustive oracle for a vector
+one. Intra prediction has no kernel either, but it is under three per cent
+of a decode and does not pay for one there.
+
+## Hostile input at the public boundary
+
+The decoder hardening bounded what the decoder accepts, but the public API
+reached past it. `Decoder.Decode` reads the picture size out of the first
+sequence parameter set it sees and hands it to the hardware backend before
+any check has run, so thirty bytes declaring 1024 by 1024 macroblocks asked
+the driver for a 16384 by 16384 decoder. The size now passes the table A-1
+ceiling before a backend is settled. `DecoderConfig` carries `Limits` so a
+caller taking streams from somewhere it does not control can set the
+ceilings the decoder already understands, and `ErrOverLimit` is exported so
+that refusal can be told from any other.
+
+On the VA-API side, three counts and a size come back from the driver into
+buffers this package allocated, and each was used to slice or read without
+being checked against the capacity it was given. A coded segment larger
+than its buffer made `unsafe.Slice` read past the allocation, which is not
+a panic but a read of whatever follows.
+
 ## A correction to the 1.5.0 notes
 
 Two things that release says are wrong, and the record should say so
