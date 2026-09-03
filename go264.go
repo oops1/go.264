@@ -8,11 +8,14 @@ import (
 	"github.com/oops1/go.264/internal/encoder"
 	"github.com/oops1/go.264/internal/frame"
 	"github.com/oops1/go.264/internal/hwaccel"
+	"github.com/oops1/go.264/internal/level"
 	"github.com/oops1/go.264/internal/nal"
 	"github.com/oops1/go.264/internal/syntax"
 )
 
 var ErrClosed = errors.New("go264: use of a closed codec")
+
+var ErrOverLimit = decoder.ErrOverLimit
 
 type Frame struct {
 	Y       []byte
@@ -297,17 +300,22 @@ type Decoder struct {
 	cfg     DecoderConfig
 }
 
+type DecoderLimits = decoder.Limits
+
 type DecoderConfig struct {
 	ForceSoftware bool
 
 	Width  int
 	Height int
+
+	Limits DecoderLimits
 }
 
 func NewDecoder() *Decoder { return NewDecoderWithConfig(DecoderConfig{}) }
 
 func NewDecoderWithConfig(cfg DecoderConfig) *Decoder {
 	d := &Decoder{backend: "cpu", cfg: cfg, cpu: decoder.New()}
+	d.cpu.SetLimits(cfg.Limits)
 	if cfg.ForceSoftware {
 		d.settled = true
 		return d
@@ -337,7 +345,7 @@ func streamPictureSize(annexB []byte) (int, int) {
 			continue
 		}
 		sps, err := syntax.ParseSPS(u.RBSP)
-		if err != nil {
+		if err != nil || level.CheckCeiling(sps) != nil {
 			continue
 		}
 		return sps.CroppedWidth(), sps.CroppedHeight()
