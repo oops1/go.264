@@ -16,6 +16,17 @@ func residual8x8(dst *transform.Block8x8, src []byte, srcStride, srcOff int, ref
 	}
 }
 
+func satdBlock8x8Transform(src []byte, srcStride, srcOff int, ref []byte, refStride, refOff int) int {
+	var block transform.Block8x8
+	residual8x8(&block, src, srcStride, srcOff, ref, refStride, refOff)
+	transform.Forward8x8(&block)
+	total := int32(0)
+	for _, c := range block {
+		total += abs32(c)
+	}
+	return int((total + 2) >> 2)
+}
+
 func block8x8ToScan(dst *[64]int32, b *transform.Block8x8) {
 	for i := 0; i < 64; i++ {
 		dst[i] = b[transform.ZigZagScan8x8[i]]
@@ -232,7 +243,7 @@ func (s *mbEncoder) encodeIntra8x8() int {
 				continue
 			}
 			pred.Intra8x8(s.e.rec.Y, s.e.rec.StrideY, off, mode, a)
-			c := satdBlock(s.e.src.Y, s.e.src.StrideY, srcOff, s.e.rec.Y, s.e.rec.StrideY, off, 8, 8)
+			c := satdBlock8x8Transform(s.e.src.Y, s.e.src.StrideY, srcOff, s.e.rec.Y, s.e.rec.StrideY, off)
 			if mode != predMode {
 				c += lambda * 3
 			}

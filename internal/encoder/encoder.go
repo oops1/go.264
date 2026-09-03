@@ -569,12 +569,8 @@ func (e *Encoder) setReferenceLists(p picture) {
 	if len(list1) > 1 && samePictures(list0, list1) {
 		list1[0], list1[1] = list1[1], list1[0]
 	}
-	if len(list0) != 0 {
-		e.refL0 = append(e.refL0, list0[0])
-	}
-	if len(list1) != 0 {
-		e.refL1 = append(e.refL1, list1[0])
-	}
+	e.refL0 = append(e.refL0, list0...)
+	e.refL1 = append(e.refL1, list1...)
 	if len(e.refL1) != 0 {
 		e.colocated = e.refL1[0]
 	}

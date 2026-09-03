@@ -348,9 +348,9 @@ func (s *mbEncoder) numRefsFor(list int) int {
 	return s.numRefsL1
 }
 
-func (s *mbEncoder) biSATD(p partition, mv [2][2]int16) int {
-	ref0 := s.refPictureIn(0, 0)
-	ref1 := s.refPictureIn(1, 0)
+func (s *mbEncoder) biSATD(p partition, mv [2][2]int16, ref [2]int8) int {
+	ref0 := s.refPictureIn(0, ref[0])
+	ref1 := s.refPictureIn(1, ref[1])
 	if ref0 == nil || ref1 == nil {
 		return 1 << 30
 	}
@@ -360,33 +360,43 @@ func (s *mbEncoder) biSATD(p partition, mv [2][2]int16) int {
 	mc.PredictLuma(s.scratchB[:], 16, 0, ref1.Y, ref1.StrideY, ref1.LumaOffset(x, y),
 		p.w, p.h, int(mv[1][0]), int(mv[1][1]))
 	s.combineLumaBi(s.scratch[:], 16, 0, s.scratch[:], 16, 0, s.scratchB[:], 16, 0,
-		p.w, p.h, [2]int8{0, 0})
+		p.w, p.h, ref)
 	return satdBlock(s.e.src.Y, s.e.src.StrideY, s.e.src.LumaOffset(x, y), s.scratch[:], 16, 0, p.w, p.h)
+}
+
+func (s *mbEncoder) refIdxBits(list int, ref int8, lambda int) int {
+	n := s.numRefsFor(list)
+	if n <= 1 {
+		return 0
+	}
+	return lambda * bitsForTE(uint32(ref), uint32(n-1))
 }
 
 func (s *mbEncoder) searchBPartition(p partition, partIdx, kind, lambda int) bPartResult {
 	var uni [2]partResult
 	for list := 0; list < 2; list++ {
-		uni[list] = s.searchPartitionRef(list, p, partIdx, kind, lambda, 0)
+		uni[list] = s.searchPartitionList(list, p, partIdx, kind, lambda)
 	}
 
 	best := bPartResult{pred: predL0, cost: uni[0].cost}
-	best.mv[0], best.mvd[0], best.ref = uni[0].mv, uni[0].mvd, [2]int8{0, -1}
+	best.mv[0], best.mvd[0], best.ref = uni[0].mv, uni[0].mvd, [2]int8{uni[0].ref, -1}
 	if uni[1].cost < best.cost {
 		best = bPartResult{pred: predL1, cost: uni[1].cost}
-		best.mv[1], best.mvd[1], best.ref = uni[1].mv, uni[1].mvd, [2]int8{-1, 0}
+		best.mv[1], best.mvd[1], best.ref = uni[1].mv, uni[1].mvd, [2]int8{-1, uni[1].ref}
 	}
 
 	mv := [2][2]int16{uni[0].mv, uni[1].mv}
-	biCost := s.biSATD(p, mv)
+	ref := [2]int8{uni[0].ref, uni[1].ref}
+	biCost := s.biSATD(p, mv, ref)
 	for list := 0; list < 2; list++ {
 		biCost += lambda * (bitsForSE(int(uni[list].mvd[0])) + bitsForSE(int(uni[list].mvd[1])))
+		biCost += s.refIdxBits(list, ref[list], lambda)
 	}
 	if biCost < best.cost {
 		best = bPartResult{pred: predBi, cost: biCost}
 		best.mv = mv
 		best.mvd = [2][2]int16{uni[0].mvd, uni[1].mvd}
-		best.ref = [2]int8{0, 0}
+		best.ref = ref
 	}
 	return best
 }

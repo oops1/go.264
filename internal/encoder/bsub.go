@@ -60,16 +60,52 @@ func (s *mbEncoder) directSubCost(idx, lambda int) int {
 	return c + lambda*bitsForUE(0)
 }
 
-func (s *mbEncoder) searchSubShape(list, shape, idx, lambda int) []partResult {
+type subShapeResult struct {
+	ref   int8
+	parts []partResult
+	cost  int
+}
+
+func (s *mbEncoder) searchSubShape(list, shape, idx, lambda int) subShapeResult {
 	ox, oy := idx%2*8, idx/2*8
 	parts := subPartitionsOf(subMbShapes[shape], ox, oy)
-	out := make([]partResult, len(parts))
-	for i, p := range parts {
-		r := s.searchPartitionRef(list, p, i, mbTypeB8x8, lambda, 0)
-		s.storeMotionIn(list, p.x, p.y, p.w, p.h, r.mv, 0)
-		out[i] = r
+	entry := s.snapshotBMotion()
+	best := subShapeResult{ref: -1}
+	n := s.numRefsFor(list)
+	for refIdx := 0; refIdx < n; refIdx++ {
+		if !s.refreshUsableRef(s.refPictureIn(list, int8(refIdx))) {
+			continue
+		}
+		s.restoreBMotion(entry, ox, oy, 8, 8)
+		cost := s.refIdxBits(list, int8(refIdx), lambda)
+		results := make([]partResult, len(parts))
+		for i, p := range parts {
+			r := s.searchPartitionRef(list, p, i, mbTypeB8x8, lambda, int8(refIdx))
+			s.storeMotionIn(list, p.x, p.y, p.w, p.h, r.mv, int8(refIdx))
+			results[i] = r
+			cost += r.cost
+		}
+		if best.ref < 0 || cost < best.cost {
+			best = subShapeResult{ref: int8(refIdx), parts: results, cost: cost}
+		}
 	}
-	return out
+	if best.ref < 0 {
+		s.restoreBMotion(entry, ox, oy, 8, 8)
+		cost := 0
+		results := make([]partResult, len(parts))
+		for i, p := range parts {
+			r := s.searchPartitionRef(list, p, i, mbTypeB8x8, lambda, 0)
+			s.storeMotionIn(list, p.x, p.y, p.w, p.h, r.mv, 0)
+			results[i] = r
+			cost += r.cost
+		}
+		best = subShapeResult{ref: 0, parts: results, cost: cost}
+	}
+	s.restoreBMotion(entry, ox, oy, 8, 8)
+	for i, p := range parts {
+		s.storeMotionIn(list, p.x, p.y, p.w, p.h, best.parts[i].mv, best.ref)
+	}
+	return best
 }
 
 func (s *mbEncoder) searchBSubMB(idx, lambda int, allowDirect bool, direct bMotionSnapshot) bSubResult {
@@ -80,7 +116,7 @@ func (s *mbEncoder) searchBSubMB(idx, lambda int, allowDirect bool, direct bMoti
 	ox, oy := idx%2*8, idx/2*8
 
 	for shape := range subMbShapes {
-		var uni [2][]partResult
+		var uni [2]subShapeResult
 		for list := 0; list < 2; list++ {
 			uni[list] = s.searchSubShape(list, shape, idx, lambda)
 		}
@@ -92,20 +128,26 @@ func (s *mbEncoder) searchBSubMB(idx, lambda int, allowDirect bool, direct bMoti
 			}
 			cost := lambda * bitsForUE(uint32(t))
 			results := make([]bPartResult, len(parts))
+			switch pred {
+			case predL0:
+				cost += uni[0].cost
+			case predL1:
+				cost += uni[1].cost
+			default:
+				cost += s.refIdxBits(0, uni[0].ref, lambda) + s.refIdxBits(1, uni[1].ref, lambda)
+			}
 			for i, p := range parts {
 				r := bPartResult{pred: pred, ref: [2]int8{-1, -1}}
 				switch pred {
 				case predL0:
-					r.mv[0], r.mvd[0], r.ref[0] = uni[0][i].mv, uni[0][i].mvd, 0
-					cost += uni[0][i].cost
+					r.mv[0], r.mvd[0], r.ref[0] = uni[0].parts[i].mv, uni[0].parts[i].mvd, uni[0].ref
 				case predL1:
-					r.mv[1], r.mvd[1], r.ref[1] = uni[1][i].mv, uni[1][i].mvd, 0
-					cost += uni[1][i].cost
+					r.mv[1], r.mvd[1], r.ref[1] = uni[1].parts[i].mv, uni[1].parts[i].mvd, uni[1].ref
 				default:
-					r.mv = [2][2]int16{uni[0][i].mv, uni[1][i].mv}
-					r.mvd = [2][2]int16{uni[0][i].mvd, uni[1][i].mvd}
-					r.ref = [2]int8{0, 0}
-					cost += s.biSATD(p, r.mv)
+					r.mv = [2][2]int16{uni[0].parts[i].mv, uni[1].parts[i].mv}
+					r.mvd = [2][2]int16{uni[0].parts[i].mvd, uni[1].parts[i].mvd}
+					r.ref = [2]int8{uni[0].ref, uni[1].ref}
+					cost += s.biSATD(p, r.mv, r.ref)
 					for list := 0; list < 2; list++ {
 						cost += lambda * (bitsForSE(int(r.mvd[list][0])) + bitsForSE(int(r.mvd[list][1])))
 					}
@@ -128,7 +170,7 @@ func (s *mbEncoder) searchBSubMB(idx, lambda int, allowDirect bool, direct bMoti
 			continue
 		}
 		for i, p := range subPartitionsOf(subMbShapes[subShapeOf(best.subType)], ox, oy) {
-			s.storeMotionIn(list, p.x, p.y, p.w, p.h, best.parts[i].mv[list], 0)
+			s.storeMotionIn(list, p.x, p.y, p.w, p.h, best.parts[i].mv[list], best.parts[i].ref[list])
 			s.storeMVDIn(list, p.x, p.y, p.w, p.h, best.parts[i].mvd[list])
 		}
 	}

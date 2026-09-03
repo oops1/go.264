@@ -3,6 +3,7 @@ package encoder
 import (
 	"fmt"
 	"image"
+	"sort"
 	"testing"
 
 	"github.com/oops1/go.264/internal/frame"
@@ -508,6 +509,112 @@ func TestFFmpegDecodesLongTermMarkingIdentically(t *testing.T) {
 			}
 		}
 		t.Logf("cabac %v: %d bytes, %d frames decode identically in ffmpeg", cabac, len(stream), len(source))
+	}
+}
+
+func countLongTermBiPredUsage(enc *Encoder) (l0, l1, total int) {
+	for i := range enc.grid {
+		m := &enc.grid[i]
+		if m.Intra {
+			continue
+		}
+		for blk := 0; blk < 16; blk++ {
+			if p := m.RefPicL0[blk]; p != nil {
+				total++
+				if p.LongTerm {
+					l0++
+				}
+			}
+			if p := m.RefPicL1[blk]; p != nil {
+				total++
+				if p.LongTerm {
+					l1++
+				}
+			}
+		}
+	}
+	return l0, l1, total
+}
+
+func TestLongTermReferencesInBiPredictedPictures(t *testing.T) {
+	for _, content := range []struct {
+		name   string
+		frames [][]byte
+	}{
+		{"a still desktop behind a moving window", screenContent(320, 240, 60)},
+		{"the same with the desktop dithered every frame", screenContentWithDither(320, 240, 60)},
+	} {
+		t.Run(content.name, func(t *testing.T) {
+			arms := []struct {
+				name  string
+				slots int
+			}{
+				{"B pictures, no long-term reference", 0},
+				{"B pictures, one long-term reference", 1},
+			}
+			type result struct {
+				bytes         int
+				psnr          float64
+				l0, l1, total int
+			}
+			got := make([]result, len(arms))
+			for i, arm := range arms {
+				cfg := longTermConfig(arm.slots)
+				cfg.RefFrames = 2
+				cfg.BFrames = 2
+				cfg.CABAC = true
+				enc, err := New(cfg)
+				if err != nil {
+					t.Fatalf("New: %v", err)
+				}
+				var l0, l1, total int
+				var records []reconRecord
+				enc.onPicture = func(display int, rec *frame.Picture) {
+					records = append(records, reconRecord{display: display, pic: snapshotOf(cfg, rec)})
+				}
+				var stream []byte
+				for fi, f := range content.frames {
+					pkt, err := enc.Encode(f)
+					if err != nil {
+						t.Fatalf("frame %d: %v", fi, err)
+					}
+					stream = append(stream, pkt...)
+					fl0, fl1, ftotal := countLongTermBiPredUsage(enc)
+					l0 += fl0
+					l1 += fl1
+					total += ftotal
+				}
+				tail, err := enc.Flush()
+				if err != nil {
+					t.Fatalf("Flush: %v", err)
+				}
+				stream = append(stream, tail...)
+				if len(records) != len(content.frames) {
+					t.Fatalf("the encoder produced %d pictures for %d input frames", len(records), len(content.frames))
+				}
+				sort.SliceStable(records, func(a, b int) bool { return records[a].display < records[b].display })
+				pics := make([]*frame.Picture, 0, len(records))
+				for pi, r := range records {
+					if r.display != pi {
+						t.Fatalf("picture %d carries display index %d", pi, r.display)
+					}
+					pics = append(pics, r.pic)
+				}
+				got[i] = result{bytes: len(stream), psnr: streamPSNR(t, pics, content.frames), l0: l0, l1: l1, total: total}
+			}
+			for i, arm := range arms {
+				change := 100 * float64(got[i].bytes-got[0].bytes) / float64(got[0].bytes)
+				share := 0.0
+				if got[i].total != 0 {
+					share = 100 * float64(got[i].l0+got[i].l1) / float64(got[i].total)
+				}
+				t.Logf("%-38s %7d bytes  %6.2f dB  %+6.1f%%  long-term used by %.1f%% of ref blocks (l0=%d l1=%d of %d)",
+					arm.name, got[i].bytes, got[i].psnr, change, share, got[i].l0, got[i].l1, got[i].total)
+			}
+			if got[1].l1 == 0 {
+				t.Fatalf("no list1 reference block ever selected the long-term picture")
+			}
+		})
 	}
 }
 

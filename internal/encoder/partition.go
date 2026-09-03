@@ -74,14 +74,19 @@ func (s *mbEncoder) partSubPelCost(list int, refIdx int8, ref *frame.Picture, px
 }
 
 func (s *mbEncoder) searchPartition(p partition, partIdx, kind, lambda int) partResult {
+	return s.searchPartitionList(0, p, partIdx, kind, lambda)
+}
+
+func (s *mbEncoder) searchPartitionList(list int, p partition, partIdx, kind, lambda int) partResult {
 	best := partResult{ref: -1}
-	for idx := 0; idx < s.numRefs; idx++ {
-		if !s.refreshUsableRef(s.refPictureIn(0, int8(idx))) {
+	n := s.numRefsFor(list)
+	for idx := 0; idx < n; idx++ {
+		if !s.refreshUsableRef(s.refPictureIn(list, int8(idx))) {
 			continue
 		}
-		r := s.searchPartitionRef(0, p, partIdx, kind, lambda, int8(idx))
-		if s.numRefs > 1 {
-			r.cost += lambda * bitsForTE(uint32(idx), uint32(s.numRefs-1))
+		r := s.searchPartitionRef(list, p, partIdx, kind, lambda, int8(idx))
+		if n > 1 {
+			r.cost += lambda * bitsForTE(uint32(idx), uint32(n-1))
 		}
 		if best.ref < 0 || r.cost < best.cost {
 			best = r
