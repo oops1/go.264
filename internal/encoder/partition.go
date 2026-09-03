@@ -65,8 +65,7 @@ func (s *mbEncoder) partSAD(ref *frame.Picture, px, py, w, h, ix, iy int) int {
 
 func (s *mbEncoder) partSubPelCost(list int, refIdx int8, ref *frame.Picture, px, py, w, h int, mv, mvp [2]int16, lambda int) int {
 	x, y := s.mbx*16+px, s.mby*16+py
-	mc.PredictLuma(s.scratch[:], 16, 0, ref.Y, ref.StrideY,
-		ref.LumaOffset(x, y), w, h, int(mv[0]), int(mv[1]))
+	s.predictLuma(s.scratch[:], 16, 0, ref, ref.LumaOffset(x, y), w, h, int(mv[0]), int(mv[1]))
 	s.weightLumaScratch(list, refIdx, s.scratch[:], 16, 0, w, h)
 	c := satdBlock(s.e.src.Y, s.e.src.StrideY, s.e.src.LumaOffset(x, y),
 		s.scratch[:], 16, 0, w, h)
@@ -275,8 +274,8 @@ func (s *mbEncoder) trySplit(kind, lambda int) (int, []partResult) {
 func (s *mbEncoder) compensatePartition(p partition, mv [2]int16, refIdx int8) {
 	ref := s.refPicture(refIdx)
 	x, y := s.mbx*16+p.x, s.mby*16+p.y
-	mc.PredictLuma(s.e.rec.Y, s.e.rec.StrideY, s.e.rec.LumaOffset(x, y),
-		ref.Y, ref.StrideY, ref.LumaOffset(x, y), p.w, p.h, int(mv[0]), int(mv[1]))
+	s.predictLuma(s.e.rec.Y, s.e.rec.StrideY, s.e.rec.LumaOffset(x, y),
+		ref, ref.LumaOffset(x, y), p.w, p.h, int(mv[0]), int(mv[1]))
 	cx, cy := x/2, y/2
 	cw, ch := p.w/2, p.h/2
 	mc.PredictChroma(s.e.rec.Cb, s.e.rec.StrideC, s.e.rec.ChromaOffset(cx, cy),
@@ -290,4 +289,12 @@ func (s *mbEncoder) compensatePartitions(kind int, results []partResult) {
 	for i, p := range partitionsFor(kind) {
 		s.compensatePartition(p, results[i].mv, results[i].ref)
 	}
+}
+
+func (s *mbEncoder) predictLuma(dst []byte, dstStride, dstOff int, ref *frame.Picture, srcOff, w, h, mvx, mvy int) {
+	if pl := s.e.planesFor(ref); pl != nil {
+		mc.PredictLumaPlanes(dst, dstStride, dstOff, ref.Y, ref.StrideY, srcOff, pl, w, h, mvx, mvy)
+		return
+	}
+	mc.PredictLuma(dst, dstStride, dstOff, ref.Y, ref.StrideY, srcOff, w, h, mvx, mvy)
 }

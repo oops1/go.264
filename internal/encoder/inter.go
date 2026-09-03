@@ -148,8 +148,8 @@ func bitsForSE(v int) int {
 func (s *mbEncoder) motionCompensateMB(mv [2]int16) {
 	ref := s.refPicture(0)
 	x, y := s.mbx*16, s.mby*16
-	mc.PredictLuma(s.e.rec.Y, s.e.rec.StrideY, s.e.rec.LumaOffset(x, y),
-		ref.Y, ref.StrideY, ref.LumaOffset(x, y), 16, 16, int(mv[0]), int(mv[1]))
+	s.predictLuma(s.e.rec.Y, s.e.rec.StrideY, s.e.rec.LumaOffset(x, y),
+		ref, ref.LumaOffset(x, y), 16, 16, int(mv[0]), int(mv[1]))
 	cx, cy := x/2, y/2
 	mc.PredictChroma(s.e.rec.Cb, s.e.rec.StrideC, s.e.rec.ChromaOffset(cx, cy),
 		ref.Cb, ref.StrideC, ref.ChromaOffset(cx, cy), 8, 8, int(mv[0]), int(mv[1]))

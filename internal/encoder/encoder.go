@@ -11,6 +11,7 @@ import (
 	"github.com/oops1/go.264/internal/frame"
 	"github.com/oops1/go.264/internal/level"
 	"github.com/oops1/go.264/internal/loopfilter"
+	"github.com/oops1/go.264/internal/mc"
 	"github.com/oops1/go.264/internal/nal"
 	"github.com/oops1/go.264/internal/syntax"
 	"github.com/oops1/go.264/internal/transform"
@@ -178,6 +179,8 @@ type Encoder struct {
 	refL0     []*frame.Picture
 	refL1     []*frame.Picture
 	colocated *frame.Picture
+	planes    map[*frame.Picture]*mc.Planes
+	planeFree []*mc.Planes
 
 	ltSlots   []longTermSlot
 	ltMaxSent bool
@@ -533,16 +536,62 @@ func (e *Encoder) encodeReordered(yuv []byte, h Hints) ([]byte, error) {
 	return out, nil
 }
 
+func (e *Encoder) planesFor(ref *frame.Picture) *mc.Planes {
+	if pl, ok := e.planes[ref]; ok && pl.Ready() {
+		return pl
+	}
+	return nil
+}
+
+func (e *Encoder) refreshInterpolationPlanes() {
+	if e.planes == nil {
+		e.planes = make(map[*frame.Picture]*mc.Planes)
+	}
+	live := make(map[*frame.Picture]bool, len(e.refL0)+len(e.refL1))
+	for _, list := range [][]*frame.Picture{e.refL0, e.refL1} {
+		for _, ref := range list {
+			if ref != nil && ref.StrideY != 0 {
+				live[ref] = true
+			}
+		}
+	}
+	for ref, pl := range e.planes {
+		if !live[ref] {
+			e.planeFree = append(e.planeFree, pl)
+			delete(e.planes, ref)
+		}
+	}
+	for ref := range live {
+		if _, held := e.planes[ref]; held {
+			continue
+		}
+		pl := e.takePlanes()
+		pl.Build(ref.Y, ref.StrideY, len(ref.Y)/ref.StrideY)
+		e.planes[ref] = pl
+	}
+}
+
+func (e *Encoder) takePlanes() *mc.Planes {
+	if n := len(e.planeFree); n > 0 {
+		pl := e.planeFree[n-1]
+		e.planeFree = e.planeFree[:n-1]
+		return pl
+	}
+	return &mc.Planes{}
+}
+
 func (e *Encoder) setReferenceLists(p picture) {
 	e.refL0 = e.refL0[:0]
 	e.refL1 = e.refL1[:0]
 	e.colocated = nil
 	if p.idr {
+		e.refreshInterpolationPlanes()
 		return
 	}
 	if !p.sliceType.IsB() {
 		e.refL0 = append(e.refL0, e.refs[:e.activeRefs()]...)
 		e.refL0 = e.appendLongTerm(e.refL0)
+		e.refreshInterpolationPlanes()
 		return
 	}
 	var before, after []*frame.Picture
@@ -574,6 +623,7 @@ func (e *Encoder) setReferenceLists(p picture) {
 	if len(e.refL1) != 0 {
 		e.colocated = e.refL1[0]
 	}
+	e.refreshInterpolationPlanes()
 }
 
 func samePictures(a, b []*frame.Picture) bool {

@@ -277,8 +277,7 @@ func (s *mbEncoder) predictOneB(list int, seg motionSegment, x, y int,
 	mvy := clampComponent(int(mv[1]),
 		lumaTapBefore-frame.LumaMargin-y,
 		ref.Height+frame.LumaMargin-lumaTapAfter-y-seg.h, 2)
-	mc.PredictLuma(dstY, strideY, offY, ref.Y, ref.StrideY, ref.LumaOffset(x, y),
-		seg.w, seg.h, mvx, mvy)
+	s.predictLuma(dstY, strideY, offY, ref, ref.LumaOffset(x, y), seg.w, seg.h, mvx, mvy)
 
 	cx, cy := x/2, y/2
 	cw, ch := seg.w/2, seg.h/2
@@ -355,9 +354,9 @@ func (s *mbEncoder) biSATD(p partition, mv [2][2]int16, ref [2]int8) int {
 		return 1 << 30
 	}
 	x, y := s.mbx*16+p.x, s.mby*16+p.y
-	mc.PredictLuma(s.scratch[:], 16, 0, ref0.Y, ref0.StrideY, ref0.LumaOffset(x, y),
+	s.predictLuma(s.scratch[:], 16, 0, ref0, ref0.LumaOffset(x, y),
 		p.w, p.h, int(mv[0][0]), int(mv[0][1]))
-	mc.PredictLuma(s.scratchB[:], 16, 0, ref1.Y, ref1.StrideY, ref1.LumaOffset(x, y),
+	s.predictLuma(s.scratchB[:], 16, 0, ref1, ref1.LumaOffset(x, y),
 		p.w, p.h, int(mv[1][0]), int(mv[1][1]))
 	s.combineLumaBi(s.scratch[:], 16, 0, s.scratch[:], 16, 0, s.scratchB[:], 16, 0,
 		p.w, p.h, ref)
