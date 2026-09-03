@@ -18,14 +18,14 @@ than absent.
 | Decoder | High profile, bit-exact against ffmpeg on twenty-nine clips |
 | Encoder | High profile: the 8x8 transform, Intra_8x8, the scaling matrices, B slices |
 | Hardware encoding | Media Foundation on Windows, NVENC on Linux, both without cgo |
-| Hardware decoding | none; the platform transform is kept as an oracle, not a backend |
+| Hardware decoding | Direct3D 11 through Media Foundation on Windows, above 640x480; nothing on Linux |
 | Screen content interface | changed rectangles, typed regions, forced key frames, switchable motion search |
 | Slices | any count on macroblock row boundaries, encoded in parallel |
 | Intra refresh | a sweeping band with motion constrained across the boundary, recovery point announced |
 | Buffer model | a real coded picture buffer, constant bitrate, announced in the parameters and the messages |
 | Deblocking control | off, on, or kept inside slices, with both offsets |
-| Weighted prediction | applied when decoding; the encoder never writes a weight table |
-| Temporal direct | derived when decoding; the encoder writes spatial only |
+| Weighted prediction | both directions, explicit and implicit, off by default |
+| Temporal direct | both directions; the encoder writes spatial or temporal on request |
 | Lossless transform bypass | rejected explicitly, both directions |
 
 Measured on the development machine, 20 threads, one frame per operation.
