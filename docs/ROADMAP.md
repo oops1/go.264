@@ -57,7 +57,8 @@ filtering: eleven per cent at QCIF, a sixth at 1080p.
 Compression, all measured at the same quantiser: CABAC costs 18 to 30
 per cent fewer bits than CAVLC; B pictures save a further 4.9 to 17.5
 per cent on real video, and **cost** 5 to 11 per cent on rigid synthetic
-motion; sixty-eight slices cost 1.8 per cent; a still screen with change
+motion; sixty-eight slices cost 1.8 per cent on synthetic content and 12 per cent
+on panning content, where before the motion field seed they cost 145; a still screen with change
 hints costs about ten bytes a frame.
 
 ## The number that sets the order
@@ -116,20 +117,27 @@ the scalar code.
 for its planar path. The number to beat is in that document, not this
 one.
 
-## 1.3 — Acceptance by a real client
+## 1.3 — Acceptance by a real client, done
 
-AVC420 through MS-RDPEGFX in `mstsc`, full screen at 1080p. The wire
-format constrains the encoder: an Annex B byte stream, YUV420p, picture
-dimensions a multiple of sixteen, and the region actually sent named by
-`regionRects` rather than cropped in the encoder. Those hold today and
-are covered by tests, but no real client has yet accepted a stream.
+AVC420 through MS-RDPEGFX. The wire format constrains the encoder: an
+Annex B byte stream, YUV420p, picture dimensions a multiple of sixteen,
+and the region actually sent named by `regionRects` rather than cropped in
+the encoder.
 
-The protocol also carries requirements of its own beyond H.264, and they
-have to be read before the first connection rather than after it.
+A Windows RDP client accepted and rendered the stream on 3 September 2026:
+EGFX negotiated at V8.1, delivered in RDPGFX_WIRE_TO_SURFACE_PDU_1 with
+codecId AVC420, surface mapped, frames acknowledged, a browser playing
+video inside the session with a person watching. What is proven is a
+Windows RDP client rather than mstsc by name - the product string was not
+being logged at the time, and winline has since added it.
 
-Acceptance: a browser playing video inside the session, no artefacts in
-the moving region, text beside it readable, and a connection that
-survives a long sitting.
+Two things the connection taught that no test here would have: the client
+closes the connection silently, with no error, if a coded frame's
+dimensions do not match the surface it was created for, so rectangles are
+padded to whole macroblocks upstream and anything off-grid is refused
+before it reaches the encoder. And full screen at 1080p is not what
+happened - on a four core 2012 processor it is not viable at any setting,
+so a video rectangle is detected and only that is coded.
 
 ## 1.4 — B slices in the encoder, done
 
@@ -201,7 +209,56 @@ from the announced parameters and the actual unit sizes, it never
 underflows or overflows across ten configurations, and the long run rate
 never exceeds the request.
 
-## 1.7 — Wider hardware
+## 1.7 — What production found, done
+
+The codec went into production in winline and three things came back that
+no amount of measurement here would have produced.
+
+**A real Windows RDP client accepted the stream.** EGFX negotiated at
+V8.1, delivered in RDPGFX_WIRE_TO_SURFACE_PDU_1 with codecId AVC420, the
+surface mapped and the frames acknowledged, watched by a person. That had
+been the one claim in this document marked written but never accepted by a
+client. It is now accepted, with one honest limit: the product string was
+not being logged, so what is proven is a Windows RDP client rather than
+mstsc by name.
+
+**Speed is the binding constraint, and the processor is not this one.**
+The stand is an i5-3330 - four cores, no hyperthreading, Ivy Bridge, 2012,
+and no AVX2 at all. Full screen H.264 is not viable there at any setting,
+so winline detects a video rectangle and codes only that. That machine
+measured the 1.6.0 work at 1.7 to 1.9 times rather than the 2.6 measured
+here, and identically to the byte across eight configurations, which is a
+better proof that the speed work did not touch quality than anything in
+this repository. It also found the limit of that work: with the motion
+search off the gain is inside noise, because everything 1.6.0 did lives in
+the search.
+
+**Slices were costing far more than anyone had measured.** A macroblock at
+the top of a slice has no neighbour above it, so its motion vector
+predictor is missing, the search starts from the wrong place, and the next
+row inherits the mistake - the error walks down the whole slice. On
+panning content four slices cost 135 per cent more bits than one. Every
+slice test in this repository used content the search could recover from,
+which is why it had never shown. The reference picture already carries the
+motion field it was coded with, and that field does not know where the
+slice boundaries are, so the search now takes the vector at the same
+position as a starting candidate. Four slices went from 110,886 bytes to
+43,905, and one slice from 47,175 to 39,935 - the fix improves the
+unsliced case by a sixth as well.
+
+That is the shape of the lesson: the thing that had never been measured
+was costing more than everything that had.
+
+**Two settings between the full search and none.** winline drops to
+MotionSearchZero when a running mean passes its budget, which abandons the
+integer search, the sub-pixel refinement and every partition shape but
+16x16 at once. MotionSearchHalf and MotionSearchInteger keep the search
+and the shapes and stop the refinement early: measured at 1008x800 on
+winline's own configuration, 16 per cent off the time for no bitrate at
+all, or 27 per cent off for 2.9 per cent of bitrate, against Zero's 48 per
+cent for 192.
+
+## 1.8 — Wider hardware
 
 Three separate pieces, none blocking the others.
 
@@ -263,8 +320,16 @@ has a test that feeds a real stream of that kind and requires the
 refusal.
 
 **Unproven rather than missing**: NVENC and VA-API have never run
-against real silicon, and no remote desktop client has yet accepted a
-stream. Neither can be settled on the machine this was written on.
+against real silicon. That one cannot be settled on the machine this was
+written on. Client acceptance no longer belongs here - see 1.7.
+
+**The trellis is wrong on screen content.** Sampled at ten quantisers
+rather than four, eleven of twelve cases show no quality shortfall at all
+and the trellis saves 4.8 to 7.1 per cent of bits. The twelfth is screen
+content, where it is 1.18 dB worse at equal rate while saving 1.4 per
+cent. The sparse sampling had been hiding it. It is off by default, so it
+is a defect in an optional path, but screen content is exactly what a
+remote desktop encodes, so it should not stay.
 
 ## Hostile input, and a leak the hardware found
 
