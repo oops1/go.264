@@ -16,16 +16,33 @@ var (
 
 const maxLevelPrefix = 30
 
+const vlcAbsent = 0xFFFF
+
 type vlc struct {
-	lookup map[uint32]uint16
+	lookup []uint16
 	maxLen int
 }
 
-func newVLC() *vlc { return &vlc{lookup: make(map[uint32]uint16)} }
+func newVLC() *vlc { return &vlc{} }
+
+func (v *vlc) grow(n int) {
+	if n <= len(v.lookup) {
+		return
+	}
+	grown := make([]uint16, n)
+	for i := range grown {
+		grown[i] = vlcAbsent
+	}
+	copy(grown, v.lookup)
+	v.lookup = grown
+}
 
 func (v *vlc) add(pattern string, value uint16) {
 	if pattern == "" {
 		return
+	}
+	if value == vlcAbsent {
+		panic(fmt.Sprintf("go264/cavlc: code %q carries the absent marker", pattern))
 	}
 	key := uint32(1)
 	for _, c := range pattern {
@@ -34,7 +51,8 @@ func (v *vlc) add(pattern string, value uint16) {
 			key |= 1
 		}
 	}
-	if _, exists := v.lookup[key]; exists {
+	v.grow(int(key) + 1)
+	if v.lookup[key] != vlcAbsent {
 		panic(fmt.Sprintf("go264/cavlc: duplicate code %q", pattern))
 	}
 	v.lookup[key] = value
@@ -51,8 +69,10 @@ func (v *vlc) read(r *bits.Reader) (uint16, error) {
 			return 0, err
 		}
 		key = key<<1 | b
-		if val, ok := v.lookup[key]; ok {
-			return val, nil
+		if int(key) < len(v.lookup) {
+			if val := v.lookup[key]; val != vlcAbsent {
+				return val, nil
+			}
 		}
 	}
 	return 0, ErrInvalidCode
