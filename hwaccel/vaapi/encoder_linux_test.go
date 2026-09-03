@@ -3,6 +3,8 @@ package vaapi
 import (
 	"errors"
 	"testing"
+	"time"
+	"unsafe"
 
 	"github.com/oops1/go.264/internal/level"
 	"github.com/oops1/go.264/internal/syntax"
@@ -271,4 +273,95 @@ func TestPickLevelIDCRefusesAPictureNoLevelCarries(t *testing.T) {
 		t.Fatalf("the error is %v, want one wrapping level.ErrNoLevel", err)
 	}
 	t.Logf("%v", err)
+}
+
+func TestReadCodedBufferRejectsASegmentSizeLargerThanTheAllocatedBuffer(t *testing.T) {
+	e := &Encoder{disp: &display{handle: 0xDEAD}, mbWidth: 2, mbHeight: 2}
+	capacity := e.codedBufferCapacity()
+
+	payload := make([]byte, 4)
+	seg := CodedBufferSegment{
+		Size: uint32(capacity) + 1,
+		Buf:  unsafe.Pointer(&payload[0]),
+	}
+
+	restoreMap, restoreUnmap := vaMapBuffer, vaUnmapBuffer
+	defer func() { vaMapBuffer, vaUnmapBuffer = restoreMap, restoreUnmap }()
+
+	unmapped := false
+	vaMapBuffer = func(_ uintptr, _ uint32, out *unsafe.Pointer) int32 {
+		*out = unsafe.Pointer(&seg)
+		return int32(StatusSuccess)
+	}
+	vaUnmapBuffer = func(uintptr, uint32) int32 {
+		unmapped = true
+		return int32(StatusSuccess)
+	}
+
+	if _, err := e.readCodedBuffer(0); err == nil {
+		t.Fatal("readCodedBuffer accepted a segment larger than the allocated buffer, want an error")
+	} else {
+		t.Logf("%v", err)
+	}
+	if !unmapped {
+		t.Fatal("readCodedBuffer did not unmap the buffer on the rejected-segment path")
+	}
+}
+
+func TestReadCodedBufferAcceptsASegmentWithinCapacity(t *testing.T) {
+	e := &Encoder{disp: &display{handle: 0xDEAD}, mbWidth: 2, mbHeight: 2}
+
+	want := []byte{1, 2, 3, 4, 5}
+	seg := CodedBufferSegment{
+		Size: uint32(len(want)),
+		Buf:  unsafe.Pointer(&want[0]),
+	}
+
+	restoreMap, restoreUnmap := vaMapBuffer, vaUnmapBuffer
+	defer func() { vaMapBuffer, vaUnmapBuffer = restoreMap, restoreUnmap }()
+
+	vaMapBuffer = func(_ uintptr, _ uint32, out *unsafe.Pointer) int32 {
+		*out = unsafe.Pointer(&seg)
+		return int32(StatusSuccess)
+	}
+	vaUnmapBuffer = func(uintptr, uint32) int32 { return int32(StatusSuccess) }
+
+	got, err := e.readCodedBuffer(0)
+	if err != nil {
+		t.Fatalf("readCodedBuffer: %v", err)
+	}
+	if string(got) != string(want) {
+		t.Fatalf("readCodedBuffer returned %v, want %v", got, want)
+	}
+}
+
+func TestReadCodedBufferRejectsASegmentChainLongerThanTheLimit(t *testing.T) {
+	e := &Encoder{disp: &display{handle: 0xDEAD}, mbWidth: 2, mbHeight: 2}
+
+	var seg CodedBufferSegment
+	seg.Next = unsafe.Pointer(&seg)
+
+	restoreMap, restoreUnmap := vaMapBuffer, vaUnmapBuffer
+	defer func() { vaMapBuffer, vaUnmapBuffer = restoreMap, restoreUnmap }()
+
+	vaMapBuffer = func(_ uintptr, _ uint32, out *unsafe.Pointer) int32 {
+		*out = unsafe.Pointer(&seg)
+		return int32(StatusSuccess)
+	}
+	vaUnmapBuffer = func(uintptr, uint32) int32 { return int32(StatusSuccess) }
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := e.readCodedBuffer(0)
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("readCodedBuffer accepted a cyclic segment chain, want an error")
+		}
+		t.Logf("%v", err)
+	case <-time.After(5 * time.Second):
+		t.Fatal("readCodedBuffer did not terminate on a cyclic segment chain")
+	}
 }

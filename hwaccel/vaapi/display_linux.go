@@ -96,6 +96,9 @@ func (d *display) findEncodeProfile() (profileChoice, error) {
 		if Status(st) != StatusSuccess {
 			continue
 		}
+		if n < 0 || int(n) > len(entrypoints) {
+			n = int32(len(entrypoints))
+		}
 		for _, e := range entrypoints[:n] {
 			if Entrypoint(e) == EntrypointEncSlice {
 				return cand, nil

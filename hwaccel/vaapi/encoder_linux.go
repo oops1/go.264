@@ -373,6 +373,9 @@ func (d *display) findNV12ImageFormat() (*ImageFormat, error) {
 	if err := check("vaQueryImageFormats", vaQueryImageFormats(d.handle, unsafe.Pointer(&formats[0]), &n)); err != nil {
 		return nil, err
 	}
+	if n < 0 || int(n) > len(formats) {
+		n = int32(len(formats))
+	}
 	for i := range formats[:n] {
 		if formats[i].FourCC == FourCCNV12 {
 			f := formats[i]
@@ -382,8 +385,12 @@ func (d *display) findNV12ImageFormat() (*ImageFormat, error) {
 	return nil, errors.New("vaapi: the driver does not advertise an NV12 image format")
 }
 
+func (e *Encoder) codedBufferCapacity() int {
+	return e.mbWidth*e.mbHeight*400 + codedBufferHeadroomBytes
+}
+
 func (e *Encoder) createCodedBuffer() (uint32, error) {
-	size := uint32(e.mbWidth*e.mbHeight*400 + codedBufferHeadroomBytes)
+	size := uint32(e.codedBufferCapacity())
 	var buf uint32
 	err := check("vaCreateBuffer", vaCreateBuffer(e.disp.handle, e.context, int32(BufferTypeEncCoded),
 		size, 1, nil, &buf))
@@ -476,14 +483,26 @@ func (e *Encoder) renderSlice(isIDR bool) error {
 	return check("vaRenderPicture(slice)", vaRenderPicture(e.disp.handle, e.context, unsafe.Pointer(&buf), 1))
 }
 
+const maxCodedBufferSegments = 4096
+
 func (e *Encoder) readCodedBuffer(buf uint32) ([]byte, error) {
+	capacity := e.codedBufferCapacity()
 	var mapped unsafe.Pointer
 	if err := check("vaMapBuffer(coded)", vaMapBuffer(e.disp.handle, buf, &mapped)); err != nil {
 		return nil, err
 	}
 	var out []byte
-	for seg := (*CodedBufferSegment)(mapped); seg != nil; {
+	seg := (*CodedBufferSegment)(mapped)
+	for i := 0; seg != nil; i++ {
+		if i >= maxCodedBufferSegments {
+			vaUnmapBuffer(e.disp.handle, buf)
+			return nil, fmt.Errorf("vaapi: the coded buffer segment chain exceeds %d entries", maxCodedBufferSegments)
+		}
 		if seg.Size > 0 && seg.Buf != nil {
+			if int(seg.Size) > capacity {
+				vaUnmapBuffer(e.disp.handle, buf)
+				return nil, fmt.Errorf("vaapi: the driver reported a coded segment of %d bytes, more than the %d-byte buffer it was given", seg.Size, capacity)
+			}
 			out = append(out, unsafe.Slice((*byte)(seg.Buf), int(seg.Size))...)
 		}
 		if seg.Next == nil {
