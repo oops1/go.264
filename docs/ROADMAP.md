@@ -39,11 +39,20 @@ run back to back in one worktree:
 | Early skip in the mode decision | 74.9 f/s | 1.06 f/s | 2.28 f/s |
 | Vector kernels as well | 105 f/s | 1.70 f/s | 3.99 f/s |
 | One slice per macroblock row as well | | | **29.8 f/s** |
+| Interpolation planes and the deblocking kernels as well | 252 f/s | 3.9 f/s | **71.1 f/s** |
 | Adapter, for comparison | 1914 f/s | 606 f/s | 324 f/s |
 
-That is eighty times where the processor path started, and enough to
-carry a 1080p desktop at thirty frames a second on a machine with no
+That is a hundred and ninety times where the processor path started, and
+it carries a 1080p desktop at seventy frames a second on a machine with no
 usable video adapter, which is the case this codec exists for.
+
+The last row was measured against this milestone's starting commit in a
+second worktree, both sides run back to back, and the starting numbers it
+reproduced were the row above it - 105, 1.70 and 29.8 - which is what says
+the comparison is sound. Every case roughly doubled: the whole screen
+without slices 4.9 to 9.4, the exhaustive search 1.19 to 2.25, a named
+video region 6.6 to 11.2. Decoding gained less because less of it was
+filtering: eleven per cent at QCIF, a sixth at 1080p.
 
 Compression, all measured at the same quantiser: CABAC costs 18 to 30
 per cent fewer bits than CAVLC; B pictures save a further 4.9 to 17.5
