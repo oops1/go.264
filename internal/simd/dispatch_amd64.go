@@ -255,3 +255,34 @@ func DeblockLumaVerticalNormal(plane []byte, offset, stride int, tc0, bs *[16]ui
 	deblockLumaVerticalNormalAVX2(plane, offset, stride, tc0, bs, int32(alpha), int32(beta))
 	return true
 }
+
+func avgBytesDispatch(dst []byte, dstStride, dstOff int, a []byte, aStride, aOff int, b []byte, bStride, bOff, w, h int) {
+	if hasSSE41 && spanFits(dst[dstOff:], dstStride, w, h) &&
+		spanFits(a[aOff:], aStride, w, h) && spanFits(b[bOff:], bStride, w, h) {
+		d, x, y := dst[dstOff:], a[aOff:], b[bOff:]
+		switch {
+		case w == 16 && h == 16:
+			avgBytes16x16(d, dstStride, x, aStride, y, bStride)
+			return
+		case w == 16 && h == 8:
+			avgBytes16x8(d, dstStride, x, aStride, y, bStride)
+			return
+		case w == 8 && h == 16:
+			avgBytes8x16(d, dstStride, x, aStride, y, bStride)
+			return
+		case w == 8 && h == 8:
+			avgBytes8x8(d, dstStride, x, aStride, y, bStride)
+			return
+		case w == 8 && h == 4:
+			avgBytes8x4(d, dstStride, x, aStride, y, bStride)
+			return
+		case w == 4 && h == 8:
+			avgBytes4x8(d, dstStride, x, aStride, y, bStride)
+			return
+		case w == 4 && h == 4:
+			avgBytes4x4(d, dstStride, x, aStride, y, bStride)
+			return
+		}
+	}
+	avgBytesGeneric(dst, dstStride, dstOff, a, aStride, aOff, b, bStride, bOff, w, h)
+}

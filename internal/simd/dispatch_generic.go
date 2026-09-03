@@ -63,3 +63,7 @@ func DeblockLumaStrong(plane []byte, offset, stride, alpha, beta int) bool {
 func DeblockLumaVerticalNormal(plane []byte, offset, stride int, tc0, bs *[16]uint8, alpha, beta int) bool {
 	return false
 }
+
+func avgBytesDispatch(dst []byte, dstStride, dstOff int, a []byte, aStride, aOff int, b []byte, bStride, bOff, w, h int) {
+	avgBytesGeneric(dst, dstStride, dstOff, a, aStride, aOff, b, bStride, bOff, w, h)
+}

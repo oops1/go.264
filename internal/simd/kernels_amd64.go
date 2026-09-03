@@ -194,6 +194,34 @@ func sixTapHV4x4(dst []byte, dstStride int, src []byte, srcStride int)
 
 //
 //go:noescape
+func avgBytes16x16(dst []byte, dstStride int, a []byte, aStride int, b []byte, bStride int)
+
+//
+//go:noescape
+func avgBytes16x8(dst []byte, dstStride int, a []byte, aStride int, b []byte, bStride int)
+
+//
+//go:noescape
+func avgBytes8x16(dst []byte, dstStride int, a []byte, aStride int, b []byte, bStride int)
+
+//
+//go:noescape
+func avgBytes8x8(dst []byte, dstStride int, a []byte, aStride int, b []byte, bStride int)
+
+//
+//go:noescape
+func avgBytes8x4(dst []byte, dstStride int, a []byte, aStride int, b []byte, bStride int)
+
+//
+//go:noescape
+func avgBytes4x8(dst []byte, dstStride int, a []byte, aStride int, b []byte, bStride int)
+
+//
+//go:noescape
+func avgBytes4x4(dst []byte, dstStride int, a []byte, aStride int, b []byte, bStride int)
+
+//
+//go:noescape
 func bilinearChroma8x8(dst []byte, dstStride int, src []byte, srcStride int, xFrac int32, yFrac int32)
 
 //

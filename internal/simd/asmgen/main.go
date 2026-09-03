@@ -46,6 +46,9 @@ func main() {
 			genSixTapHVAVX2(size[0], size[1])
 		}
 	}
+	for _, size := range lumaMCSizes {
+		genAvgBytes(size[0], size[1])
+	}
 	for _, size := range chromaMCSizes {
 		genBilinearChroma(size[0], size[1])
 	}
@@ -1775,4 +1778,60 @@ func yPackBytes(v reg.VecVirtual) reg.VecVirtual {
 	narrow := XMM()
 	VMOVDQU(ordered.AsX(), narrow)
 	return narrow
+}
+
+func genAvgBytes(w, h int) {
+	TEXT(fmt.Sprintf("avgBytes%dx%d", w, h), NOSPLIT,
+		"func(dst []byte, dstStride int, a []byte, aStride int, b []byte, bStride int)")
+	Pragma("noescape")
+	Doc("")
+	dst := Load(Param("dst").Base(), GP64())
+	dstStride := Load(Param("dstStride"), GP64())
+	aPtr := Load(Param("a").Base(), GP64())
+	aStride := Load(Param("aStride"), GP64())
+	bPtr := Load(Param("b").Base(), GP64())
+	bStride := Load(Param("bStride"), GP64())
+
+	for y := 0; y < h; y++ {
+		for x := 0; x < w; x += 16 {
+			run := w - x
+			if run > 16 {
+				run = 16
+			}
+			va := XMM()
+			vb := XMM()
+			switch run {
+			case 16:
+				MOVOU(Mem{Base: aPtr, Disp: x}, va)
+				MOVOU(Mem{Base: bPtr, Disp: x}, vb)
+			case 8:
+				MOVQ(Mem{Base: aPtr, Disp: x}, va)
+				MOVQ(Mem{Base: bPtr, Disp: x}, vb)
+			default:
+				ga := GP32()
+				MOVL(Mem{Base: aPtr, Disp: x}, ga)
+				MOVD(ga, va)
+				gb := GP32()
+				MOVL(Mem{Base: bPtr, Disp: x}, gb)
+				MOVD(gb, vb)
+			}
+			PAVGB(vb, va)
+			switch run {
+			case 16:
+				MOVOU(va, Mem{Base: dst, Disp: x})
+			case 8:
+				MOVQ(va, Mem{Base: dst, Disp: x})
+			default:
+				out := GP32()
+				MOVD(va, out)
+				MOVL(out, Mem{Base: dst, Disp: x})
+			}
+		}
+		if y != h-1 {
+			ADDQ(dstStride, dst)
+			ADDQ(aStride, aPtr)
+			ADDQ(bStride, bPtr)
+		}
+	}
+	RET()
 }

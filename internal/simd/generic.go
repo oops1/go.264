@@ -298,3 +298,18 @@ func deblockFits(plane []byte, offset, stride, before, after int) bool {
 	}
 	return len(plane)-offset >= after*stride+16
 }
+
+func avgBytesGeneric(dst []byte, dstStride, dstOff int, a []byte, aStride, aOff int, b []byte, bStride, bOff, w, h int) {
+	for y := 0; y < h; y++ {
+		do := dstOff + y*dstStride
+		ao := aOff + y*aStride
+		bo := bOff + y*bStride
+		for x := 0; x < w; x++ {
+			dst[do+x] = byte((int(a[ao+x]) + int(b[bo+x]) + 1) >> 1)
+		}
+	}
+}
+
+func AvgBytes(dst []byte, dstStride, dstOff int, a []byte, aStride, aOff int, b []byte, bStride, bOff, w, h int) {
+	avgBytesDispatch(dst, dstStride, dstOff, a, aStride, aOff, b, bStride, bOff, w, h)
+}

@@ -136,14 +136,7 @@ func PredictChroma(dst []byte, dstStride, dstOff int, src []byte, srcStride, src
 }
 
 func Average(dst []byte, dstStride, dstOff int, a []byte, aStride, aOff int, b []byte, bStride, bOff int, w, h int) {
-	for y := 0; y < h; y++ {
-		da := dstOff + y*dstStride
-		aa := aOff + y*aStride
-		bb := bOff + y*bStride
-		for x := 0; x < w; x++ {
-			dst[da+x] = byte((int(a[aa+x]) + int(b[bb+x]) + 1) >> 1)
-		}
-	}
+	simd.AvgBytes(dst, dstStride, dstOff, a, aStride, aOff, b, bStride, bOff, w, h)
 }
 
 func WeightUni(dst []byte, stride, off, w, h, weight, offset, logWD int) {
