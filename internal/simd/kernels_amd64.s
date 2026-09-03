@@ -1697,6 +1697,299 @@ TEXT ·satd8x8AVX2(SB), NOSPLIT, $0-72
 	MOVQ         AX, ret+64(FP)
 	RET
 
+// func deblockLumaNormalAVX2(plane []byte, offset int, stride int, tc0 *[16]uint8, bs *[16]uint8, alpha int32, beta int32)
+// Requires: AVX, AVX2
+TEXT ·deblockLumaNormalAVX2(SB), NOSPLIT, $0-64
+	MOVQ         plane_base+0(FP), AX
+	MOVQ         offset+24(FP), CX
+	MOVQ         stride+32(FP), DX
+	MOVQ         tc0+40(FP), BX
+	MOVQ         bs+48(FP), SI
+	MOVL         alpha+56(FP), DI
+	MOVL         beta+60(FP), R8
+	ADDQ         CX, AX
+	MOVQ         AX, CX
+	MOVQ         DX, R9
+	IMUL3Q       $0x03, R9, R9
+	SUBQ         R9, CX
+	VPMOVZXBW    (CX), Y0
+	ADDQ         DX, CX
+	VPMOVZXBW    (CX), Y1
+	ADDQ         DX, CX
+	VPMOVZXBW    (CX), Y2
+	ADDQ         DX, CX
+	VPMOVZXBW    (CX), Y3
+	ADDQ         DX, CX
+	VPMOVZXBW    (CX), Y4
+	ADDQ         DX, CX
+	VPMOVZXBW    (CX), Y5
+	VPMOVZXBW    (BX), Y6
+	VPXOR        Y7, Y7, Y7
+	VMOVD        DI, X8
+	VPBROADCASTW X8, Y8
+	VMOVD        R8, X9
+	VPBROADCASTW X9, Y9
+	VPMOVZXBW    (SI), Y10
+	VPSUBW       Y3, Y2, Y11
+	VPABSW       Y11, Y11
+	VPCMPGTW     Y11, Y8, Y8
+	VPCMPGTW     Y7, Y10, Y10
+	VPAND        Y8, Y10, Y8
+	VPSUBW       Y2, Y1, Y10
+	VPABSW       Y10, Y10
+	VPCMPGTW     Y10, Y9, Y10
+	VPAND        Y8, Y10, Y8
+	VPSUBW       Y3, Y4, Y10
+	VPABSW       Y10, Y10
+	VPCMPGTW     Y10, Y9, Y9
+	VPAND        Y8, Y9, Y8
+	VMOVD        R8, X9
+	VPBROADCASTW X9, Y9
+	VPSUBW       Y2, Y0, Y10
+	VPABSW       Y10, Y10
+	VPCMPGTW     Y10, Y9, Y10
+	VPAND        Y8, Y10, Y10
+	VPSUBW       Y3, Y5, Y11
+	VPABSW       Y11, Y11
+	VPCMPGTW     Y11, Y9, Y9
+	VPAND        Y8, Y9, Y9
+	VPSUBW       Y10, Y6, Y11
+	VPSUBW       Y9, Y11, Y11
+	VPSUBW       Y2, Y3, Y12
+	VPSLLW       $0x02, Y12, Y12
+	VPSUBW       Y4, Y1, Y13
+	VPADDW       Y12, Y13, Y12
+	MOVL         $0x00000004, CX
+	VMOVD        CX, X13
+	VPBROADCASTW X13, Y13
+	VPADDW       Y12, Y13, Y12
+	VPSRAW       $0x03, Y12, Y12
+	VPSUBW       Y11, Y7, Y13
+	VPMINSW      Y12, Y11, Y11
+	VPMAXSW      Y11, Y13, Y11
+	MOVL         $0x000000ff, CX
+	VMOVD        CX, X12
+	VPBROADCASTW X12, Y12
+	VPADDW       Y2, Y11, Y13
+	VPMINSW      Y13, Y12, Y13
+	VPMAXSW      Y13, Y7, Y13
+	VPSUBW       Y11, Y3, Y11
+	VPMINSW      Y11, Y12, Y11
+	VPMAXSW      Y11, Y7, Y11
+	VPBLENDVB    Y8, Y13, Y2, Y12
+	VPBLENDVB    Y8, Y11, Y3, Y8
+	VPADDW       Y2, Y3, Y2
+	MOVL         $0x00000001, CX
+	VMOVD        CX, X3
+	VPBROADCASTW X3, Y3
+	VPADDW       Y2, Y3, Y2
+	VPSRAW       $0x01, Y2, Y2
+	VPSUBW       Y6, Y7, Y3
+	VPADDW       Y0, Y2, Y0
+	VPSLLW       $0x01, Y1, Y7
+	VPSUBW       Y7, Y0, Y0
+	VPSRAW       $0x01, Y0, Y0
+	VPMINSW      Y0, Y6, Y0
+	VPMAXSW      Y0, Y3, Y0
+	VPADDW       Y1, Y0, Y0
+	VPBLENDVB    Y10, Y0, Y1, Y0
+	VPADDW       Y5, Y2, Y1
+	VPSLLW       $0x01, Y4, Y2
+	VPSUBW       Y2, Y1, Y1
+	VPSRAW       $0x01, Y1, Y1
+	VPMINSW      Y1, Y6, Y1
+	VPMAXSW      Y1, Y3, Y1
+	VPADDW       Y4, Y1, Y1
+	VPBLENDVB    Y9, Y1, Y4, Y1
+	MOVQ         DX, CX
+	SHLQ         $0x01, CX
+	SUBQ         CX, AX
+	VPACKUSWB    Y0, Y0, Y0
+	VPERMQ       $0xd8, Y0, Y0
+	VMOVDQU      X0, (AX)
+	ADDQ         DX, AX
+	VPACKUSWB    Y12, Y12, Y0
+	VPERMQ       $0xd8, Y0, Y0
+	VMOVDQU      X0, (AX)
+	ADDQ         DX, AX
+	VPACKUSWB    Y8, Y8, Y0
+	VPERMQ       $0xd8, Y0, Y0
+	VMOVDQU      X0, (AX)
+	ADDQ         DX, AX
+	VPACKUSWB    Y1, Y1, Y0
+	VPERMQ       $0xd8, Y0, Y0
+	VMOVDQU      X0, (AX)
+	ADDQ         DX, AX
+	VZEROUPPER
+	RET
+
+// func deblockLumaStrongAVX2(plane []byte, offset int, stride int, alpha int32, beta int32)
+// Requires: AVX, AVX2
+TEXT ·deblockLumaStrongAVX2(SB), NOSPLIT, $0-48
+	MOVQ         plane_base+0(FP), AX
+	MOVQ         offset+24(FP), CX
+	MOVQ         stride+32(FP), DX
+	MOVL         alpha+40(FP), BX
+	MOVL         beta+44(FP), SI
+	ADDQ         CX, AX
+	MOVQ         AX, CX
+	MOVQ         DX, DI
+	SHLQ         $0x02, DI
+	SUBQ         DI, CX
+	VPMOVZXBW    (CX), Y0
+	ADDQ         DX, CX
+	VPMOVZXBW    (CX), Y1
+	ADDQ         DX, CX
+	VPMOVZXBW    (CX), Y2
+	ADDQ         DX, CX
+	VPMOVZXBW    (CX), Y3
+	ADDQ         DX, CX
+	VPMOVZXBW    (CX), Y4
+	ADDQ         DX, CX
+	VPMOVZXBW    (CX), Y5
+	ADDQ         DX, CX
+	VPMOVZXBW    (CX), Y6
+	ADDQ         DX, CX
+	VPMOVZXBW    (CX), Y7
+	VMOVD        BX, X8
+	VPBROADCASTW X8, Y8
+	VMOVD        SI, X9
+	VPBROADCASTW X9, Y9
+	VPSUBW       Y4, Y3, Y10
+	VPABSW       Y10, Y10
+	VPCMPGTW     Y10, Y8, Y11
+	VPSUBW       Y3, Y2, Y12
+	VPABSW       Y12, Y12
+	VPCMPGTW     Y12, Y9, Y12
+	VPAND        Y11, Y12, Y11
+	VPSUBW       Y4, Y5, Y12
+	VPABSW       Y12, Y12
+	VPCMPGTW     Y12, Y9, Y12
+	VPAND        Y11, Y12, Y11
+	VPSRAW       $0x02, Y8, Y8
+	MOVL         $0x00000002, CX
+	VMOVD        CX, X12
+	VPBROADCASTW X12, Y12
+	VPADDW       Y8, Y12, Y8
+	VPCMPGTW     Y10, Y8, Y8
+	VPAND        Y11, Y8, Y10
+	VPSUBW       Y3, Y1, Y12
+	VPABSW       Y12, Y12
+	VPCMPGTW     Y12, Y9, Y12
+	VPAND        Y10, Y12, Y10
+	VPAND        Y11, Y8, Y8
+	VPSUBW       Y4, Y6, Y12
+	VPABSW       Y12, Y12
+	VPCMPGTW     Y12, Y9, Y9
+	VPAND        Y8, Y9, Y8
+	MOVL         $0x00000004, CX
+	VMOVD        CX, X9
+	VPBROADCASTW X9, Y9
+	MOVL         $0x00000002, CX
+	VMOVD        CX, X12
+	VPBROADCASTW X12, Y12
+	VPSLLW       $0x01, Y0, Y0
+	VPSLLW       $0x01, Y1, Y13
+	VPADDW       Y13, Y1, Y13
+	VPADDW       Y0, Y13, Y0
+	VPADDW       Y2, Y3, Y13
+	VPADDW       Y4, Y9, Y14
+	VPADDW       Y13, Y14, Y13
+	VPADDW       Y0, Y13, Y0
+	VPSRAW       $0x03, Y0, Y0
+	VPBLENDVB    Y10, Y0, Y1, Y0
+	MOVQ         AX, CX
+	MOVQ         DX, BX
+	IMUL3Q       $0x03, BX, BX
+	SUBQ         BX, CX
+	VPACKUSWB    Y0, Y0, Y0
+	VPERMQ       $0xd8, Y0, Y0
+	VMOVDQU      X0, (CX)
+	VPSLLW       $0x01, Y7, Y0
+	VPSLLW       $0x01, Y6, Y7
+	VPADDW       Y7, Y6, Y7
+	VPADDW       Y0, Y7, Y0
+	VPADDW       Y5, Y4, Y7
+	VPADDW       Y3, Y9, Y13
+	VPADDW       Y7, Y13, Y7
+	VPADDW       Y0, Y7, Y0
+	VPSRAW       $0x03, Y0, Y0
+	VPBLENDVB    Y8, Y0, Y6, Y0
+	MOVQ         AX, CX
+	MOVQ         DX, BX
+	IMUL3Q       $0x02, BX, BX
+	ADDQ         BX, CX
+	VPACKUSWB    Y0, Y0, Y0
+	VPERMQ       $0xd8, Y0, Y0
+	VMOVDQU      X0, (CX)
+	VPADDW       Y1, Y2, Y0
+	VPADDW       Y3, Y4, Y7
+	VPADDW       Y0, Y7, Y0
+	VPADDW       Y0, Y12, Y0
+	VPSRAW       $0x02, Y0, Y0
+	VPBLENDVB    Y10, Y0, Y2, Y0
+	MOVQ         AX, CX
+	MOVQ         DX, BX
+	IMUL3Q       $0x02, BX, BX
+	SUBQ         BX, CX
+	VPACKUSWB    Y0, Y0, Y0
+	VPERMQ       $0xd8, Y0, Y0
+	VMOVDQU      X0, (CX)
+	VPADDW       Y6, Y5, Y0
+	VPADDW       Y4, Y3, Y7
+	VPADDW       Y0, Y7, Y0
+	VPADDW       Y0, Y12, Y0
+	VPSRAW       $0x02, Y0, Y0
+	VPBLENDVB    Y8, Y0, Y5, Y0
+	MOVQ         AX, CX
+	MOVQ         DX, BX
+	ADDQ         BX, CX
+	VPACKUSWB    Y0, Y0, Y0
+	VPERMQ       $0xd8, Y0, Y0
+	VMOVDQU      X0, (CX)
+	VPSLLW       $0x01, Y2, Y0
+	VPADDW       Y1, Y0, Y0
+	VPSLLW       $0x01, Y3, Y1
+	VPSLLW       $0x01, Y4, Y7
+	VPADDW       Y1, Y7, Y1
+	VPADDW       Y0, Y1, Y0
+	VPADDW       Y5, Y9, Y1
+	VPADDW       Y0, Y1, Y0
+	VPSRAW       $0x03, Y0, Y0
+	VPSLLW       $0x01, Y2, Y1
+	VPADDW       Y1, Y3, Y1
+	VPADDW       Y5, Y12, Y7
+	VPADDW       Y1, Y7, Y1
+	VPSRAW       $0x02, Y1, Y1
+	VPBLENDVB    Y10, Y0, Y1, Y0
+	VPBLENDVB    Y11, Y0, Y3, Y0
+	MOVQ         AX, CX
+	SUBQ         DX, CX
+	VPACKUSWB    Y0, Y0, Y0
+	VPERMQ       $0xd8, Y0, Y0
+	VMOVDQU      X0, (CX)
+	VPSLLW       $0x01, Y5, Y0
+	VPADDW       Y6, Y0, Y0
+	VPSLLW       $0x01, Y4, Y1
+	VPSLLW       $0x01, Y3, Y3
+	VPADDW       Y1, Y3, Y1
+	VPADDW       Y0, Y1, Y0
+	VPADDW       Y2, Y9, Y1
+	VPADDW       Y0, Y1, Y0
+	VPSRAW       $0x03, Y0, Y0
+	VPSLLW       $0x01, Y5, Y1
+	VPADDW       Y1, Y4, Y1
+	VPADDW       Y2, Y12, Y2
+	VPADDW       Y1, Y2, Y1
+	VPSRAW       $0x02, Y1, Y1
+	VPBLENDVB    Y8, Y0, Y1, Y0
+	VPBLENDVB    Y11, Y0, Y4, Y0
+	VPACKUSWB    Y0, Y0, Y0
+	VPERMQ       $0xd8, Y0, Y0
+	VMOVDQU      X0, (AX)
+	VZEROUPPER
+	RET
+
 // func sixTapHoriz16x16(dst []byte, dstStride int, src []byte, srcStride int)
 // Requires: SSE2, SSE4.1
 TEXT ·sixTapHoriz16x16(SB), NOSPLIT, $0-64

@@ -291,3 +291,10 @@ func SixTapHV(dst []byte, dstStride, dstOff int, src []byte, srcStride, srcOff, 
 func BilinearChroma(dst []byte, dstStride, dstOff int, src []byte, srcStride, srcOff, w, h, xFrac, yFrac int) {
 	bilinearChromaDispatch(dst, dstStride, dstOff, src, srcStride, srcOff, w, h, xFrac, yFrac)
 }
+
+func deblockFits(plane []byte, offset, stride, before, after int) bool {
+	if stride <= 0 || offset < before*stride {
+		return false
+	}
+	return len(plane)-offset >= after*stride+16
+}

@@ -74,6 +74,14 @@ func satd8x8AVX2(src []byte, srcStride int, ref []byte, refStride int) int
 
 //
 //go:noescape
+func deblockLumaNormalAVX2(plane []byte, offset int, stride int, tc0 *[16]uint8, bs *[16]uint8, alpha int32, beta int32)
+
+//
+//go:noescape
+func deblockLumaStrongAVX2(plane []byte, offset int, stride int, alpha int32, beta int32)
+
+//
+//go:noescape
 func sixTapHoriz16x16(dst []byte, dstStride int, src []byte, srcStride int)
 
 //

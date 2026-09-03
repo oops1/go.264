@@ -32,6 +32,8 @@ func main() {
 	genSATD4x4AVX2()
 	genSATD8x8()
 	genSATD8x8AVX2()
+	genDeblockLumaNormalAVX2()
+	genDeblockLumaStrongAVX2()
 
 	for _, size := range lumaMCSizes {
 		genSixTapHoriz(size[0], size[1])
@@ -1338,4 +1340,271 @@ func broadcastGP32(g reg.Register) reg.VecVirtual {
 	MOVD(g, x)
 	PSHUFD(Imm(0), x, x)
 	return x
+}
+
+func yBroadcast(v uint32) reg.VecVirtual {
+	g := GP32()
+	MOVL(U32(v), g)
+	x := XMM()
+	VMOVD(g, x)
+	y := YMM()
+	VPBROADCASTW(x, y)
+	return y
+}
+
+func yBroadcastReg(g reg.GPVirtual) reg.VecVirtual {
+	x := XMM()
+	VMOVD(g.As32(), x)
+	y := YMM()
+	VPBROADCASTW(x, y)
+	return y
+}
+
+func yAdd(a, b reg.VecVirtual) reg.VecVirtual {
+	d := YMM()
+	VPADDW(a, b, d)
+	return d
+}
+
+func ySub(a, b reg.VecVirtual) reg.VecVirtual {
+	d := YMM()
+	VPSUBW(b, a, d)
+	return d
+}
+
+func yAbs(a reg.VecVirtual) reg.VecVirtual {
+	d := YMM()
+	VPABSW(a, d)
+	return d
+}
+
+func yGreater(a, b reg.VecVirtual) reg.VecVirtual {
+	d := YMM()
+	VPCMPGTW(b, a, d)
+	return d
+}
+
+func yEqual(a, b reg.VecVirtual) reg.VecVirtual {
+	d := YMM()
+	VPCMPEQW(a, b, d)
+	return d
+}
+
+func yAnd(a, b reg.VecVirtual) reg.VecVirtual {
+	d := YMM()
+	VPAND(a, b, d)
+	return d
+}
+
+func yShl(a reg.VecVirtual, n uint64) reg.VecVirtual {
+	d := YMM()
+	VPSLLW(Imm(n), a, d)
+	return d
+}
+
+func yShr(a reg.VecVirtual, n uint64) reg.VecVirtual {
+	d := YMM()
+	VPSRAW(Imm(n), a, d)
+	return d
+}
+
+func yMin(a, b reg.VecVirtual) reg.VecVirtual {
+	d := YMM()
+	VPMINSW(a, b, d)
+	return d
+}
+
+func yMax(a, b reg.VecVirtual) reg.VecVirtual {
+	d := YMM()
+	VPMAXSW(a, b, d)
+	return d
+}
+
+func ySelect(mask, ifTrue, ifFalse reg.VecVirtual) reg.VecVirtual {
+	d := YMM()
+	VPBLENDVB(mask, ifTrue, ifFalse, d)
+	return d
+}
+
+func yClip(a, limit, negLimit reg.VecVirtual) reg.VecVirtual {
+	return yMax(yMin(a, limit), negLimit)
+}
+
+func genDeblockLumaNormalAVX2() {
+	TEXT("deblockLumaNormalAVX2", NOSPLIT,
+		"func(plane []byte, offset int, stride int, tc0 *[16]uint8, bs *[16]uint8, alpha int32, beta int32)")
+	Pragma("noescape")
+	Doc("")
+	base := Load(Param("plane").Base(), GP64())
+	offset := Load(Param("offset"), GP64())
+	stride := Load(Param("stride"), GP64())
+	tc0Ptr := Load(Param("tc0"), GP64())
+	bsPtr := Load(Param("bs"), GP64())
+	alphaGP := Load(Param("alpha"), GP32())
+	betaGP := Load(Param("beta"), GP32())
+	ADDQ(offset, base)
+
+	rowPtr := GP64()
+	MOVQ(base, rowPtr)
+	back := GP64()
+	MOVQ(stride, back)
+	IMUL3Q(Imm(3), back, back)
+	SUBQ(back, rowPtr)
+
+	rows := make([]reg.VecVirtual, 6)
+	for i := range rows {
+		v := YMM()
+		VPMOVZXBW(Mem{Base: rowPtr}, v)
+		rows[i] = v
+		if i != len(rows)-1 {
+			ADDQ(stride, rowPtr)
+		}
+	}
+	p2, p1, p0, q0, q1, q2 := rows[0], rows[1], rows[2], rows[3], rows[4], rows[5]
+
+	tc0V := YMM()
+	VPMOVZXBW(Mem{Base: tc0Ptr}, tc0V)
+	zero := YMM()
+	VPXOR(zero, zero, zero)
+
+	apply := func() reg.VecVirtual {
+		alphaV := yBroadcastReg(alphaGP.(reg.GPVirtual))
+		betaV := yBroadcastReg(betaGP.(reg.GPVirtual))
+		bsV := YMM()
+		VPMOVZXBW(Mem{Base: bsPtr}, bsV)
+		m := yAnd(yGreater(alphaV, yAbs(ySub(p0, q0))), yGreater(bsV, zero))
+		m = yAnd(m, yGreater(betaV, yAbs(ySub(p1, p0))))
+		return yAnd(m, yGreater(betaV, yAbs(ySub(q1, q0))))
+	}()
+
+	betaV := yBroadcastReg(betaGP.(reg.GPVirtual))
+	nearP := yAnd(apply, yGreater(betaV, yAbs(ySub(p2, p0))))
+	nearQ := yAnd(apply, yGreater(betaV, yAbs(ySub(q2, q0))))
+
+	outP0, outQ0 := func() (reg.VecVirtual, reg.VecVirtual) {
+		tc := ySub(ySub(tc0V, nearP), nearQ)
+		d := yShr(yAdd(yAdd(yShl(ySub(q0, p0), 2), ySub(p1, q1)), yBroadcast(4)), 3)
+		d = yClip(d, tc, ySub(zero, tc))
+		full := yBroadcast(255)
+		a := yMax(yMin(yAdd(p0, d), full), zero)
+		b := yMax(yMin(ySub(q0, d), full), zero)
+		return ySelect(apply, a, p0), ySelect(apply, b, q0)
+	}()
+
+	mid := yShr(yAdd(yAdd(p0, q0), yBroadcast(1)), 1)
+	negTc0 := ySub(zero, tc0V)
+	stepP := yClip(yShr(ySub(yAdd(p2, mid), yShl(p1, 1)), 1), tc0V, negTc0)
+	outP1 := ySelect(nearP, yAdd(p1, stepP), p1)
+	stepQ := yClip(yShr(ySub(yAdd(q2, mid), yShl(q1, 1)), 1), tc0V, negTc0)
+	outQ1 := ySelect(nearQ, yAdd(q1, stepQ), q1)
+
+	storePtr := GP64()
+	MOVQ(base, storePtr)
+	back2 := GP64()
+	MOVQ(stride, back2)
+	SHLQ(Imm(1), back2)
+	SUBQ(back2, storePtr)
+	for _, v := range []reg.VecVirtual{outP1, outP0, outQ0, outQ1} {
+		yStoreBytes(v, storePtr)
+		ADDQ(stride, storePtr)
+	}
+	VZEROUPPER()
+	RET()
+}
+
+func yStoreBytes(v reg.VecVirtual, ptr reg.Register) {
+	packed := YMM()
+	VPACKUSWB(v, v, packed)
+	ordered := YMM()
+	VPERMQ(Imm(0xD8), packed, ordered)
+	VMOVDQU(ordered.AsX(), Mem{Base: ptr})
+}
+
+func genDeblockLumaStrongAVX2() {
+	TEXT("deblockLumaStrongAVX2", NOSPLIT,
+		"func(plane []byte, offset int, stride int, alpha int32, beta int32)")
+	Pragma("noescape")
+	Doc("")
+	base := Load(Param("plane").Base(), GP64())
+	offset := Load(Param("offset"), GP64())
+	stride := Load(Param("stride"), GP64())
+	alphaGP := Load(Param("alpha"), GP32())
+	betaGP := Load(Param("beta"), GP32())
+	ADDQ(offset, base)
+
+	rowPtr := GP64()
+	MOVQ(base, rowPtr)
+	back := GP64()
+	MOVQ(stride, back)
+	SHLQ(Imm(2), back)
+	SUBQ(back, rowPtr)
+
+	rows := make([]reg.VecVirtual, 8)
+	for i := range rows {
+		v := YMM()
+		VPMOVZXBW(Mem{Base: rowPtr}, v)
+		rows[i] = v
+		if i != len(rows)-1 {
+			ADDQ(stride, rowPtr)
+		}
+	}
+	p3, p2, p1, p0 := rows[0], rows[1], rows[2], rows[3]
+	q0, q1, q2, q3 := rows[4], rows[5], rows[6], rows[7]
+
+	edge, strongP, strongQ := func() (reg.VecVirtual, reg.VecVirtual, reg.VecVirtual) {
+		alphaV := yBroadcastReg(alphaGP.(reg.GPVirtual))
+		betaV := yBroadcastReg(betaGP.(reg.GPVirtual))
+		gap := yAbs(ySub(p0, q0))
+		e := yAnd(yGreater(alphaV, gap), yGreater(betaV, yAbs(ySub(p1, p0))))
+		e = yAnd(e, yGreater(betaV, yAbs(ySub(q1, q0))))
+		narrow := yGreater(yAdd(yShr(alphaV, 2), yBroadcast(2)), gap)
+		sp := yAnd(yAnd(e, narrow), yGreater(betaV, yAbs(ySub(p2, p0))))
+		sq := yAnd(yAnd(e, narrow), yGreater(betaV, yAbs(ySub(q2, q0))))
+		return e, sp, sq
+	}()
+
+	four := yBroadcast(4)
+	two := yBroadcast(2)
+	triple := func(v reg.VecVirtual) reg.VecVirtual { return yAdd(yShl(v, 1), v) }
+
+	at := func(k int) reg.Register {
+		p := GP64()
+		MOVQ(base, p)
+		if k != 0 {
+			step := GP64()
+			MOVQ(stride, step)
+			n := k
+			if n < 0 {
+				n = -n
+			}
+			if n != 1 {
+				IMUL3Q(Imm(uint64(n)), step, step)
+			}
+			if k < 0 {
+				SUBQ(step, p)
+			} else {
+				ADDQ(step, p)
+			}
+		}
+		return p
+	}
+
+	yStoreBytes(ySelect(strongP,
+		yShr(yAdd(yAdd(yShl(p3, 1), triple(p2)), yAdd(yAdd(p1, p0), yAdd(q0, four))), 3), p2), at(-3))
+	yStoreBytes(ySelect(strongQ,
+		yShr(yAdd(yAdd(yShl(q3, 1), triple(q2)), yAdd(yAdd(q1, q0), yAdd(p0, four))), 3), q2), at(2))
+
+	yStoreBytes(ySelect(strongP, yShr(yAdd(yAdd(yAdd(p2, p1), yAdd(p0, q0)), two), 2), p1), at(-2))
+	yStoreBytes(ySelect(strongQ, yShr(yAdd(yAdd(yAdd(q2, q1), yAdd(q0, p0)), two), 2), q1), at(1))
+
+	wideP0 := yShr(yAdd(yAdd(yAdd(p2, yShl(p1, 1)), yAdd(yShl(p0, 1), yShl(q0, 1))), yAdd(q1, four)), 3)
+	thinP0 := yShr(yAdd(yAdd(yShl(p1, 1), p0), yAdd(q1, two)), 2)
+	yStoreBytes(ySelect(edge, ySelect(strongP, wideP0, thinP0), p0), at(-1))
+
+	wideQ0 := yShr(yAdd(yAdd(yAdd(q2, yShl(q1, 1)), yAdd(yShl(q0, 1), yShl(p0, 1))), yAdd(p1, four)), 3)
+	thinQ0 := yShr(yAdd(yAdd(yShl(q1, 1), q0), yAdd(p1, two)), 2)
+	yStoreBytes(ySelect(edge, ySelect(strongQ, wideQ0, thinQ0), q0), at(0))
+
+	VZEROUPPER()
+	RET()
 }

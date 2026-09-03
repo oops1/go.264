@@ -1,5 +1,7 @@
 package deblock
 
+import "github.com/oops1/go.264/internal/simd"
+
 func clip3(lo, hi, x int) int {
 	if x < lo {
 		return lo
@@ -164,7 +166,47 @@ func FilterLumaEdgeVertical(plane []byte, stride, offset int, bS [4]uint8, index
 }
 
 func FilterLumaEdgeHorizontal(plane []byte, stride, offset int, bS [4]uint8, indexA, indexB int) {
+	if acceleratedLumaEdge(plane, offset, stride, bS, indexA, indexB) {
+		return
+	}
 	filterEdge(plane, offset, 1, stride, 16, 4, bS, indexA, indexB, false)
+}
+
+func acceleratedLumaEdge(plane []byte, offset, stride int, bS [4]uint8, indexA, indexB int) bool {
+	alpha := int(alphaTable[indexA])
+	beta := int(betaTable[indexB])
+	if alpha == 0 || beta == 0 {
+		return true
+	}
+	strong, weak := 0, 0
+	for _, b := range bS {
+		switch {
+		case b == 0:
+		case b == 4:
+			strong++
+		default:
+			weak++
+		}
+	}
+	if strong+weak == 0 {
+		return true
+	}
+	if strong == 4 {
+		return simd.DeblockLumaStrong(plane, offset, stride, alpha, beta)
+	}
+	if strong != 0 {
+		return false
+	}
+	var tc0, bs [16]uint8
+	for g, b := range bS {
+		for i := 0; i < 4; i++ {
+			bs[g*4+i] = b
+			if b != 0 {
+				tc0[g*4+i] = tc0Table[b-1][indexA]
+			}
+		}
+	}
+	return simd.DeblockLumaNormal(plane, offset, stride, &tc0, &bs, alpha, beta)
 }
 
 func FilterChromaEdgeVertical(plane []byte, stride, offset int, bS [4]uint8, indexA, indexB int) {

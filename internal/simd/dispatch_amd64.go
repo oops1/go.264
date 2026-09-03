@@ -231,3 +231,19 @@ func bilinearChromaDispatch(dst []byte, dstStride, dstOff int, src []byte, srcSt
 	}
 	bilinearChromaGeneric(dst, dstStride, dstOff, src, srcStride, srcOff, w, h, xFrac, yFrac)
 }
+
+func DeblockLumaNormal(plane []byte, offset, stride int, tc0, bs *[16]uint8, alpha, beta int) bool {
+	if !hasAVX2 || !deblockFits(plane, offset, stride, 3, 2) {
+		return false
+	}
+	deblockLumaNormalAVX2(plane, offset, stride, tc0, bs, int32(alpha), int32(beta))
+	return true
+}
+
+func DeblockLumaStrong(plane []byte, offset, stride, alpha, beta int) bool {
+	if !hasAVX2 || !deblockFits(plane, offset, stride, 4, 3) {
+		return false
+	}
+	deblockLumaStrongAVX2(plane, offset, stride, int32(alpha), int32(beta))
+	return true
+}

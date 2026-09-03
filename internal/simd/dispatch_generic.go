@@ -51,3 +51,11 @@ func sixTapHVDispatch(dst []byte, dstStride, dstOff int, src []byte, srcStride, 
 func bilinearChromaDispatch(dst []byte, dstStride, dstOff int, src []byte, srcStride, srcOff, w, h, xFrac, yFrac int) {
 	bilinearChromaGeneric(dst, dstStride, dstOff, src, srcStride, srcOff, w, h, xFrac, yFrac)
 }
+
+func DeblockLumaNormal(plane []byte, offset, stride int, tc0, bs *[16]uint8, alpha, beta int) bool {
+	return false
+}
+
+func DeblockLumaStrong(plane []byte, offset, stride, alpha, beta int) bool {
+	return false
+}
