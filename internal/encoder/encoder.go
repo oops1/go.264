@@ -9,6 +9,7 @@ import (
 
 	"github.com/oops1/go.264/internal/bits"
 	"github.com/oops1/go.264/internal/frame"
+	"github.com/oops1/go.264/internal/level"
 	"github.com/oops1/go.264/internal/loopfilter"
 	"github.com/oops1/go.264/internal/nal"
 	"github.com/oops1/go.264/internal/syntax"
@@ -243,42 +244,6 @@ func (e *Encoder) SPS() *syntax.SPS { return e.sps }
 
 func (e *Encoder) PPS() *syntax.PPS { return e.pps }
 
-var levelLimits = []struct {
-	level     uint8
-	maxMBPS   int
-	maxFS     int
-	maxDpbMbs int
-	maxBR     int
-	maxCPB    int
-}{
-	{10, 1485, 99, 396, 64, 175},
-	{11, 3000, 396, 900, 192, 500},
-	{12, 6000, 396, 2376, 384, 1000},
-	{13, 11880, 396, 2376, 768, 2000},
-	{20, 11880, 396, 2376, 2000, 2000},
-	{21, 19800, 792, 4752, 4000, 4000},
-	{22, 20250, 1620, 8100, 4000, 4000},
-	{30, 40500, 1620, 8100, 10000, 10000},
-	{31, 108000, 3600, 18000, 14000, 14000},
-	{32, 216000, 5120, 20480, 20000, 20000},
-	{40, 245760, 8192, 32768, 20000, 25000},
-	{41, 245760, 8192, 32768, 50000, 62500},
-	{42, 522240, 8704, 34816, 50000, 62500},
-	{50, 589824, 22080, 110400, 135000, 135000},
-	{51, 983040, 36864, 184320, 240000, 240000},
-	{52, 2073600, 36864, 184320, 240000, 240000},
-	{60, 4177920, 139264, 696320, 240000, 240000},
-	{61, 8355840, 139264, 696320, 480000, 480000},
-	{62, 16711680, 139264, 696320, 800000, 800000},
-}
-
-func cpbBrNalFactor(profile uint8) int64 {
-	if profile == syntax.ProfileHigh {
-		return 1500
-	}
-	return 1200
-}
-
 func (e *Encoder) peakBitrateKbps() int {
 	peak := e.cfg.BitrateKbps
 	if e.cfg.VBVMaxrateKbps > peak {
@@ -287,41 +252,25 @@ func (e *Encoder) peakBitrateKbps() int {
 	return peak
 }
 
-func (e *Encoder) pickLevel(profile uint8) (uint8, error) {
-	frameMBs := e.widthMBs * e.heightMBs
-	rate := frameMBs * e.cfg.FPSNum / e.cfg.FPSDen
-	factor := cpbBrNalFactor(profile)
-	bitrate := int64(e.peakBitrateKbps()) * 1000
-	buffer := int64(e.cfg.VBVBufferKbits) * 1000
-	for _, l := range levelLimits {
-		if frameMBs > l.maxFS || rate > l.maxMBPS {
-			continue
-		}
-		if e.widthMBs*e.widthMBs > 8*l.maxFS || e.heightMBs*e.heightMBs > 8*l.maxFS {
-			continue
-		}
-		dpbFrames := l.maxDpbMbs / frameMBs
-		if dpbFrames > 16 {
-			dpbFrames = 16
-		}
-		if e.refCap() > dpbFrames {
-			continue
-		}
-		if bitrate > int64(l.maxBR)*factor {
-			continue
-		}
-		if buffer > int64(l.maxCPB)*factor {
-			continue
-		}
-		return l.level, nil
+func (e *Encoder) levelStream(profile uint8) level.Stream {
+	return level.Stream{
+		Width:       e.cfg.Width,
+		Height:      e.cfg.Height,
+		FPSNum:      e.cfg.FPSNum,
+		FPSDen:      e.cfg.FPSDen,
+		RefFrames:   e.refCap(),
+		PeakKbps:    e.peakBitrateKbps(),
+		BufferKbits: e.cfg.VBVBufferKbits,
+		ProfileIDC:  profile,
 	}
-	top := levelLimits[len(levelLimits)-1]
-	return 0, fmt.Errorf("%w: no level carries %dx%d at %d/%d frames per second, %d reference frames, "+
-		"%d kbit/s and a %d kbit buffer; the highest level allows %d macroblocks, %d macroblocks per second, "+
-		"%d kbit/s and %d kbit",
-		ErrConfig, e.cfg.Width, e.cfg.Height, e.cfg.FPSNum, e.cfg.FPSDen, e.refCap(),
-		e.peakBitrateKbps(), e.cfg.VBVBufferKbits,
-		top.maxFS, top.maxMBPS, int64(top.maxBR)*factor/1000, int64(top.maxCPB)*factor/1000)
+}
+
+func (e *Encoder) pickLevel(profile uint8) (uint8, error) {
+	idc, err := level.Select(e.levelStream(profile))
+	if err != nil {
+		return 0, fmt.Errorf("%w: %w", ErrConfig, err)
+	}
+	return idc, nil
 }
 
 func (e *Encoder) buildParameterSets() error {
@@ -335,14 +284,14 @@ func (e *Encoder) buildParameterSets() error {
 		profile = syntax.ProfileHigh
 		constraints = 0
 	}
-	level, err := e.pickLevel(profile)
+	levelIDC, err := e.pickLevel(profile)
 	if err != nil {
 		return err
 	}
 	sps := &syntax.SPS{
 		ProfileIDC:                profile,
 		ConstraintSet:             constraints,
-		LevelIDC:                  level,
+		LevelIDC:                  levelIDC,
 		ID:                        0,
 		ChromaFormatIDC:           syntax.Chroma420,
 		Log2MaxFrameNumMinus4:     4,

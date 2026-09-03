@@ -4,70 +4,9 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/oops1/go.264/internal/level"
 	"github.com/oops1/go.264/internal/syntax"
 )
-
-func TestLevelTableIsMonotonic(t *testing.T) {
-	columns := []struct {
-		name string
-		of   func(int) int
-	}{
-		{"MaxMBPS", func(i int) int { return levelLimits[i].maxMBPS }},
-		{"MaxFS", func(i int) int { return levelLimits[i].maxFS }},
-		{"MaxDpbMbs", func(i int) int { return levelLimits[i].maxDpbMbs }},
-		{"MaxBR", func(i int) int { return levelLimits[i].maxBR }},
-		{"MaxCPB", func(i int) int { return levelLimits[i].maxCPB }},
-	}
-	for _, c := range columns {
-		for i := 1; i < len(levelLimits); i++ {
-			if c.of(i) < c.of(i-1) {
-				t.Errorf("%s falls from %d at level %d to %d at level %d",
-					c.name, c.of(i-1), levelLimits[i-1].level, c.of(i), levelLimits[i].level)
-			}
-		}
-	}
-	for i := 1; i < len(levelLimits); i++ {
-		if levelLimits[i].level <= levelLimits[i-1].level {
-			t.Errorf("level %d does not follow level %d", levelLimits[i].level, levelLimits[i-1].level)
-		}
-	}
-	if levelLimits[0].level != 10 {
-		t.Errorf("the table starts at level %d, want 10", levelLimits[0].level)
-	}
-	for _, l := range levelLimits {
-		if l.maxCPB < l.maxBR {
-			t.Errorf("level %d holds %d of buffer against a peak of %d, so it cannot hold one second",
-				l.level, l.maxCPB, l.maxBR)
-		}
-		if l.maxDpbMbs < l.maxFS {
-			t.Errorf("level %d buffers %d macroblocks but allows pictures of %d",
-				l.level, l.maxDpbMbs, l.maxFS)
-		}
-		if l.maxMBPS < l.maxFS {
-			t.Errorf("level %d allows %d macroblocks per second but pictures of %d",
-				l.level, l.maxMBPS, l.maxFS)
-		}
-	}
-}
-
-func TestLevelTableMatchesTheDecoderBufferSizes(t *testing.T) {
-	for _, l := range levelLimits {
-		sps := &syntax.SPS{
-			LevelIDC:                  l.level,
-			PicWidthInMbsMinus1:       0,
-			PicHeightInMapUnitsMinus1: 0,
-			FrameMbsOnly:              true,
-		}
-		want := l.maxDpbMbs
-		if want > 16 {
-			want = 16
-		}
-		if got := sps.MaxDpbFrames(); got != want {
-			t.Errorf("level %d: the decoder allows %d frames of buffer for one macroblock, the encoder table says %d",
-				l.level, got, want)
-		}
-	}
-}
 
 func levelFor(t *testing.T, cfg Config) uint8 {
 	t.Helper()
@@ -76,6 +15,38 @@ func levelFor(t *testing.T, cfg Config) uint8 {
 		t.Fatalf("New: %v", err)
 	}
 	return enc.SPS().LevelIDC
+}
+
+func limitsFor(t *testing.T, idc uint8) level.Limits {
+	t.Helper()
+	l, ok := level.Lookup(idc)
+	if !ok {
+		t.Fatalf("level %d is not one the table defines", idc)
+	}
+	return l
+}
+
+func TestLevelStreamCarriesTheConfiguration(t *testing.T) {
+	cfg := Config{Width: 1280, Height: 720, FPSNum: 30, FPSDen: 1, GOPSize: 30, QP: 26,
+		RefFrames: 3, LongTermReferences: 2, BitrateKbps: 4000, VBVMaxrateKbps: 6000,
+		VBVBufferKbits: 12000}
+	enc, err := New(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := level.Stream{
+		Width:       1280,
+		Height:      720,
+		FPSNum:      30,
+		FPSDen:      1,
+		RefFrames:   5,
+		PeakKbps:    6000,
+		BufferKbits: 12000,
+		ProfileIDC:  syntax.ProfileHigh,
+	}
+	if got := enc.levelStream(syntax.ProfileHigh); got != want {
+		t.Errorf("levelStream = %+v, want %+v", got, want)
+	}
 }
 
 func TestLevelIgnoresTheBitrateWhenNoneIsAsked(t *testing.T) {
@@ -136,12 +107,7 @@ func TestLevelRisesWithTheBufferSize(t *testing.T) {
 	if big <= plain {
 		t.Fatalf("a 60000 kbit buffer announces level %d, no higher than level %d without one", big, plain)
 	}
-	limit := int64(0)
-	for _, l := range levelLimits {
-		if l.level == big {
-			limit = int64(l.maxCPB) * cpbBrNalFactor(syntax.ProfileBaseline)
-		}
-	}
+	limit := limitsFor(t, big).MaxBufferBits(syntax.ProfileBaseline)
 	if limit < 60000*1000 {
 		t.Fatalf("level %d allows only %d bits of buffer, below the 60000 kbit asked for", big, limit)
 	}
@@ -174,6 +140,9 @@ func TestLevelRejectsABitrateNoLevelCarries(t *testing.T) {
 	if !errors.Is(err, ErrConfig) {
 		t.Fatalf("the error is %v, want one wrapping ErrConfig", err)
 	}
+	if !errors.Is(err, level.ErrNoLevel) {
+		t.Fatalf("the error is %v, want one wrapping level.ErrNoLevel", err)
+	}
 	t.Logf("%v", err)
 }
 
@@ -187,16 +156,10 @@ func TestLevelRejectsABufferNoLevelCarries(t *testing.T) {
 
 func TestLevelCoversTheReferenceCount(t *testing.T) {
 	cfg := Config{Width: 1920, Height: 1088, FPSNum: 30, FPSDen: 1, GOPSize: 30, QP: 26, RefFrames: 5}
-	level := levelFor(t, cfg)
+	idc := levelFor(t, cfg)
 	frameMBs := 120 * 68
-	for _, l := range levelLimits {
-		if l.level != level {
-			continue
-		}
-		if l.maxDpbMbs/frameMBs < 5 {
-			t.Fatalf("level %d holds %d frames of buffer at 1920x1088, below the five asked for",
-				level, l.maxDpbMbs/frameMBs)
-		}
+	if held := limitsFor(t, idc).MaxDpbMbs / frameMBs; held < 5 {
+		t.Fatalf("level %d holds %d frames of buffer at 1920x1088, below the five asked for", idc, held)
 	}
 }
 
@@ -206,32 +169,22 @@ func TestLevelCoversTheLongTermSlots(t *testing.T) {
 	cfg.LongTermReferences = 4
 	held := levelFor(t, cfg)
 	frameMBs := 120 * 68
-	for _, l := range levelLimits {
-		if l.level != held {
-			continue
-		}
-		if l.maxDpbMbs/frameMBs < 8 {
-			t.Fatalf("level %d holds %d frames of buffer at 1920x1088, below the eight the slots need",
-				held, l.maxDpbMbs/frameMBs)
-		}
+	if frames := limitsFor(t, held).MaxDpbMbs / frameMBs; frames < 8 {
+		t.Fatalf("level %d holds %d frames of buffer at 1920x1088, below the eight the slots need",
+			held, frames)
 	}
 	t.Logf("four references announce level %d, four more long-term slots announce level %d", plain, held)
 }
 
 func TestLevelCoversTheAspectRatio(t *testing.T) {
 	cfg := Config{Width: 4096, Height: 64, FPSNum: 25, FPSDen: 1, GOPSize: 25, QP: 26}
-	level := levelFor(t, cfg)
+	idc := levelFor(t, cfg)
 	widthMBs := 256
-	for _, l := range levelLimits {
-		if l.level != level {
-			continue
-		}
-		if widthMBs*widthMBs > 8*l.maxFS {
-			t.Fatalf("level %d allows %d macroblocks of picture, too few for a picture %d macroblocks wide",
-				level, l.maxFS, widthMBs)
-		}
+	if maxFS := limitsFor(t, idc).MaxFS; widthMBs*widthMBs > 8*maxFS {
+		t.Fatalf("level %d allows %d macroblocks of picture, too few for a picture %d macroblocks wide",
+			idc, maxFS, widthMBs)
 	}
-	t.Logf("4096x64 announces level %d", level)
+	t.Logf("4096x64 announces level %d", idc)
 }
 
 func TestLevelStreamsStayReadable(t *testing.T) {
@@ -245,20 +198,14 @@ func TestLevelStreamsStayReadable(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	level := enc.SPS().LevelIDC
-	factor := cpbBrNalFactor(syntax.ProfileMain)
-	for _, l := range levelLimits {
-		if l.level != level {
-			continue
-		}
-		if int64(cfg.VBVMaxrateKbps)*1000 > int64(l.maxBR)*factor {
-			t.Fatalf("level %d allows %d bit/s, below the %d asked for",
-				level, int64(l.maxBR)*factor, cfg.VBVMaxrateKbps*1000)
-		}
-		if int64(cfg.VBVBufferKbits)*1000 > int64(l.maxCPB)*factor {
-			t.Fatalf("level %d allows %d bits of buffer, below the %d asked for",
-				level, int64(l.maxCPB)*factor, cfg.VBVBufferKbits*1000)
-		}
+	idc := enc.SPS().LevelIDC
+	l := limitsFor(t, idc)
+	if peak := l.MaxBitsPerSecond(syntax.ProfileMain); int64(cfg.VBVMaxrateKbps)*1000 > peak {
+		t.Fatalf("level %d allows %d bit/s, below the %d asked for", idc, peak, cfg.VBVMaxrateKbps*1000)
 	}
-	t.Logf("176x144 at 900 kbit/s with a 900 kbit buffer announces level %d", level)
+	if buffer := l.MaxBufferBits(syntax.ProfileMain); int64(cfg.VBVBufferKbits)*1000 > buffer {
+		t.Fatalf("level %d allows %d bits of buffer, below the %d asked for",
+			idc, buffer, cfg.VBVBufferKbits*1000)
+	}
+	t.Logf("176x144 at 900 kbit/s with a 900 kbit buffer announces level %d", idc)
 }

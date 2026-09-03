@@ -1,6 +1,12 @@
 package vaapi
 
-import "testing"
+import (
+	"errors"
+	"testing"
+
+	"github.com/oops1/go.264/internal/level"
+	"github.com/oops1/go.264/internal/syntax"
+)
 
 func requireAdapter(t *testing.T) {
 	t.Helper()
@@ -157,4 +163,112 @@ func TestCloseIsSafeTwiceAndStopsFurtherWork(t *testing.T) {
 	if _, err := enc.Encode(movingPattern(0)); err == nil {
 		t.Fatal("a closed encoder accepted a frame")
 	}
+}
+
+func TestProfileIDCCoversEveryCandidate(t *testing.T) {
+	want := map[Profile]uint8{
+		ProfileH264ConstrainedBaseline: syntax.ProfileBaseline,
+		ProfileH264Main:                syntax.ProfileMain,
+		ProfileH264High:                syntax.ProfileHigh,
+	}
+	for _, cand := range candidateProfiles {
+		if got := profileIDC(cand.profile); got != want[cand.profile] {
+			t.Errorf("VA profile %d maps to profile_idc %d, want %d", cand.profile, got, want[cand.profile])
+		}
+	}
+}
+
+func TestPickLevelIDCFollowsThePicture(t *testing.T) {
+	cases := []struct {
+		name    string
+		cfg     Config
+		profile Profile
+		want    uint8
+	}{
+		{"quarter CIF", Config{Width: 176, Height: 144, FPSNum: 25, FPSDen: 1}, ProfileH264Main, 11},
+		{"CIF", Config{Width: 352, Height: 288, FPSNum: 25, FPSDen: 1}, ProfileH264Main, 13},
+		{"standard definition", Config{Width: 640, Height: 480, FPSNum: 30, FPSDen: 1},
+			ProfileH264ConstrainedBaseline, 30},
+		{"720p", Config{Width: 1280, Height: 720, FPSNum: 30, FPSDen: 1}, ProfileH264Main, 31},
+		{"1080p", Config{Width: 1920, Height: 1080, FPSNum: 30, FPSDen: 1}, ProfileH264Main, 40},
+		{"1080p at 60 in High", Config{Width: 1920, Height: 1080, FPSNum: 60, FPSDen: 1}, ProfileH264High, 42},
+		{"2160p", Config{Width: 3840, Height: 2160, FPSNum: 30, FPSDen: 1}, ProfileH264Main, 51},
+	}
+	for _, c := range cases {
+		got, err := pickLevelIDC(c.cfg, c.profile)
+		if err != nil {
+			t.Errorf("%s: pickLevelIDC = %v", c.name, err)
+			continue
+		}
+		if got != c.want {
+			t.Errorf("%s: %dx%d at %d/%d frames per second announces level %d, want %d",
+				c.name, c.cfg.Width, c.cfg.Height, c.cfg.FPSNum, c.cfg.FPSDen, got, c.want)
+		}
+	}
+}
+
+func TestPickLevelIDCCarriesWhatTheSequenceAnnounces(t *testing.T) {
+	cases := []Config{
+		{Width: 176, Height: 144, FPSNum: 25, FPSDen: 1},
+		{Width: 1280, Height: 720, FPSNum: 30, FPSDen: 1},
+		{Width: 1920, Height: 1080, FPSNum: 30, FPSDen: 1},
+		{Width: 3840, Height: 2160, FPSNum: 30, FPSDen: 1},
+	}
+	for _, cfg := range cases {
+		for _, cand := range candidateProfiles {
+			idc, err := pickLevelIDC(cfg, cand.profile)
+			if err != nil {
+				t.Errorf("%dx%d on VA profile %d: pickLevelIDC = %v", cfg.Width, cfg.Height, cand.profile, err)
+				continue
+			}
+			l, ok := level.Lookup(idc)
+			if !ok {
+				t.Errorf("%dx%d: level %d is not one the table defines", cfg.Width, cfg.Height, idc)
+				continue
+			}
+			frameMBs := mbAlign(cfg.Width) / 16 * (mbAlign(cfg.Height) / 16)
+			if frameMBs > l.MaxFS {
+				t.Errorf("%dx%d: level %d allows %d macroblocks, the picture holds %d",
+					cfg.Width, cfg.Height, idc, l.MaxFS, frameMBs)
+			}
+			if rate := frameMBs * cfg.FPSNum / cfg.FPSDen; rate > l.MaxMBPS {
+				t.Errorf("%dx%d: level %d allows %d macroblocks per second, the stream runs %d",
+					cfg.Width, cfg.Height, idc, l.MaxMBPS, rate)
+			}
+			if held := l.MaxDpbMbs / frameMBs; held < maxNumRefFrames {
+				t.Errorf("%dx%d: level %d holds %d frames, the sequence announces %d references",
+					cfg.Width, cfg.Height, idc, held, maxNumRefFrames)
+			}
+			announced := int64(roughBitsPerSecond(cfg.Width, cfg.Height, cfg.FPSNum, cfg.FPSDen))
+			if peak := l.MaxBitsPerSecond(profileIDC(cand.profile)); announced > peak {
+				t.Errorf("%dx%d: level %d allows %d bit/s, the sequence announces %d",
+					cfg.Width, cfg.Height, idc, peak, announced)
+			}
+		}
+	}
+}
+
+func TestPickLevelIDCLeavesTheCeilingForStreamsThatNeedIt(t *testing.T) {
+	idc, err := pickLevelIDC(Config{Width: 1920, Height: 1080, FPSNum: 25, FPSDen: 1}, ProfileH264Main)
+	if err != nil {
+		t.Fatalf("pickLevelIDC = %v", err)
+	}
+	top := level.Table()[len(level.Table())-1]
+	if idc >= top.IDC {
+		t.Fatalf("1080p at 25 frames per second announces level %d, the table ends at level %d",
+			idc, top.IDC)
+	}
+	t.Logf("1080p at 25 frames per second announces level %d", idc)
+}
+
+func TestPickLevelIDCRefusesAPictureNoLevelCarries(t *testing.T) {
+	cfg := Config{Width: 16384, Height: 16384, FPSNum: 30, FPSDen: 1}
+	idc, err := pickLevelIDC(cfg, ProfileH264Main)
+	if err == nil {
+		t.Fatalf("a picture above every level announced level %d", idc)
+	}
+	if !errors.Is(err, level.ErrNoLevel) {
+		t.Fatalf("the error is %v, want one wrapping level.ErrNoLevel", err)
+	}
+	t.Logf("%v", err)
 }

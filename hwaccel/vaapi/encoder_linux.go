@@ -4,6 +4,9 @@ import (
 	"errors"
 	"fmt"
 	"unsafe"
+
+	"github.com/oops1/go.264/internal/level"
+	"github.com/oops1/go.264/internal/syntax"
 )
 
 const (
@@ -12,7 +15,7 @@ const (
 	maxFrameNum              = 1 << 12
 	log2MaxFrameNumM4        = 8
 	codedBufferHeadroomBytes = 1 << 16
-	levelIDCFixed            = 62
+	maxNumRefFrames          = 1
 )
 
 type Config struct {
@@ -40,6 +43,7 @@ type Encoder struct {
 	disp     *display
 	profile  Profile
 	baseline bool
+	levelIDC uint8
 
 	config  uint32
 	context uint32
@@ -97,6 +101,10 @@ func openHere(disp *display, cfg Config) (*Encoder, error) {
 	if err != nil {
 		return nil, err
 	}
+	levelIDC, err := pickLevelIDC(cfg, choice.profile)
+	if err != nil {
+		return nil, err
+	}
 	vaConfig, err := disp.createConfig(choice.profile)
 	if err != nil {
 		return nil, err
@@ -107,6 +115,7 @@ func openHere(disp *display, cfg Config) (*Encoder, error) {
 		disp:          disp,
 		profile:       choice.profile,
 		baseline:      choice.baseline,
+		levelIDC:      levelIDC,
 		config:        vaConfig,
 		width:         cfg.Width,
 		height:        cfg.Height,
@@ -130,16 +139,43 @@ func openHere(disp *display, cfg Config) (*Encoder, error) {
 	return e, nil
 }
 
-func (e *Encoder) roughBitsPerSecond() uint32 {
-	num, den := e.fpsNum, e.fpsDen
+func roughBitsPerSecond(width, height, fpsNum, fpsDen int) uint32 {
+	num, den := fpsNum, fpsDen
 	if num <= 0 || den <= 0 {
 		num, den = 30, 1
 	}
-	rate := e.width * e.height * num / den / 4
+	rate := width * height * num / den / 4
 	if rate < 100000 {
 		rate = 100000
 	}
 	return uint32(rate)
+}
+
+func profileIDC(p Profile) uint8 {
+	switch p {
+	case ProfileH264High:
+		return syntax.ProfileHigh
+	case ProfileH264Main:
+		return syntax.ProfileMain
+	}
+	return syntax.ProfileBaseline
+}
+
+func pickLevelIDC(cfg Config, profile Profile) (uint8, error) {
+	peak := roughBitsPerSecond(cfg.Width, cfg.Height, cfg.FPSNum, cfg.FPSDen)
+	idc, err := level.Select(level.Stream{
+		Width:      cfg.Width,
+		Height:     cfg.Height,
+		FPSNum:     cfg.FPSNum,
+		FPSDen:     cfg.FPSDen,
+		RefFrames:  maxNumRefFrames,
+		PeakKbps:   int((peak + 999) / 1000),
+		ProfileIDC: profileIDC(profile),
+	})
+	if err != nil {
+		return 0, fmt.Errorf("vaapi: %w", err)
+	}
+	return idc, nil
 }
 
 func clampQP(qp int) uint8 {
@@ -359,14 +395,14 @@ func (e *Encoder) createCodedBuffer() (uint32, error) {
 
 func (e *Encoder) renderSequence() error {
 	var seq EncSequenceParameterBufferH264
-	seq.LevelIDC = levelIDCFixed
+	seq.LevelIDC = e.levelIDC
 	seq.PictureWidthInMbs = uint16(e.mbWidth)
 	seq.PictureHeightInMbs = uint16(e.mbHeight)
-	seq.MaxNumRefFrames = 1
+	seq.MaxNumRefFrames = maxNumRefFrames
 	seq.IntraPeriod = uint32(e.gopLength)
 	seq.IntraIDRPeriod = uint32(e.gopLength)
 	seq.IPPeriod = 1
-	seq.BitsPerSecond = e.roughBitsPerSecond()
+	seq.BitsPerSecond = roughBitsPerSecond(e.width, e.height, e.fpsNum, e.fpsDen)
 	seq.SetChromaFormatIDC(1)
 	seq.SetFrameMbsOnlyFlag(true)
 	seq.SetDirect8x8InferenceFlag(true)
