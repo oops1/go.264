@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"runtime"
 	"testing"
+	"time"
 
 	"github.com/oops1/go.264/internal/frame"
 	"github.com/oops1/go.264/internal/nal"
@@ -159,12 +160,73 @@ func TestNegativeSliceCountFollowsTheProcessorCount(t *testing.T) {
 		syntheticFrame(cfg.Width, cfg.Height, 0),
 		syntheticFrame(cfg.Width, cfg.Height, 1),
 	})
-	want := runtime.GOMAXPROCS(0)
-	if rows := (cfg.Height + 15) / 16; want > rows {
-		want = rows
-	}
+	rows := (cfg.Height + 15) / 16
+	want := automaticSliceCount(runtime.GOMAXPROCS(0), rows)
 	if got := countSliceUnits(t, units[0]); got != want {
-		t.Fatalf("Slices=-1 produced %d slices on a machine with GOMAXPROCS %d", got, runtime.GOMAXPROCS(0))
+		t.Fatalf("Slices=-1 produced %d slices on a machine with GOMAXPROCS %d and %d macroblock rows",
+			got, runtime.GOMAXPROCS(0), rows)
 	}
 	assertMatchesReconstruction(t, "automatic slice count", decodeUnits(t, units), recons)
+}
+
+func TestTheAutomaticSliceCountOvershootsTheProcessors(t *testing.T) {
+	cases := []struct{ procs, rows, want int }{
+		{1, 68, 2},
+		{4, 68, 8},
+		{20, 68, 40},
+		{20, 30, 30},
+		{36, 68, 68},
+		{64, 9, 9},
+		{0, 68, 2},
+	}
+	for _, c := range cases {
+		if got := automaticSliceCount(c.procs, c.rows); got != c.want {
+			t.Errorf("%d processors and %d macroblock rows gave %d slices, want %d",
+				c.procs, c.rows, got, c.want)
+		}
+	}
+}
+
+func TestTheAutomaticSliceCountBeatsOnePerProcessor(t *testing.T) {
+	if testing.Short() {
+		t.Skip("this measures encoding time")
+	}
+	const w, h = 640, 480
+	frames := make([][]byte, 8)
+	for i := range frames {
+		frames[i] = syntheticFrame(w, h, i)
+	}
+	measure := func(slices int) time.Duration {
+		cfg := Config{Width: w, Height: h, FPSNum: 30, FPSDen: 1, GOPSize: 1000, QP: 26,
+			RefFrames: 1, Slices: slices}
+		enc, err := New(cfg)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for i := 0; i < 3; i++ {
+			if _, err := enc.Encode(frames[i%len(frames)]); err != nil {
+				t.Fatal(err)
+			}
+		}
+		start := time.Now()
+		for i := 0; i < 12; i++ {
+			if _, err := enc.Encode(frames[i%len(frames)]); err != nil {
+				t.Fatal(err)
+			}
+		}
+		return time.Since(start)
+	}
+	rows := (h + 15) / 16
+	procs := runtime.GOMAXPROCS(0)
+	if procs >= rows {
+		t.Skipf("this machine has %d processors for %d macroblock rows, so the two settings coincide", procs, rows)
+	}
+	auto := measure(-1)
+	onePer := measure(procs)
+	t.Logf("one slice per processor (%d) took %v, the automatic count (%d) took %v",
+		procs, onePer, automaticSliceCount(procs, rows), auto)
+	if auto > onePer*6/5 {
+		t.Fatalf("the automatic slice count is more than a fifth slower than one slice per processor: %v against %v",
+			auto, onePer)
+	}
 }

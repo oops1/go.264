@@ -77,7 +77,15 @@ processor.
 The scaling is not linear and the numbers say why: two and four slices
 barely help, because the moving window falls inside one of them and that
 slice does all the work. Static partitioning cannot fix that; more
-slices than threads can, and that is what the automatic setting does.
+slices than threads can.
+
+That observation sat in this document for a while before it reached the
+setting it describes. `Slices` negative first meant one slice per
+processor, which is exactly the choice the paragraph above argues
+against, and a probe built to be run on the production machine measured
+it: twenty slices on twenty processors gave 21.4 frames a second where
+thirty-four gave 31.5. It now means twice the processor count, capped at
+the number of macroblock rows.
 
 **Vector kernels where the time actually was.** The transformed
 difference is called for every candidate of every macroblock and was the

@@ -745,10 +745,24 @@ func (e *Encoder) encodePicture(p picture) ([]byte, error) {
 	return out, nil
 }
 
+func automaticSliceCount(procs, rows int) int {
+	if procs < 1 {
+		procs = 1
+	}
+	n := procs * 2
+	if n > rows {
+		n = rows
+	}
+	if n < 1 {
+		n = 1
+	}
+	return n
+}
+
 func (e *Encoder) sliceBounds() [][2]int {
 	n := e.cfg.Slices
 	if n < 0 {
-		n = runtime.GOMAXPROCS(0)
+		n = automaticSliceCount(runtime.GOMAXPROCS(0), e.heightMBs)
 	}
 	total := e.widthMBs * e.heightMBs
 	if n <= 1 || e.heightMBs < 2 {
