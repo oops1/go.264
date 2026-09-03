@@ -48,6 +48,8 @@ type sliceDecoder struct {
 
 	subPartsAtLeast8x8 bool
 	mvdOverflow        bool
+
+	segments []motionSegment
 }
 
 func (d *sliceDecoder) transform8x8Inc() int {

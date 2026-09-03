@@ -291,3 +291,11 @@ func (d *sliceDecoder) chromaNC(plane, blk int) int {
 	}
 	return combineNC(nA, okA, nB, okB)
 }
+
+func (d *Decoder) freshGrid(widthMBs, heightMBs int) *mbGrid {
+	if g := d.grid; g != nil && g.widthMBs == widthMBs && g.heightMBs == heightMBs {
+		clear(g.mbs)
+		return g
+	}
+	return newMBGrid(widthMBs, heightMBs)
+}

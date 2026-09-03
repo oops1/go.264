@@ -241,7 +241,7 @@ func (d *Decoder) decodeSlice(u nal.Unit) ([]*frame.Picture, error) {
 		d.cur.CropWidth = sps.CroppedWidth()
 		d.cur.CropHeight = sps.CroppedHeight()
 		d.cur.POC = d.buffer.computePOC(sps, hdr)
-		d.grid = newMBGrid(sps.PicWidthInMbs(), sps.FrameHeightInMbs())
+		d.grid = d.freshGrid(sps.PicWidthInMbs(), sps.FrameHeightInMbs())
 		d.sliceCount = 0
 	}
 	if d.cur == nil {

@@ -367,7 +367,8 @@ func (d *sliceDecoder) combineBi(seg motionSegment, x, y int) {
 
 func (d *sliceDecoder) motionCompensate() {
 	baseX, baseY := d.mbx*16, d.mby*16
-	for _, seg := range motionSegments(d.cur) {
+	d.segments = motionSegments(d.cur, d.segments)
+	for _, seg := range d.segments {
 		x, y := baseX+seg.x, baseY+seg.y
 		use0 := seg.ref[0] >= 0
 		use1 := seg.ref[1] >= 0
@@ -402,8 +403,8 @@ func sameMotion(m *mbState, a, b int) bool {
 		m.MvL1[a] == m.MvL1[b] && m.refIdxL1[a] == m.refIdxL1[b]
 }
 
-func motionSegments(m *mbState) []motionSegment {
-	segs := make([]motionSegment, 0, 16)
+func motionSegments(m *mbState, dst []motionSegment) []motionSegment {
+	segs := dst[:0]
 	var used [16]bool
 	for by := 0; by < 16; by += 4 {
 		for bx := 0; bx < 16; bx += 4 {
