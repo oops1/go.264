@@ -16,6 +16,8 @@ type MotionSearch uint8
 const (
 	MotionSearchFull MotionSearch = iota
 	MotionSearchZero
+	MotionSearchHalf
+	MotionSearchInteger
 )
 
 type Region struct {

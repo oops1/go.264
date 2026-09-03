@@ -127,6 +127,9 @@ type MotionSearch = encoder.MotionSearch
 const (
 	MotionSearchFull = encoder.MotionSearchFull
 	MotionSearchZero = encoder.MotionSearchZero
+
+	MotionSearchHalf    = encoder.MotionSearchHalf
+	MotionSearchInteger = encoder.MotionSearchInteger
 )
 
 type WeightedPrediction = encoder.WeightedPrediction
