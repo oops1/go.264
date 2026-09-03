@@ -7,6 +7,7 @@ import (
 
 const ptrSize = unsafe.Sizeof(uintptr(0))
 
+//go:uintptrescapes
 func vtblCall(this unsafe.Pointer, index int, args ...uintptr) uintptr {
 	vtbl := *(*unsafe.Pointer)(this)
 	fn := *(*uintptr)(unsafe.Pointer(uintptr(vtbl) + uintptr(index)*ptrSize))
@@ -17,6 +18,7 @@ func vtblCall(this unsafe.Pointer, index int, args ...uintptr) uintptr {
 	return r
 }
 
+//go:uintptrescapes
 func hr(this unsafe.Pointer, index int, args ...uintptr) HRESULT {
 	return HRESULT(vtblCall(this, index, args...))
 }

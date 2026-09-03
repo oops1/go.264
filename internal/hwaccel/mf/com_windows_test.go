@@ -2,8 +2,11 @@ package mf
 
 import (
 	"errors"
+	"runtime"
+	"sync/atomic"
 	"syscall"
 	"testing"
+	"time"
 	"unsafe"
 )
 
@@ -120,5 +123,50 @@ func TestQueryInterfaceReportsTheFailingResult(t *testing.T) {
 	}
 	if mfErr.Op != "QueryInterface" {
 		t.Fatalf("the failure names %q, want QueryInterface", mfErr.Op)
+	}
+}
+
+func waitForFinalizer(flag *int32, budget time.Duration) bool {
+	deadline := time.Now().Add(budget)
+	for atomic.LoadInt32(flag) == 0 && time.Now().Before(deadline) {
+		runtime.GC()
+		time.Sleep(time.Millisecond)
+	}
+	return atomic.LoadInt32(flag) == 1
+}
+
+// TestQueryInterfaceKeepsTheIIDAliveAcrossTheCall reproduces the shape of
+// the bug fixed by the runtime.KeepAlive calls added around this package's
+// hr/vtblCall sites: an argument built by the caller and referenced only
+// through its address (converted to a uintptr, staged through vtblCall's
+// []uintptr slice, and handed to syscall.SyscallN) is, from the compiler's
+// point of view, dead as soon as the conversion happens, because nothing
+// in the call chain down to SyscallN keeps a typed reference to it. Without
+// an explicit runtime.KeepAlive, a GC cycle that lands while the native
+// call is still running is free to collect it.
+func TestQueryInterfaceKeepsTheIIDAliveAcrossTheCall(t *testing.T) {
+	var finalized, collectedDuringCall int32
+
+	obj := newFakeObject(syscall.NewCallback(func(_ unsafe.Pointer, _ *GUID, out *unsafe.Pointer) uintptr {
+		if waitForFinalizer(&finalized, 300*time.Millisecond) {
+			atomic.StoreInt32(&collectedDuringCall, 1)
+		}
+		*out = nil
+		return uintptr(sOK)
+	}))
+
+	func() {
+		iid := new(GUID)
+		*iid = GUID{Data1: 0xAABBCCDD}
+		runtime.SetFinalizer(iid, func(*GUID) {
+			atomic.StoreInt32(&finalized, 1)
+		})
+		if _, err := (unknown{obj.this()}).queryInterface(iid); err != nil {
+			t.Fatalf("queryInterface: %v", err)
+		}
+	}()
+
+	if atomic.LoadInt32(&collectedDuringCall) == 1 {
+		t.Fatal("the iid was garbage collected while the native QueryInterface call still held only its raw address")
 	}
 }

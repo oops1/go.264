@@ -4,30 +4,56 @@
 
 package simd
 
+//
+//go:noescape
 func sad16x16(src []byte, srcStride int, ref []byte, refStride int) int
 
+//
+//go:noescape
 func sad16x8(src []byte, srcStride int, ref []byte, refStride int) int
 
+//
+//go:noescape
 func sad8x16(src []byte, srcStride int, ref []byte, refStride int) int
 
+//
+//go:noescape
 func sad8x8(src []byte, srcStride int, ref []byte, refStride int) int
 
+//
+//go:noescape
 func sad8x4(src []byte, srcStride int, ref []byte, refStride int) int
 
+//
+//go:noescape
 func sad4x8(src []byte, srcStride int, ref []byte, refStride int) int
 
+//
+//go:noescape
 func sad4x4(src []byte, srcStride int, ref []byte, refStride int) int
 
+//
+//go:noescape
 func forward4x4(b *[16]int32)
 
+//
+//go:noescape
 func inverse4x4(b *[16]int32)
 
+//
+//go:noescape
 func quant4x4(b *[16]int32, mf *[16]int32, f int32, qbits uint64)
 
+//
+//go:noescape
 func dequantLeft4x4(b *[16]int32, scale *[16]int32, shift uint64)
 
+//
+//go:noescape
 func dequantRight4x4(b *[16]int32, scale *[16]int32, shift uint64, round int32)
 
+//
+//go:noescape
 func addResidual4x4(plane []byte, stride int, b *[16]int32)
 
 //

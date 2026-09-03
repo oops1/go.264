@@ -71,6 +71,7 @@ func loadRow(width int, addr Mem) reg.VecVirtual {
 func genSAD(w, h int) {
 	TEXT(fmt.Sprintf("sad%dx%d", w, h), NOSPLIT,
 		"func(src []byte, srcStride int, ref []byte, refStride int) int")
+	Pragma("noescape")
 	Doc("")
 	src := Load(Param("src").Base(), GP64())
 	srcStride := Load(Param("srcStride"), GP64())
@@ -106,6 +107,7 @@ func genSAD(w, h int) {
 func genSAD4(w, h int) {
 	TEXT(fmt.Sprintf("sad%dx%d", w, h), NOSPLIT,
 		"func(src []byte, srcStride int, ref []byte, refStride int) int")
+	Pragma("noescape")
 	Doc("")
 	src := Load(Param("src").Base(), GP64())
 	srcStride := Load(Param("srcStride"), GP64())
@@ -217,6 +219,7 @@ func transpose4x4(r0, r1, r2, r3 reg.VecVirtual) (c0, c1, c2, c3 reg.VecVirtual)
 
 func genForward4x4() {
 	TEXT("forward4x4", NOSPLIT, "func(b *[16]int32)")
+	Pragma("noescape")
 	Doc("")
 	ptr := Load(Param("b"), GP64())
 
@@ -246,6 +249,7 @@ func forwardButterfly(s0, s1, s2, s3 reg.VecVirtual) (o0, o1, o2, o3 reg.VecVirt
 
 func genInverse4x4() {
 	TEXT("inverse4x4", NOSPLIT, "func(b *[16]int32)")
+	Pragma("noescape")
 	Doc("")
 	ptr := Load(Param("b"), GP64())
 
@@ -306,6 +310,7 @@ func inverseColumnButterfly(s0, s1, s2, s3 reg.VecVirtual) (o0, o1, o2, o3 reg.V
 
 func genQuant4x4() {
 	TEXT("quant4x4", NOSPLIT, "func(b *[16]int32, mf *[16]int32, f int32, qbits uint64)")
+	Pragma("noescape")
 	Doc("")
 	bPtr := Load(Param("b"), GP64())
 	mfPtr := Load(Param("mf"), GP64())
@@ -340,6 +345,7 @@ func genQuant4x4() {
 
 func genDequantLeft4x4() {
 	TEXT("dequantLeft4x4", NOSPLIT, "func(b *[16]int32, scale *[16]int32, shift uint64)")
+	Pragma("noescape")
 	Doc("")
 	bPtr := Load(Param("b"), GP64())
 	scalePtr := Load(Param("scale"), GP64())
@@ -365,6 +371,7 @@ func genDequantLeft4x4() {
 
 func genDequantRight4x4() {
 	TEXT("dequantRight4x4", NOSPLIT, "func(b *[16]int32, scale *[16]int32, shift uint64, round int32)")
+	Pragma("noescape")
 	Doc("")
 	bPtr := Load(Param("b"), GP64())
 	scalePtr := Load(Param("scale"), GP64())
@@ -396,6 +403,7 @@ func genDequantRight4x4() {
 
 func genAddResidual4x4() {
 	TEXT("addResidual4x4", NOSPLIT, "func(plane []byte, stride int, b *[16]int32)")
+	Pragma("noescape")
 	Doc("")
 	planePtr := Load(Param("plane").Base(), GP64())
 	strideGP := Load(Param("stride"), GP64())

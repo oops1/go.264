@@ -215,17 +215,16 @@ func (f *callFailure) Error() string { return "nvenc: " + f.Op + ": " + f.Status
 
 func (f *callFailure) Unwrap() error { return f.Status }
 
-func (e *Encoder) fn(entry uintptr, name string) (func(...uintptr) error, error) {
+//go:uintptrescapes
+func (e *Encoder) call(entry uintptr, name string, args ...uintptr) error {
 	if entry == 0 {
-		return nil, errors.New("nvenc: the driver exposes no " + name)
+		return errors.New("nvenc: the driver exposes no " + name)
 	}
-	return func(args ...uintptr) error {
-		r, _, _ := purego.SyscallN(entry, args...)
-		if st := NvEncStatus(int32(uint32(r))); st != NvEncSuccess {
-			return &callFailure{Op: name, Status: st}
-		}
-		return nil
-	}, nil
+	r, _, _ := purego.SyscallN(entry, args...)
+	if st := NvEncStatus(int32(uint32(r))); st != NvEncSuccess {
+		return &callFailure{Op: name, Status: st}
+	}
+	return nil
 }
 
 func guidWords(g *GUID) (uintptr, uintptr) {
@@ -239,17 +238,14 @@ func (e *Encoder) configure(cfg Config) error {
 		return st
 	}
 
-	openSession, err := e.fn(e.fns.NvEncOpenEncodeSessionEx, "session entry point")
-	if err != nil {
-		return err
-	}
 	params := NvEncOpenEncodeSessionExParams{
 		Version:    NvEncOpenEncodeSessionExParamsVersion,
 		DeviceType: NvEncDeviceTypeCUDA,
 		Device:     uintptr(e.context),
 		APIVersion: NvEncAPIVersion,
 	}
-	if err := openSession(uintptr(unsafe.Pointer(&params)), uintptr(unsafe.Pointer(&e.session))); err != nil {
+	if err := e.call(e.fns.NvEncOpenEncodeSessionEx, "session entry point",
+		uintptr(unsafe.Pointer(&params)), uintptr(unsafe.Pointer(&e.session))); err != nil {
 		return err
 	}
 
@@ -274,14 +270,10 @@ func (e *Encoder) configure(cfg Config) error {
 		TuningInfo:   NvEncTuningInfoHighQuality,
 		BufferFormat: NvEncBufferFormatNV12,
 	}
-	initEncoder, err := e.fn(e.fns.NvEncInitializeEncoder, "initialisation entry point")
-	if err != nil {
+	if err := e.call(e.fns.NvEncInitializeEncoder, "initialisation entry point",
+		e.session, uintptr(unsafe.Pointer(&initialize))); err != nil {
 		return err
 	}
-	if err := initEncoder(e.session, uintptr(unsafe.Pointer(&initialize))); err != nil {
-		return err
-	}
-	runtime.KeepAlive(&preset)
 
 	if err := e.createBuffers(); err != nil {
 		return err
@@ -292,15 +284,11 @@ func (e *Encoder) configure(cfg Config) error {
 }
 
 func (e *Encoder) presetConfig() (*NvEncPresetConfig, error) {
-	getPreset, err := e.fn(e.fns.NvEncGetEncodePresetConfigEx, "preset entry point")
-	if err != nil {
-		return nil, err
-	}
 	preset := &NvEncPresetConfig{Version: NvEncPresetConfigVersion}
 	preset.PresetCfg.Version = NvEncConfigVersion
 	codecLow, codecHigh := guidWords(&NvEncCodecH264GUID)
 	presetLow, presetHigh := guidWords(&NvEncPresetP4GUID)
-	if err := getPreset(e.session,
+	if err := e.call(e.fns.NvEncGetEncodePresetConfigEx, "preset entry point", e.session,
 		codecLow, codecHigh,
 		presetLow, presetHigh,
 		uintptr(NvEncTuningInfoHighQuality),
@@ -331,27 +319,21 @@ func (e *Encoder) applyRateControl(c *NvEncConfig, cfg Config) {
 }
 
 func (e *Encoder) createBuffers() error {
-	createInput, err := e.fn(e.fns.NvEncCreateInputBuffer, "input buffer entry point")
-	if err != nil {
-		return err
-	}
 	in := NvEncCreateInputBuffer{
 		Version:   NvEncCreateInputBufferVersion,
 		Width:     uint32(e.width),
 		Height:    uint32(e.height),
 		BufferFmt: NvEncBufferFormatNV12,
 	}
-	if err := createInput(e.session, uintptr(unsafe.Pointer(&in))); err != nil {
+	if err := e.call(e.fns.NvEncCreateInputBuffer, "input buffer entry point",
+		e.session, uintptr(unsafe.Pointer(&in))); err != nil {
 		return err
 	}
 	e.input = in.InputBuffer
 
-	createOutput, err := e.fn(e.fns.NvEncCreateBitstreamBuffer, "bitstream buffer entry point")
-	if err != nil {
-		return err
-	}
 	out := NvEncCreateBitstreamBuffer{Version: NvEncCreateBitstreamBufferVersion}
-	if err := createOutput(e.session, uintptr(unsafe.Pointer(&out))); err != nil {
+	if err := e.call(e.fns.NvEncCreateBitstreamBuffer, "bitstream buffer entry point",
+		e.session, uintptr(unsafe.Pointer(&out))); err != nil {
 		return err
 	}
 	e.output = out.BitstreamBuffer
@@ -359,16 +341,9 @@ func (e *Encoder) createBuffers() error {
 }
 
 func (e *Encoder) writeFrame(i420 []byte) error {
-	lock, err := e.fn(e.fns.NvEncLockInputBuffer, "input lock entry point")
-	if err != nil {
-		return err
-	}
-	unlock, err := e.fn(e.fns.NvEncUnlockInputBuffer, "input unlock entry point")
-	if err != nil {
-		return err
-	}
 	locked := NvEncLockInputBuffer{Version: NvEncLockInputBufferVersion, InputBuffer: e.input}
-	if err := lock(e.session, uintptr(unsafe.Pointer(&locked))); err != nil {
+	if err := e.call(e.fns.NvEncLockInputBuffer, "input lock entry point",
+		e.session, uintptr(unsafe.Pointer(&locked))); err != nil {
 		return err
 	}
 	pitch := int(locked.Pitch)
@@ -382,20 +357,13 @@ func (e *Encoder) writeFrame(i420 []byte) error {
 	I420ToNV12(e.nv12, pitch, i420, e.width, e.height)
 	dst := unsafe.Slice((*byte)(locked.BufferDataPtr), need)
 	copy(dst, e.nv12[:need])
-	return unlock(e.session, e.input)
+	return e.call(e.fns.NvEncUnlockInputBuffer, "input unlock entry point", e.session, e.input)
 }
 
 func (e *Encoder) readBitstream() ([]byte, error) {
-	lock, err := e.fn(e.fns.NvEncLockBitstream, "bitstream lock entry point")
-	if err != nil {
-		return nil, err
-	}
-	unlock, err := e.fn(e.fns.NvEncUnlockBitstream, "bitstream unlock entry point")
-	if err != nil {
-		return nil, err
-	}
 	locked := NvEncLockBitstream{Version: NvEncLockBitstreamVersion, OutputBitstream: e.output}
-	if err := lock(e.session, uintptr(unsafe.Pointer(&locked))); err != nil {
+	if err := e.call(e.fns.NvEncLockBitstream, "bitstream lock entry point",
+		e.session, uintptr(unsafe.Pointer(&locked))); err != nil {
 		return nil, err
 	}
 	n := int(locked.BitstreamSizeInBytes)
@@ -404,14 +372,10 @@ func (e *Encoder) readBitstream() ([]byte, error) {
 		out = make([]byte, n)
 		copy(out, unsafe.Slice((*byte)(locked.BitstreamBufferPtr), n))
 	}
-	return out, unlock(e.session, e.output)
+	return out, e.call(e.fns.NvEncUnlockBitstream, "bitstream unlock entry point", e.session, e.output)
 }
 
 func (e *Encoder) submit(flags uint32, withInput bool) error {
-	encode, err := e.fn(e.fns.NvEncEncodePicture, "encode entry point")
-	if err != nil {
-		return err
-	}
 	pic := NvEncPicParams{
 		Version:         NvEncPicParamsVersion,
 		EncodePicFlags:  flags,
@@ -426,7 +390,7 @@ func (e *Encoder) submit(flags uint32, withInput bool) error {
 		pic.BufferFmt = NvEncBufferFormatNV12
 		pic.PictureStruct = NvEncPicStructFrame
 	}
-	return encode(e.session, uintptr(unsafe.Pointer(&pic)))
+	return e.call(e.fns.NvEncEncodePicture, "encode entry point", e.session, uintptr(unsafe.Pointer(&pic)))
 }
 
 func (e *Encoder) encodeHere(i420 []byte) ([]byte, error) {
@@ -477,17 +441,15 @@ func (e *Encoder) Drain() (out []byte, err error) {
 
 func (e *Encoder) releaseHere() {
 	if e.session != 0 {
-		if destroyInput, err := e.fn(e.fns.NvEncDestroyInputBuffer, "input release"); err == nil && e.input != 0 {
-			destroyInput(e.session, e.input)
+		if e.input != 0 {
+			e.call(e.fns.NvEncDestroyInputBuffer, "input release", e.session, e.input)
 			e.input = 0
 		}
-		if destroyOutput, err := e.fn(e.fns.NvEncDestroyBitstreamBuffer, "bitstream release"); err == nil && e.output != 0 {
-			destroyOutput(e.session, e.output)
+		if e.output != 0 {
+			e.call(e.fns.NvEncDestroyBitstreamBuffer, "bitstream release", e.session, e.output)
 			e.output = 0
 		}
-		if destroy, err := e.fn(e.fns.NvEncDestroyEncoder, "encoder release"); err == nil {
-			destroy(e.session)
-		}
+		e.call(e.fns.NvEncDestroyEncoder, "encoder release", e.session)
 		e.session = 0
 	}
 	if e.context != 0 {

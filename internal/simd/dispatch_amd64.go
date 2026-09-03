@@ -84,103 +84,40 @@ func satd8x8Dispatch(src []byte, srcStride int, ref []byte, refStride int) int {
 
 type sixTapFn func(dst []byte, dstStride int, src []byte, srcStride int)
 
-func sixTapHorizKernel(w, h int) sixTapFn {
-	if !hasSSE41 {
-		return nil
-	}
-	if hasAVX2 {
-		switch {
-		case w == 16 && h == 16:
-			return sixTapHoriz16x16AVX2
-		case w == 16 && h == 8:
-			return sixTapHoriz16x8AVX2
-		}
-	}
-	switch {
-	case w == 16 && h == 16:
-		return sixTapHoriz16x16
-	case w == 16 && h == 8:
-		return sixTapHoriz16x8
-	case w == 8 && h == 16:
-		return sixTapHoriz8x16
-	case w == 8 && h == 8:
-		return sixTapHoriz8x8
-	case w == 8 && h == 4:
-		return sixTapHoriz8x4
-	case w == 4 && h == 8:
-		return sixTapHoriz4x8
-	case w == 4 && h == 4:
-		return sixTapHoriz4x4
-	}
-	return nil
-}
-
-func sixTapVertKernel(w, h int) sixTapFn {
-	if !hasSSE41 {
-		return nil
-	}
-	if hasAVX2 {
-		switch {
-		case w == 16 && h == 16:
-			return sixTapVert16x16AVX2
-		case w == 16 && h == 8:
-			return sixTapVert16x8AVX2
-		}
-	}
-	switch {
-	case w == 16 && h == 16:
-		return sixTapVert16x16
-	case w == 16 && h == 8:
-		return sixTapVert16x8
-	case w == 8 && h == 16:
-		return sixTapVert8x16
-	case w == 8 && h == 8:
-		return sixTapVert8x8
-	case w == 8 && h == 4:
-		return sixTapVert8x4
-	case w == 4 && h == 8:
-		return sixTapVert4x8
-	case w == 4 && h == 4:
-		return sixTapVert4x4
-	}
-	return nil
-}
-
-func sixTapHVKernel(w, h int) sixTapFn {
-	if !hasSSE41 {
-		return nil
-	}
-	if hasAVX2 {
-		switch {
-		case w == 16 && h == 16:
-			return sixTapHV16x16AVX2
-		case w == 16 && h == 8:
-			return sixTapHV16x8AVX2
-		}
-	}
-	switch {
-	case w == 16 && h == 16:
-		return sixTapHV16x16
-	case w == 16 && h == 8:
-		return sixTapHV16x8
-	case w == 8 && h == 16:
-		return sixTapHV8x16
-	case w == 8 && h == 8:
-		return sixTapHV8x8
-	case w == 8 && h == 4:
-		return sixTapHV8x4
-	case w == 4 && h == 8:
-		return sixTapHV4x8
-	case w == 4 && h == 4:
-		return sixTapHV4x4
-	}
-	return nil
-}
-
 func sixTapHorizDispatch(dst []byte, dstStride, dstOff int, src []byte, srcStride, srcOff, w, h int) {
-	if spanFitsMargin(src, srcStride, srcOff, w, h, 2, 3, 0, 0) && spanFits(dst[dstOff:], dstStride, w, h) {
-		if fn := sixTapHorizKernel(w, h); fn != nil {
-			fn(dst[dstOff:], dstStride, src[srcOff:], srcStride)
+	if hasSSE41 && spanFitsMargin(src, srcStride, srcOff, w, h, 2, 3, 0, 0) && spanFits(dst[dstOff:], dstStride, w, h) {
+		d, s := dst[dstOff:], src[srcOff:]
+		if hasAVX2 {
+			switch {
+			case w == 16 && h == 16:
+				sixTapHoriz16x16AVX2(d, dstStride, s, srcStride)
+				return
+			case w == 16 && h == 8:
+				sixTapHoriz16x8AVX2(d, dstStride, s, srcStride)
+				return
+			}
+		}
+		switch {
+		case w == 16 && h == 16:
+			sixTapHoriz16x16(d, dstStride, s, srcStride)
+			return
+		case w == 16 && h == 8:
+			sixTapHoriz16x8(d, dstStride, s, srcStride)
+			return
+		case w == 8 && h == 16:
+			sixTapHoriz8x16(d, dstStride, s, srcStride)
+			return
+		case w == 8 && h == 8:
+			sixTapHoriz8x8(d, dstStride, s, srcStride)
+			return
+		case w == 8 && h == 4:
+			sixTapHoriz8x4(d, dstStride, s, srcStride)
+			return
+		case w == 4 && h == 8:
+			sixTapHoriz4x8(d, dstStride, s, srcStride)
+			return
+		case w == 4 && h == 4:
+			sixTapHoriz4x4(d, dstStride, s, srcStride)
 			return
 		}
 	}
@@ -188,9 +125,39 @@ func sixTapHorizDispatch(dst []byte, dstStride, dstOff int, src []byte, srcStrid
 }
 
 func sixTapVertDispatch(dst []byte, dstStride, dstOff int, src []byte, srcStride, srcOff, w, h int) {
-	if spanFitsMargin(src, srcStride, srcOff, w, h, 0, 0, 2, 3) && spanFits(dst[dstOff:], dstStride, w, h) {
-		if fn := sixTapVertKernel(w, h); fn != nil {
-			fn(dst[dstOff:], dstStride, src[srcOff:], srcStride)
+	if hasSSE41 && spanFitsMargin(src, srcStride, srcOff, w, h, 0, 0, 2, 3) && spanFits(dst[dstOff:], dstStride, w, h) {
+		d, s := dst[dstOff:], src[srcOff:]
+		if hasAVX2 {
+			switch {
+			case w == 16 && h == 16:
+				sixTapVert16x16AVX2(d, dstStride, s, srcStride)
+				return
+			case w == 16 && h == 8:
+				sixTapVert16x8AVX2(d, dstStride, s, srcStride)
+				return
+			}
+		}
+		switch {
+		case w == 16 && h == 16:
+			sixTapVert16x16(d, dstStride, s, srcStride)
+			return
+		case w == 16 && h == 8:
+			sixTapVert16x8(d, dstStride, s, srcStride)
+			return
+		case w == 8 && h == 16:
+			sixTapVert8x16(d, dstStride, s, srcStride)
+			return
+		case w == 8 && h == 8:
+			sixTapVert8x8(d, dstStride, s, srcStride)
+			return
+		case w == 8 && h == 4:
+			sixTapVert8x4(d, dstStride, s, srcStride)
+			return
+		case w == 4 && h == 8:
+			sixTapVert4x8(d, dstStride, s, srcStride)
+			return
+		case w == 4 && h == 4:
+			sixTapVert4x4(d, dstStride, s, srcStride)
 			return
 		}
 	}
@@ -198,42 +165,67 @@ func sixTapVertDispatch(dst []byte, dstStride, dstOff int, src []byte, srcStride
 }
 
 func sixTapHVDispatch(dst []byte, dstStride, dstOff int, src []byte, srcStride, srcOff, w, h int) {
-	if spanFitsMargin(src, srcStride, srcOff, w, h, 2, 3, 2, 3) && spanFits(dst[dstOff:], dstStride, w, h) {
-		if fn := sixTapHVKernel(w, h); fn != nil {
-			fn(dst[dstOff:], dstStride, src[srcOff:], srcStride)
+	if hasSSE41 && spanFitsMargin(src, srcStride, srcOff, w, h, 2, 3, 2, 3) && spanFits(dst[dstOff:], dstStride, w, h) {
+		d, s := dst[dstOff:], src[srcOff:]
+		if hasAVX2 {
+			switch {
+			case w == 16 && h == 16:
+				sixTapHV16x16AVX2(d, dstStride, s, srcStride)
+				return
+			case w == 16 && h == 8:
+				sixTapHV16x8AVX2(d, dstStride, s, srcStride)
+				return
+			}
+		}
+		switch {
+		case w == 16 && h == 16:
+			sixTapHV16x16(d, dstStride, s, srcStride)
+			return
+		case w == 16 && h == 8:
+			sixTapHV16x8(d, dstStride, s, srcStride)
+			return
+		case w == 8 && h == 16:
+			sixTapHV8x16(d, dstStride, s, srcStride)
+			return
+		case w == 8 && h == 8:
+			sixTapHV8x8(d, dstStride, s, srcStride)
+			return
+		case w == 8 && h == 4:
+			sixTapHV8x4(d, dstStride, s, srcStride)
+			return
+		case w == 4 && h == 8:
+			sixTapHV4x8(d, dstStride, s, srcStride)
+			return
+		case w == 4 && h == 4:
+			sixTapHV4x4(d, dstStride, s, srcStride)
 			return
 		}
 	}
 	sixTapHVGeneric(dst, dstStride, dstOff, src, srcStride, srcOff, w, h)
 }
 
-type bilinearFn func(dst []byte, dstStride int, src []byte, srcStride int, xFrac, yFrac int32)
-
-func bilinearChromaKernel(w, h int) bilinearFn {
-	if !hasSSE41 {
-		return nil
-	}
-	switch {
-	case w == 8 && h == 8:
-		return bilinearChroma8x8
-	case w == 8 && h == 4:
-		return bilinearChroma8x4
-	case w == 8 && h == 2:
-		return bilinearChroma8x2
-	case w == 4 && h == 8:
-		return bilinearChroma4x8
-	case w == 4 && h == 4:
-		return bilinearChroma4x4
-	case w == 4 && h == 2:
-		return bilinearChroma4x2
-	}
-	return nil
-}
-
 func bilinearChromaDispatch(dst []byte, dstStride, dstOff int, src []byte, srcStride, srcOff, w, h, xFrac, yFrac int) {
-	if spanFitsMargin(src, srcStride, srcOff, w, h, 0, 1, 0, 1) && spanFits(dst[dstOff:], dstStride, w, h) {
-		if fn := bilinearChromaKernel(w, h); fn != nil {
-			fn(dst[dstOff:], dstStride, src[srcOff:], srcStride, int32(xFrac), int32(yFrac))
+	if hasSSE41 && spanFitsMargin(src, srcStride, srcOff, w, h, 0, 1, 0, 1) && spanFits(dst[dstOff:], dstStride, w, h) {
+		d, s := dst[dstOff:], src[srcOff:]
+		xf, yf := int32(xFrac), int32(yFrac)
+		switch {
+		case w == 8 && h == 8:
+			bilinearChroma8x8(d, dstStride, s, srcStride, xf, yf)
+			return
+		case w == 8 && h == 4:
+			bilinearChroma8x4(d, dstStride, s, srcStride, xf, yf)
+			return
+		case w == 8 && h == 2:
+			bilinearChroma8x2(d, dstStride, s, srcStride, xf, yf)
+			return
+		case w == 4 && h == 8:
+			bilinearChroma4x8(d, dstStride, s, srcStride, xf, yf)
+			return
+		case w == 4 && h == 4:
+			bilinearChroma4x4(d, dstStride, s, srcStride, xf, yf)
+			return
+		case w == 4 && h == 2:
+			bilinearChroma4x2(d, dstStride, s, srcStride, xf, yf)
 			return
 		}
 	}
