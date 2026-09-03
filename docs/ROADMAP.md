@@ -242,31 +242,20 @@ a fact for weeks and shaped a design decision.
 
 Smaller than a milestone each, listed so none of it is forgotten.
 
-**An 8x8 transformed difference for the intra mode decision.** Intra_8x8
-is scored with 4x4 sums, which under-rates the transform it is choosing.
-The kernel exists and is used for inter partitions; the intra search
-still calls the 4x4 one sixteen times.
-
-**Temporal direct is spatial-only in one place**: the encoder derives
-either, but the decoder's rule that swaps the second reference list when
-both come out identical is now mirrored, so the divergence noted in
-earlier versions is closed.
-
-**Long-term references do not compose with two other features.** They
-are kept out of the bi-predictive reference lists, which are one entry
-deep in this encoder, so bi-predicted pictures gain nothing from them.
-And under intra refresh a long-term picture is unusable until it is
-promoted again after a sweep, so the two do not help each other.
-
-**MMCO 6, marking the current picture long term, is not implemented** in
-either direction. The encoder promotes the previous picture instead,
-which costs nothing here but is a gap against the specification.
+**Long-term references do not compose with intra refresh.** A long-term
+picture is unusable under a refresh until it is promoted again after a
+sweep, so the two features do not help each other. They now work with
+bi-predicted pictures, which they did not before.
 
 **Rejected on purpose, both directions**: lossless transform bypass, the
 4:2:2 and 4:4:4 chroma formats, bit depths above eight, interlaced and
 macroblock adaptive coding, slice groups, and data partitioning. Each
 has a test that feeds a real stream of that kind and requires the
 refusal.
+
+**Unproven rather than missing**: NVENC and VA-API have never run
+against real silicon, and no remote desktop client has yet accepted a
+stream. Neither can be settled on the machine this was written on.
 
 ## What was missing and is not any more
 
