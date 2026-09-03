@@ -332,13 +332,82 @@ encoder and cabac packages were run for twenty five minutes under the race
 detector, parallel slices included, to establish that nothing shares the
 buffers being reused.
 
-The next item is named rather than done: deblocking is about a third of
-decode time and has no accelerated kernel at all, while the transforms,
-motion compensation and the cost metrics all do. It is a good candidate,
-because the filter is a pure function of eight samples and four
-parameters, so the scalar version is an exhaustive oracle for a vector
-one. Intra prediction has no kernel either, but it is under three per cent
-of a decode and does not pay for one there.
+Deblocking was a third of decode time with no accelerated kernel at all,
+and both directions now have one. A horizontal edge needs no transpose:
+the eight samples across it lie in eight rows of sixteen contiguous bytes,
+so an edge is sixteen vectors and one filter pass. A vertical edge does
+need one, and gets it - sixteen rows of eight bytes turned on their side
+through two eight by eight byte transposes, filtered, and the four columns
+the normal filter can change turned back and written four bytes to a line.
+
+The filter had to be two kernels rather than one, for a reason worth
+recording: as a single function the register allocator ran out of the
+sixteen AVX2 registers and silently reached into Y16 and above, which is
+AVX-512 and which the assembler refuses. Splitting it along the boundary
+strength was legitimate because bS equal to four is a property of the
+macroblock pair, so an edge is either strong throughout or normal
+throughout; the Go side checks that and falls back to scalar for a
+mixture.
+
+Twelve 1080p frames went from 359 ms to 296, and deblocking from a third
+of the profile to eight per cent. The oracle for both kernels is the
+scalar filter, which is exhaustive: the filter is a pure function of eight
+samples and four parameters, and 65,000 rounds of random samples,
+strengths and index pairs match byte for byte, with the conformance clips
+still bit exact on top.
+
+Intra prediction has no kernel either, and does not need one: it is under
+six per cent of either side.
+
+## What the encoder was really spending
+
+Motion search is sixty eight per cent of a 1080p encode and sub-pixel
+refinement is forty seven, and more than half of that was the six tap
+filter being run again for every candidate vector. It does not have to be.
+The three half sample quantities the standard derives are samples of three
+planes that depend only on the reference picture, so every one of the
+sixteen fractional positions is a copy of one plane or an average of two.
+The number that settled it: building all three planes for a padded 1080p
+frame takes 0.75 ms, and the search had been spending 159 ms per frame on
+the same filter.
+
+Then the profile moved, three times, and each time the answer was smaller
+than the last:
+
+- averaging two planes is `(a+b+1)>>1` over bytes, which is exactly what
+  PAVGB does sixteen at a time: eleven per cent of the encode became a
+  kernel.
+- the bit cost of a vector difference was a loop shifting a value down one
+  bit at a time; it is `1 + 2*floor(log2(code+1))` and now uses
+  math/bits.Len. Two lines, a seventh of the encode, because it runs for
+  every candidate the search considers.
+- block copying was Go's copy per row, a memmove call for each of sixteen
+  rows; fixed shape kernels do it with one instruction per sixteen bytes.
+
+Twelve 1080p frames went from 847 ms to 540, a third off, 1.18 to 1.85
+frames per second. Nothing in the encoded output moved: the plane
+derivation is checked against the direct filter over 16,875 predictions,
+every fractional position and nine block shapes, byte for byte.
+
+## Three measurements that said no
+
+Recorded because a profile is a hypothesis generator, not an answer, and
+these three looked as convincing as the ones that worked.
+
+**Reading variable length codes with one peek instead of bit by bit** was
+1.2 per cent slower, reproducibly. The code words are short: most resolve
+within a few bits, so preparing a window and skipping costs more than the
+two or three bit reads it saves.
+
+**Hoisting the bilinear chroma weights out of the pixel loop** - they were
+being recomputed for every pixel - was 0.7 per cent slower. The blocks
+that reach that path are two by two, from four by four luma partitions,
+and the slice setup costs more than the arithmetic it removes.
+
+**Using the AVX2 four by four cost kernel** was 1.8 per cent slower than
+the SSE one. It was generated but never dispatched, which looked like an
+oversight; on four rows the wider register is mostly idle and the state
+transition is not free. The dispatch was right all along.
 
 ## Hostile input at the public boundary
 

@@ -120,8 +120,11 @@ Kernel set (amd64, AVX2 with SSE4 fallback):
 - Luma 6-tap half-pel interpolation, quarter-pel averaging
 - Chroma bilinear interpolation
 - Forward/inverse 4x4 transform + quant/dequant
-- Deblocking filter edges (bs<4 and bs=4 paths)
-- Plane copy / pixel averaging
+- Deblocking luma edges, both directions, the strong and normal paths as
+  separate kernels; chroma edges are still scalar
+- Plane copy / pixel averaging (PAVGB)
+- Half sample interpolation planes built once per reference picture, so
+  the search averages two planes instead of filtering again per candidate
 
 Assembly is not written by hand: `internal/simd/asmgen` holds avo
 programs; `go generate ./...` regenerates the `.s` files, which are
