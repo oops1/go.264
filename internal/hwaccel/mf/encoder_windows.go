@@ -377,9 +377,7 @@ func (e *Encoder) closeHere() error {
 	if e.transform == nil {
 		return nil
 	}
-	if _, err := e.drainHere(); err != nil {
-		return err
-	}
+	_, drainErr := e.drainHere()
 	e.transform.ProcessMessage(MFTMessageCommandFlush, 0)
 	e.discardPendingEvents()
 	e.transform.ProcessMessage(MFTMessageNotifyEndOfStream, 0)
@@ -389,7 +387,10 @@ func (e *Encoder) closeHere() error {
 	e.ready = nil
 	e.transform.Release()
 	e.transform = nil
-	return Shutdown()
+	if err := Shutdown(); err != nil {
+		return err
+	}
+	return drainErr
 }
 
 func (e *Encoder) Encode(i420 []byte) (out [][]byte, err error) {

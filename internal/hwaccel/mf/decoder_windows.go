@@ -463,9 +463,7 @@ func (d *Decoder) closeHere() error {
 	if d.transform == nil {
 		return nil
 	}
-	if _, err := d.flushHere(); err != nil {
-		return err
-	}
+	_, flushErr := d.flushHere()
 	d.transform.ProcessMessage(MFTMessageCommandFlush, 0)
 	d.transform.ProcessMessage(MFTMessageNotifyEndStreaming, 0)
 	if d.direct3D {
@@ -478,7 +476,10 @@ func (d *Decoder) closeHere() error {
 	d.manager.release()
 	d.manager = nil
 	d.ready = nil
-	return Shutdown()
+	if err := Shutdown(); err != nil {
+		return err
+	}
+	return flushErr
 }
 
 func (d *Decoder) Decode(annexB []byte) (out []*DecodedPicture, err error) {
