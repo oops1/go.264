@@ -198,7 +198,15 @@ func avgBytes16x16(dst []byte, dstStride int, a []byte, aStride int, b []byte, b
 
 //
 //go:noescape
+func copyBlock16x16(dst []byte, dstStride int, src []byte, srcStride int)
+
+//
+//go:noescape
 func avgBytes16x8(dst []byte, dstStride int, a []byte, aStride int, b []byte, bStride int)
+
+//
+//go:noescape
+func copyBlock16x8(dst []byte, dstStride int, src []byte, srcStride int)
 
 //
 //go:noescape
@@ -206,7 +214,15 @@ func avgBytes8x16(dst []byte, dstStride int, a []byte, aStride int, b []byte, bS
 
 //
 //go:noescape
+func copyBlock8x16(dst []byte, dstStride int, src []byte, srcStride int)
+
+//
+//go:noescape
 func avgBytes8x8(dst []byte, dstStride int, a []byte, aStride int, b []byte, bStride int)
+
+//
+//go:noescape
+func copyBlock8x8(dst []byte, dstStride int, src []byte, srcStride int)
 
 //
 //go:noescape
@@ -214,11 +230,23 @@ func avgBytes8x4(dst []byte, dstStride int, a []byte, aStride int, b []byte, bSt
 
 //
 //go:noescape
+func copyBlock8x4(dst []byte, dstStride int, src []byte, srcStride int)
+
+//
+//go:noescape
 func avgBytes4x8(dst []byte, dstStride int, a []byte, aStride int, b []byte, bStride int)
 
 //
 //go:noescape
+func copyBlock4x8(dst []byte, dstStride int, src []byte, srcStride int)
+
+//
+//go:noescape
 func avgBytes4x4(dst []byte, dstStride int, a []byte, aStride int, b []byte, bStride int)
+
+//
+//go:noescape
+func copyBlock4x4(dst []byte, dstStride int, src []byte, srcStride int)
 
 //
 //go:noescape

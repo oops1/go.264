@@ -2,6 +2,7 @@ package encoder
 
 import (
 	"math"
+	"math/bits"
 
 	"github.com/oops1/go.264/internal/cabac"
 	"github.com/oops1/go.264/internal/mc"
@@ -138,11 +139,7 @@ func bitsForSE(v int) int {
 	} else {
 		code = uint32(-v) * 2
 	}
-	n := 1
-	for c := code + 1; c > 1; c >>= 1 {
-		n += 2
-	}
-	return n
+	return 2*bits.Len32(code+1) - 1
 }
 
 func (s *mbEncoder) motionCompensateMB(mv [2]int16) {

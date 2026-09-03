@@ -1,5 +1,7 @@
 package encoder
 
+import "math/bits"
+
 type subMbShape struct {
 	numParts int
 	w        int
@@ -41,11 +43,7 @@ func (s *mbEncoder) restoreMotion(m motionSnapshot) {
 }
 
 func bitsForUE(v uint32) int {
-	n := 1
-	for c := uint64(v) + 1; c > 1; c >>= 1 {
-		n += 2
-	}
-	return n
+	return 2*bits.Len64(uint64(v)+1) - 1
 }
 
 type subPartitions struct {

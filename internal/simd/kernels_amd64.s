@@ -16406,6 +16406,77 @@ TEXT ·avgBytes16x16(SB), NOSPLIT, $0-96
 	MOVOU X0, (AX)
 	RET
 
+// func copyBlock16x16(dst []byte, dstStride int, src []byte, srcStride int)
+// Requires: SSE2
+TEXT ·copyBlock16x16(SB), NOSPLIT, $0-64
+	MOVQ  dst_base+0(FP), AX
+	MOVQ  dstStride+24(FP), CX
+	MOVQ  src_base+32(FP), DX
+	MOVQ  srcStride+56(FP), BX
+	MOVOU (DX), X0
+	MOVOU X0, (AX)
+	ADDQ  BX, DX
+	ADDQ  CX, AX
+	MOVOU (DX), X0
+	MOVOU X0, (AX)
+	ADDQ  BX, DX
+	ADDQ  CX, AX
+	MOVOU (DX), X0
+	MOVOU X0, (AX)
+	ADDQ  BX, DX
+	ADDQ  CX, AX
+	MOVOU (DX), X0
+	MOVOU X0, (AX)
+	ADDQ  BX, DX
+	ADDQ  CX, AX
+	MOVOU (DX), X0
+	MOVOU X0, (AX)
+	ADDQ  BX, DX
+	ADDQ  CX, AX
+	MOVOU (DX), X0
+	MOVOU X0, (AX)
+	ADDQ  BX, DX
+	ADDQ  CX, AX
+	MOVOU (DX), X0
+	MOVOU X0, (AX)
+	ADDQ  BX, DX
+	ADDQ  CX, AX
+	MOVOU (DX), X0
+	MOVOU X0, (AX)
+	ADDQ  BX, DX
+	ADDQ  CX, AX
+	MOVOU (DX), X0
+	MOVOU X0, (AX)
+	ADDQ  BX, DX
+	ADDQ  CX, AX
+	MOVOU (DX), X0
+	MOVOU X0, (AX)
+	ADDQ  BX, DX
+	ADDQ  CX, AX
+	MOVOU (DX), X0
+	MOVOU X0, (AX)
+	ADDQ  BX, DX
+	ADDQ  CX, AX
+	MOVOU (DX), X0
+	MOVOU X0, (AX)
+	ADDQ  BX, DX
+	ADDQ  CX, AX
+	MOVOU (DX), X0
+	MOVOU X0, (AX)
+	ADDQ  BX, DX
+	ADDQ  CX, AX
+	MOVOU (DX), X0
+	MOVOU X0, (AX)
+	ADDQ  BX, DX
+	ADDQ  CX, AX
+	MOVOU (DX), X0
+	MOVOU X0, (AX)
+	ADDQ  BX, DX
+	ADDQ  CX, AX
+	MOVOU (DX), X0
+	MOVOU X0, (AX)
+	RET
+
 // func avgBytes16x8(dst []byte, dstStride int, a []byte, aStride int, b []byte, bStride int)
 // Requires: SSE2
 TEXT ·avgBytes16x8(SB), NOSPLIT, $0-96
@@ -16467,6 +16538,45 @@ TEXT ·avgBytes16x8(SB), NOSPLIT, $0-96
 	MOVOU (DX), X0
 	MOVOU (SI), X1
 	PAVGB X1, X0
+	MOVOU X0, (AX)
+	RET
+
+// func copyBlock16x8(dst []byte, dstStride int, src []byte, srcStride int)
+// Requires: SSE2
+TEXT ·copyBlock16x8(SB), NOSPLIT, $0-64
+	MOVQ  dst_base+0(FP), AX
+	MOVQ  dstStride+24(FP), CX
+	MOVQ  src_base+32(FP), DX
+	MOVQ  srcStride+56(FP), BX
+	MOVOU (DX), X0
+	MOVOU X0, (AX)
+	ADDQ  BX, DX
+	ADDQ  CX, AX
+	MOVOU (DX), X0
+	MOVOU X0, (AX)
+	ADDQ  BX, DX
+	ADDQ  CX, AX
+	MOVOU (DX), X0
+	MOVOU X0, (AX)
+	ADDQ  BX, DX
+	ADDQ  CX, AX
+	MOVOU (DX), X0
+	MOVOU X0, (AX)
+	ADDQ  BX, DX
+	ADDQ  CX, AX
+	MOVOU (DX), X0
+	MOVOU X0, (AX)
+	ADDQ  BX, DX
+	ADDQ  CX, AX
+	MOVOU (DX), X0
+	MOVOU X0, (AX)
+	ADDQ  BX, DX
+	ADDQ  CX, AX
+	MOVOU (DX), X0
+	MOVOU X0, (AX)
+	ADDQ  BX, DX
+	ADDQ  CX, AX
+	MOVOU (DX), X0
 	MOVOU X0, (AX)
 	RET
 
@@ -16590,6 +16700,76 @@ TEXT ·avgBytes8x16(SB), NOSPLIT, $0-96
 	MOVQ  X0, (AX)
 	RET
 
+// func copyBlock8x16(dst []byte, dstStride int, src []byte, srcStride int)
+TEXT ·copyBlock8x16(SB), NOSPLIT, $0-64
+	MOVQ dst_base+0(FP), AX
+	MOVQ dstStride+24(FP), CX
+	MOVQ src_base+32(FP), DX
+	MOVQ srcStride+56(FP), BX
+	MOVQ (DX), SI
+	MOVQ SI, (AX)
+	ADDQ BX, DX
+	ADDQ CX, AX
+	MOVQ (DX), SI
+	MOVQ SI, (AX)
+	ADDQ BX, DX
+	ADDQ CX, AX
+	MOVQ (DX), SI
+	MOVQ SI, (AX)
+	ADDQ BX, DX
+	ADDQ CX, AX
+	MOVQ (DX), SI
+	MOVQ SI, (AX)
+	ADDQ BX, DX
+	ADDQ CX, AX
+	MOVQ (DX), SI
+	MOVQ SI, (AX)
+	ADDQ BX, DX
+	ADDQ CX, AX
+	MOVQ (DX), SI
+	MOVQ SI, (AX)
+	ADDQ BX, DX
+	ADDQ CX, AX
+	MOVQ (DX), SI
+	MOVQ SI, (AX)
+	ADDQ BX, DX
+	ADDQ CX, AX
+	MOVQ (DX), SI
+	MOVQ SI, (AX)
+	ADDQ BX, DX
+	ADDQ CX, AX
+	MOVQ (DX), SI
+	MOVQ SI, (AX)
+	ADDQ BX, DX
+	ADDQ CX, AX
+	MOVQ (DX), SI
+	MOVQ SI, (AX)
+	ADDQ BX, DX
+	ADDQ CX, AX
+	MOVQ (DX), SI
+	MOVQ SI, (AX)
+	ADDQ BX, DX
+	ADDQ CX, AX
+	MOVQ (DX), SI
+	MOVQ SI, (AX)
+	ADDQ BX, DX
+	ADDQ CX, AX
+	MOVQ (DX), SI
+	MOVQ SI, (AX)
+	ADDQ BX, DX
+	ADDQ CX, AX
+	MOVQ (DX), SI
+	MOVQ SI, (AX)
+	ADDQ BX, DX
+	ADDQ CX, AX
+	MOVQ (DX), SI
+	MOVQ SI, (AX)
+	ADDQ BX, DX
+	ADDQ CX, AX
+	MOVQ (DX), CX
+	MOVQ CX, (AX)
+	RET
+
 // func avgBytes8x8(dst []byte, dstStride int, a []byte, aStride int, b []byte, bStride int)
 // Requires: SSE2
 TEXT ·avgBytes8x8(SB), NOSPLIT, $0-96
@@ -16654,6 +16834,44 @@ TEXT ·avgBytes8x8(SB), NOSPLIT, $0-96
 	MOVQ  X0, (AX)
 	RET
 
+// func copyBlock8x8(dst []byte, dstStride int, src []byte, srcStride int)
+TEXT ·copyBlock8x8(SB), NOSPLIT, $0-64
+	MOVQ dst_base+0(FP), AX
+	MOVQ dstStride+24(FP), CX
+	MOVQ src_base+32(FP), DX
+	MOVQ srcStride+56(FP), BX
+	MOVQ (DX), SI
+	MOVQ SI, (AX)
+	ADDQ BX, DX
+	ADDQ CX, AX
+	MOVQ (DX), SI
+	MOVQ SI, (AX)
+	ADDQ BX, DX
+	ADDQ CX, AX
+	MOVQ (DX), SI
+	MOVQ SI, (AX)
+	ADDQ BX, DX
+	ADDQ CX, AX
+	MOVQ (DX), SI
+	MOVQ SI, (AX)
+	ADDQ BX, DX
+	ADDQ CX, AX
+	MOVQ (DX), SI
+	MOVQ SI, (AX)
+	ADDQ BX, DX
+	ADDQ CX, AX
+	MOVQ (DX), SI
+	MOVQ SI, (AX)
+	ADDQ BX, DX
+	ADDQ CX, AX
+	MOVQ (DX), SI
+	MOVQ SI, (AX)
+	ADDQ BX, DX
+	ADDQ CX, AX
+	MOVQ (DX), CX
+	MOVQ CX, (AX)
+	RET
+
 // func avgBytes8x4(dst []byte, dstStride int, a []byte, aStride int, b []byte, bStride int)
 // Requires: SSE2
 TEXT ·avgBytes8x4(SB), NOSPLIT, $0-96
@@ -16688,6 +16906,28 @@ TEXT ·avgBytes8x4(SB), NOSPLIT, $0-96
 	MOVQ  (SI), X1
 	PAVGB X1, X0
 	MOVQ  X0, (AX)
+	RET
+
+// func copyBlock8x4(dst []byte, dstStride int, src []byte, srcStride int)
+TEXT ·copyBlock8x4(SB), NOSPLIT, $0-64
+	MOVQ dst_base+0(FP), AX
+	MOVQ dstStride+24(FP), CX
+	MOVQ src_base+32(FP), DX
+	MOVQ srcStride+56(FP), BX
+	MOVQ (DX), SI
+	MOVQ SI, (AX)
+	ADDQ BX, DX
+	ADDQ CX, AX
+	MOVQ (DX), SI
+	MOVQ SI, (AX)
+	ADDQ BX, DX
+	ADDQ CX, AX
+	MOVQ (DX), SI
+	MOVQ SI, (AX)
+	ADDQ BX, DX
+	ADDQ CX, AX
+	MOVQ (DX), CX
+	MOVQ CX, (AX)
 	RET
 
 // func avgBytes4x8(dst []byte, dstStride int, a []byte, aStride int, b []byte, bStride int)
@@ -16778,6 +17018,44 @@ TEXT ·avgBytes4x8(SB), NOSPLIT, $0-96
 	MOVL  CX, (AX)
 	RET
 
+// func copyBlock4x8(dst []byte, dstStride int, src []byte, srcStride int)
+TEXT ·copyBlock4x8(SB), NOSPLIT, $0-64
+	MOVQ dst_base+0(FP), AX
+	MOVQ dstStride+24(FP), CX
+	MOVQ src_base+32(FP), DX
+	MOVQ srcStride+56(FP), BX
+	MOVL (DX), SI
+	MOVL SI, (AX)
+	ADDQ BX, DX
+	ADDQ CX, AX
+	MOVL (DX), SI
+	MOVL SI, (AX)
+	ADDQ BX, DX
+	ADDQ CX, AX
+	MOVL (DX), SI
+	MOVL SI, (AX)
+	ADDQ BX, DX
+	ADDQ CX, AX
+	MOVL (DX), SI
+	MOVL SI, (AX)
+	ADDQ BX, DX
+	ADDQ CX, AX
+	MOVL (DX), SI
+	MOVL SI, (AX)
+	ADDQ BX, DX
+	ADDQ CX, AX
+	MOVL (DX), SI
+	MOVL SI, (AX)
+	ADDQ BX, DX
+	ADDQ CX, AX
+	MOVL (DX), SI
+	MOVL SI, (AX)
+	ADDQ BX, DX
+	ADDQ CX, AX
+	MOVL (DX), CX
+	MOVL CX, (AX)
+	RET
+
 // func avgBytes4x4(dst []byte, dstStride int, a []byte, aStride int, b []byte, bStride int)
 // Requires: SSE2
 TEXT ·avgBytes4x4(SB), NOSPLIT, $0-96
@@ -16824,6 +17102,28 @@ TEXT ·avgBytes4x4(SB), NOSPLIT, $0-96
 	PAVGB X1, X0
 	MOVD  X0, CX
 	MOVL  CX, (AX)
+	RET
+
+// func copyBlock4x4(dst []byte, dstStride int, src []byte, srcStride int)
+TEXT ·copyBlock4x4(SB), NOSPLIT, $0-64
+	MOVQ dst_base+0(FP), AX
+	MOVQ dstStride+24(FP), CX
+	MOVQ src_base+32(FP), DX
+	MOVQ srcStride+56(FP), BX
+	MOVL (DX), SI
+	MOVL SI, (AX)
+	ADDQ BX, DX
+	ADDQ CX, AX
+	MOVL (DX), SI
+	MOVL SI, (AX)
+	ADDQ BX, DX
+	ADDQ CX, AX
+	MOVL (DX), SI
+	MOVL SI, (AX)
+	ADDQ BX, DX
+	ADDQ CX, AX
+	MOVL (DX), CX
+	MOVL CX, (AX)
 	RET
 
 // func bilinearChroma8x8(dst []byte, dstStride int, src []byte, srcStride int, xFrac int32, yFrac int32)

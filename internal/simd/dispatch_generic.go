@@ -67,3 +67,7 @@ func DeblockLumaVerticalNormal(plane []byte, offset, stride int, tc0, bs *[16]ui
 func avgBytesDispatch(dst []byte, dstStride, dstOff int, a []byte, aStride, aOff int, b []byte, bStride, bOff, w, h int) {
 	avgBytesGeneric(dst, dstStride, dstOff, a, aStride, aOff, b, bStride, bOff, w, h)
 }
+
+func copyBlockDispatch(dst []byte, dstStride, dstOff int, src []byte, srcStride, srcOff, w, h int) {
+	copyBlockGeneric(dst, dstStride, dstOff, src, srcStride, srcOff, w, h)
+}

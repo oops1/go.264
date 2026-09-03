@@ -13,11 +13,7 @@ func clip1(v int) int {
 }
 
 func copyBlock(dst []byte, dstStride, dstOff int, src []byte, srcStride, srcOff, w, h int) {
-	for y := 0; y < h; y++ {
-		do := dstOff + y*dstStride
-		so := srcOff + y*srcStride
-		copy(dst[do:do+w], src[so:so+w])
-	}
+	simd.CopyBlock(dst, dstStride, dstOff, src, srcStride, srcOff, w, h)
 }
 
 func averageSrcAndBlock(dst []byte, dstStride, dstOff int, src []byte, srcStride, srcOff int, b []byte, w, h int) {

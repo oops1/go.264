@@ -313,3 +313,15 @@ func avgBytesGeneric(dst []byte, dstStride, dstOff int, a []byte, aStride, aOff 
 func AvgBytes(dst []byte, dstStride, dstOff int, a []byte, aStride, aOff int, b []byte, bStride, bOff, w, h int) {
 	avgBytesDispatch(dst, dstStride, dstOff, a, aStride, aOff, b, bStride, bOff, w, h)
 }
+
+func copyBlockGeneric(dst []byte, dstStride, dstOff int, src []byte, srcStride, srcOff, w, h int) {
+	for y := 0; y < h; y++ {
+		do := dstOff + y*dstStride
+		so := srcOff + y*srcStride
+		copy(dst[do:do+w], src[so:so+w])
+	}
+}
+
+func CopyBlock(dst []byte, dstStride, dstOff int, src []byte, srcStride, srcOff, w, h int) {
+	copyBlockDispatch(dst, dstStride, dstOff, src, srcStride, srcOff, w, h)
+}

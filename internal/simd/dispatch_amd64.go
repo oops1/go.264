@@ -286,3 +286,33 @@ func avgBytesDispatch(dst []byte, dstStride, dstOff int, a []byte, aStride, aOff
 	}
 	avgBytesGeneric(dst, dstStride, dstOff, a, aStride, aOff, b, bStride, bOff, w, h)
 }
+
+func copyBlockDispatch(dst []byte, dstStride, dstOff int, src []byte, srcStride, srcOff, w, h int) {
+	if hasSSE41 && spanFits(dst[dstOff:], dstStride, w, h) && spanFits(src[srcOff:], srcStride, w, h) {
+		d, s := dst[dstOff:], src[srcOff:]
+		switch {
+		case w == 16 && h == 16:
+			copyBlock16x16(d, dstStride, s, srcStride)
+			return
+		case w == 16 && h == 8:
+			copyBlock16x8(d, dstStride, s, srcStride)
+			return
+		case w == 8 && h == 16:
+			copyBlock8x16(d, dstStride, s, srcStride)
+			return
+		case w == 8 && h == 8:
+			copyBlock8x8(d, dstStride, s, srcStride)
+			return
+		case w == 8 && h == 4:
+			copyBlock8x4(d, dstStride, s, srcStride)
+			return
+		case w == 4 && h == 8:
+			copyBlock4x8(d, dstStride, s, srcStride)
+			return
+		case w == 4 && h == 4:
+			copyBlock4x4(d, dstStride, s, srcStride)
+			return
+		}
+	}
+	copyBlockGeneric(dst, dstStride, dstOff, src, srcStride, srcOff, w, h)
+}

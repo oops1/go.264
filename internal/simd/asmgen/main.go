@@ -48,6 +48,7 @@ func main() {
 	}
 	for _, size := range lumaMCSizes {
 		genAvgBytes(size[0], size[1])
+		genCopyBlock(size[0], size[1])
 	}
 	for _, size := range chromaMCSizes {
 		genBilinearChroma(size[0], size[1])
@@ -1831,6 +1832,39 @@ func genAvgBytes(w, h int) {
 			ADDQ(dstStride, dst)
 			ADDQ(aStride, aPtr)
 			ADDQ(bStride, bPtr)
+		}
+	}
+	RET()
+}
+
+func genCopyBlock(w, h int) {
+	TEXT(fmt.Sprintf("copyBlock%dx%d", w, h), NOSPLIT,
+		"func(dst []byte, dstStride int, src []byte, srcStride int)")
+	Pragma("noescape")
+	Doc("")
+	dst := Load(Param("dst").Base(), GP64())
+	dstStride := Load(Param("dstStride"), GP64())
+	src := Load(Param("src").Base(), GP64())
+	srcStride := Load(Param("srcStride"), GP64())
+
+	for y := 0; y < h; y++ {
+		switch w {
+		case 16:
+			v := XMM()
+			MOVOU(Mem{Base: src}, v)
+			MOVOU(v, Mem{Base: dst})
+		case 8:
+			g := GP64()
+			MOVQ(Mem{Base: src}, g)
+			MOVQ(g, Mem{Base: dst})
+		default:
+			g := GP32()
+			MOVL(Mem{Base: src}, g)
+			MOVL(g, Mem{Base: dst})
+		}
+		if y != h-1 {
+			ADDQ(srcStride, src)
+			ADDQ(dstStride, dst)
 		}
 	}
 	RET()
