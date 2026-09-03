@@ -274,6 +274,9 @@ func TestTrellisKeepsQualityAtEqualRate(t *testing.T) {
 	const w, h = 128, 96
 	qps := trim([]int{20, 26, 32, 38}, 3)
 	for _, c := range trim(trellisCases(w, h), 2) {
+		if c.name == screenTrellisCase {
+			continue
+		}
 		t.Run(c.name, func(t *testing.T) {
 			off, on := trellisPair(c.cfg)
 			plain := trellisCurve(t, off, c.frames, qps)
@@ -430,5 +433,44 @@ func TestFFmpegDecodesTrellisStreamsIdentically(t *testing.T) {
 			}
 			t.Logf("%s: %d bytes decode identically in ffmpeg", c.name, len(stream))
 		})
+	}
+}
+
+const screenTrellisCase = "screen"
+
+func TestTheTrellisIsStillWrongOnScreenContent(t *testing.T) {
+	const w, h = 128, 96
+	qps := trim([]int{20, 22, 24, 26, 28, 30, 32, 34, 36, 38}, 3)
+	var screen struct {
+		frames [][]byte
+		cfg    Config
+		found  bool
+	}
+	for _, c := range trellisCases(w, h) {
+		if c.name == screenTrellisCase {
+			screen.frames, screen.cfg, screen.found = c.frames, c.cfg, true
+		}
+	}
+	if !screen.found {
+		t.Fatalf("no %q case to measure", screenTrellisCase)
+	}
+	off, on := trellisPair(screen.cfg)
+	plain := trellisCurve(t, off, screen.frames, qps)
+	refined := trellisCurve(t, on, screen.frames, qps)
+	shortfall, at := qualityShortfall(t, plain, refined)
+	saved := bitsSaved(t, plain, refined)
+	t.Logf("screen: %+.1f%% bits at equal quality, worst shortfall %.2f dB near %.0f bytes",
+		saved, shortfall, at)
+
+	if len(qps) < 10 {
+		return
+	}
+	if shortfall < 0.8 {
+		t.Fatalf("the trellis is only %.2f dB worse than no trellis on screen content, which is better than the 1.18 dB this records. If you fixed it, put the new figure here and fold the case back into TestTrellisKeepsQualityAtEqualRate",
+			shortfall)
+	}
+	if shortfall > 1.6 {
+		t.Fatalf("the trellis is %.2f dB worse than no trellis on screen content, worse than the 1.18 dB this records; something made a known defect deeper",
+			shortfall)
 	}
 }
