@@ -142,6 +142,12 @@ func (s *mbEncoder) searchPartitionRef(list int, p partition, partIdx, kind, lam
 	if c := cost(0, 0); c < best {
 		best, bestX, bestY = c, 0, 0
 	}
+	if tx, ty, ok := carriedMotion(ref, s.mbx*16+p.x, s.mby*16+p.y); ok {
+		nx, ny := clampX(tx), clampY(ty)
+		if c := cost(nx, ny); c < best {
+			best, bestX, bestY = c, nx, ny
+		}
+	}
 
 	for step := 8; step >= 1; step >>= 1 {
 		for improved := true; improved; {
@@ -175,7 +181,7 @@ func (s *mbEncoder) searchPartitionRef(list int, p partition, partIdx, kind, lam
 		}
 		return refreshAllows(s.mbx*16+p.x, p.w, int(m[0]), int(m[1]), limitLuma, limitChroma)
 	}
-	for _, step := range []int16{2, 1} {
+	for _, step := range s.subPelSteps() {
 		for improved := true; improved; {
 			improved = false
 			for _, d := range [8][2]int16{{0, -1}, {0, 1}, {-1, 0}, {1, 0}, {-1, -1}, {1, -1}, {-1, 1}, {1, 1}} {
@@ -297,4 +303,36 @@ func (s *mbEncoder) predictLuma(dst []byte, dstStride, dstOff int, ref *frame.Pi
 		return
 	}
 	mc.PredictLuma(dst, dstStride, dstOff, ref.Y, ref.StrideY, srcOff, w, h, mvx, mvy)
+}
+
+var (
+	subPelToQuarter = []int16{2, 1}
+	subPelToHalf    = []int16{2}
+)
+
+func (s *mbEncoder) subPelSteps() []int16 {
+	switch s.e.cfg.MotionSearch {
+	case MotionSearchHalf:
+		return subPelToHalf
+	case MotionSearchInteger:
+		return nil
+	}
+	return subPelToQuarter
+}
+
+func carriedMotion(ref *frame.Picture, x, y int) (int, int, bool) {
+	mo := ref.Motion
+	if mo == nil {
+		return 0, 0, false
+	}
+	bx, by := x/4, y/4
+	if bx < 0 || by < 0 || bx >= mo.BlocksWide || by >= mo.BlocksHigh {
+		return 0, 0, false
+	}
+	i := mo.Index(bx, by)
+	if mo.RefIdx[0][i] < 0 {
+		return 0, 0, false
+	}
+	mv := mo.Mv[0][i]
+	return int(mv[0]) >> 2, int(mv[1]) >> 2, true
 }
