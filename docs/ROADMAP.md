@@ -257,6 +257,41 @@ refusal.
 against real silicon, and no remote desktop client has yet accepted a
 stream. Neither can be settled on the machine this was written on.
 
+## A correction to the 1.5.0 notes
+
+Two things that release says are wrong, and the record should say so
+rather than quietly improve.
+
+**The intra transform choice was not scored with an existing kernel.**
+The commit and the tag both say the eight by eight candidate is now
+scored with the matching kernel "which was already there". It was not.
+`simd.SATD8x8` is four independent four by four Hadamard sums tiled over
+the block — a saving in call shape, not a different measure, and blind
+to the energy compaction in exactly the way the four by four metric is.
+The change writes a new metric on `transform.Forward8x8`, the codec's
+real eight by eight transform. Calibrating its scale against the old one
+was a trap in itself: a naive halving overshot the cost by more than
+twice and stopped Intra_8x8 being chosen at all.
+
+**The measurement was narrower than the claim.** The release says the
+stream is slightly smaller at slightly better quality at a coarse
+quantiser and within noise at a fine one, which is what one content at
+two quantisers showed. Across fifteen configurations spanning quantisers
+eighteen to forty-two and three kinds of content the aggregate is a
+wash: net 0.065 per cent fewer bytes and a hundredth of a decibel, with
+individual points running from ten and a half per cent fewer bytes at
+plus 0.29 decibels to four and a half per cent more at minus 0.26. The
+mode decision is more principled; the bitrate is not decisively better.
+
+**And the long-term work fixed three faults, not one.** Beyond letting
+long-term pictures into the bi-predictive lists, the lists were being
+built correctly and then truncated to their first entry, and the
+bi-predictive motion search asked for reference index zero on both lists
+regardless. A third was latent and would have bitten later: the final
+motion store wrote a hardcoded reference index zero, which costs nothing
+while only one entry is reachable and desynchronises the encoder from
+the decoder the moment more than one is.
+
 ## What was missing and is not any more
 
 Kept as a record of what each thing cost and what it bought.
