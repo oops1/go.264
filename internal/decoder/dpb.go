@@ -321,8 +321,9 @@ func (b *dpb) store(pic *frame.Picture, hdr *syntax.SliceHeader) {
 		return
 	}
 	if hdr.AdaptiveRefPicMarking {
-		b.applyMMCO(hdr)
-		b.refs = append(b.refs, &refFrame{pic: pic, frameNum: hdr.FrameNum})
+		entry := &refFrame{pic: pic, frameNum: hdr.FrameNum}
+		b.applyMMCO(hdr, entry)
+		b.refs = append(b.refs, entry)
 		b.updatePicNums(hdr.FrameNum)
 		return
 	}
@@ -331,7 +332,7 @@ func (b *dpb) store(pic *frame.Picture, hdr *syntax.SliceHeader) {
 	b.slidingWindow()
 }
 
-func (b *dpb) applyMMCO(hdr *syntax.SliceHeader) {
+func (b *dpb) applyMMCO(hdr *syntax.SliceHeader, current *refFrame) {
 	for _, m := range hdr.MMCOs {
 		switch m.Op {
 		case 1:
@@ -361,6 +362,13 @@ func (b *dpb) applyMMCO(hdr *syntax.SliceHeader) {
 			}
 		case 5:
 			b.refs = b.refs[:0]
+		case 6:
+			if r := b.longTermByPicNum(int(m.LongTermFrameIdx)); r != nil {
+				b.remove(r)
+			}
+			current.longTerm = true
+			current.longTermIdx = int(m.LongTermFrameIdx)
+			current.pic.LongTerm = true
 		}
 	}
 }

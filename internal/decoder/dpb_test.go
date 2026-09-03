@@ -12,6 +12,10 @@ func newRef(frameNum uint32, longTerm bool, idx int) *refFrame {
 	return &refFrame{pic: frame.NewPicture(1, 1), frameNum: frameNum, longTerm: longTerm, longTermIdx: idx}
 }
 
+func newCurrent() *refFrame {
+	return &refFrame{pic: frame.NewPicture(1, 1)}
+}
+
 func newTestHeader(frameNum uint32, idr bool, nalRefIDC uint8) *syntax.SliceHeader {
 	return &syntax.SliceHeader{FrameNum: frameNum, IDR: idr, NalRefIDC: nalRefIDC}
 }
@@ -429,7 +433,7 @@ func TestApplyMMCOOp1RemovesShortTerm(t *testing.T) {
 		{Op: 1, DifferenceOfPicNumsMinus1: 2},  // pn = 10-2-1 = 7
 		{Op: 1, DifferenceOfPicNumsMinus1: 50}, // pn = 10-50-1 = -41: absent, no-op
 	}}
-	b.applyMMCO(hdr)
+	b.applyMMCO(hdr, newCurrent())
 
 	assertRefOrder(t, b.refs, []*refFrame{keep})
 }
@@ -443,7 +447,7 @@ func TestApplyMMCOOp2RemovesLongTerm(t *testing.T) {
 		{Op: 2, LongTermPicNum: 5},
 		{Op: 2, LongTermPicNum: 42}, // absent, no-op
 	}}
-	b.applyMMCO(hdr)
+	b.applyMMCO(hdr, newCurrent())
 
 	assertRefOrder(t, b.refs, []*refFrame{keep})
 }
@@ -456,7 +460,7 @@ func TestApplyMMCOOp3ConvertsToLongTerm(t *testing.T) {
 	hdr := &syntax.SliceHeader{FrameNum: 10, MMCOs: []syntax.MMCO{
 		{Op: 3, DifferenceOfPicNumsMinus1: 0, LongTermFrameIdx: 8}, // pn = 10-0-1 = 9
 	}}
-	b.applyMMCO(hdr)
+	b.applyMMCO(hdr, newCurrent())
 
 	if !r.longTerm || r.longTermIdx != 8 {
 		t.Fatalf("r = %+v, want longTerm=true longTermIdx=8", r)
@@ -471,7 +475,7 @@ func TestApplyMMCOOp3AbsentPictureIsNoop(t *testing.T) {
 	hdr := &syntax.SliceHeader{FrameNum: 10, MMCOs: []syntax.MMCO{
 		{Op: 3, DifferenceOfPicNumsMinus1: 99, LongTermFrameIdx: 8},
 	}}
-	b.applyMMCO(hdr)
+	b.applyMMCO(hdr, newCurrent())
 
 	if r.longTerm {
 		t.Fatalf("r should be unchanged for an absent target, got longTerm=true")
@@ -489,7 +493,7 @@ func TestApplyMMCOOp4DropsAboveMaxLongTermIdx(t *testing.T) {
 	hdr := &syntax.SliceHeader{MMCOs: []syntax.MMCO{
 		{Op: 4, MaxLongTermFrameIdxPlus1: 3}, // max = 2
 	}}
-	b.applyMMCO(hdr)
+	b.applyMMCO(hdr, newCurrent())
 
 	assertRefOrder(t, b.refs, []*refFrame{keep1, keep2, short})
 }
@@ -497,10 +501,96 @@ func TestApplyMMCOOp4DropsAboveMaxLongTermIdx(t *testing.T) {
 func TestApplyMMCOOp5ClearsBuffer(t *testing.T) {
 	b := &dpb{refs: []*refFrame{newRef(0, false, 0), newRef(0, true, 1)}}
 	hdr := &syntax.SliceHeader{MMCOs: []syntax.MMCO{{Op: 5}}}
-	b.applyMMCO(hdr)
+	b.applyMMCO(hdr, newCurrent())
 
 	if len(b.refs) != 0 {
 		t.Fatalf("refs = %v, want empty", b.refs)
+	}
+}
+
+func TestApplyMMCOOp6MarksCurrentPictureLongTerm(t *testing.T) {
+	keep := newRef(0, false, 0)
+	b := &dpb{refs: []*refFrame{keep}}
+	current := newCurrent()
+
+	hdr := &syntax.SliceHeader{MMCOs: []syntax.MMCO{{Op: 6, LongTermFrameIdx: 4}}}
+	b.applyMMCO(hdr, current)
+
+	if !current.longTerm || current.longTermIdx != 4 {
+		t.Fatalf("current = %+v, want longTerm=true longTermIdx=4", current)
+	}
+	if !current.pic.LongTerm {
+		t.Fatal("current.pic.LongTerm was not set")
+	}
+	assertRefOrder(t, b.refs, []*refFrame{keep})
+}
+
+func TestApplyMMCOOp6EvictsThePictureAlreadyHoldingTheIndex(t *testing.T) {
+	holder := newRef(0, true, 4)
+	other := newRef(0, true, 9)
+	b := &dpb{refs: []*refFrame{holder, other}}
+	current := newCurrent()
+
+	hdr := &syntax.SliceHeader{MMCOs: []syntax.MMCO{{Op: 6, LongTermFrameIdx: 4}}}
+	b.applyMMCO(hdr, current)
+
+	assertRefOrder(t, b.refs, []*refFrame{other})
+	if !current.longTerm || current.longTermIdx != 4 {
+		t.Fatalf("current = %+v, want longTerm=true longTermIdx=4", current)
+	}
+}
+
+func TestStoreOp6MarksTheCurrentPictureLongTermInsteadOfShortTerm(t *testing.T) {
+	b := &dpb{maxNumRefs: 4, maxFrameNum: 16}
+	pic := frame.NewPicture(1, 1)
+	hdr := &syntax.SliceHeader{
+		NalRefIDC:             1,
+		FrameNum:              7,
+		AdaptiveRefPicMarking: true,
+		MMCOs:                 []syntax.MMCO{{Op: 6, LongTermFrameIdx: 2}},
+	}
+
+	b.store(pic, hdr)
+
+	if len(b.refs) != 1 {
+		t.Fatalf("refs = %v, want exactly one entry (the current picture must not also be appended short term)", b.refs)
+	}
+	if !b.refs[0].longTerm || b.refs[0].longTermIdx != 2 || b.refs[0].pic != pic {
+		t.Fatalf("refs[0] = %+v, want the current picture marked longTerm=true longTermIdx=2", b.refs[0])
+	}
+	if !pic.LongTerm {
+		t.Fatal("pic.LongTerm was not set")
+	}
+}
+
+func TestStoreOp6SurvivesTheSlidingWindowThatWouldHaveDroppedAShortTermPicture(t *testing.T) {
+	b := &dpb{maxNumRefs: 2, maxFrameNum: 16}
+
+	longTermPic := frame.NewPicture(1, 1)
+	hdr := &syntax.SliceHeader{
+		NalRefIDC: 1, FrameNum: 0, AdaptiveRefPicMarking: true,
+		MMCOs: []syntax.MMCO{{Op: 6, LongTermFrameIdx: 0}},
+	}
+	b.store(longTermPic, hdr)
+
+	for _, fn := range []uint32{1, 2, 3} {
+		b.store(frame.NewPicture(1, 1), &syntax.SliceHeader{NalRefIDC: 1, FrameNum: fn})
+	}
+
+	if len(b.refs) != 2 {
+		t.Fatalf("refs = %v, want 2 (the long-term picture plus the single sliding-window slot)", b.refs)
+	}
+	found := false
+	for _, r := range b.refs {
+		if r.pic == longTermPic {
+			found = true
+			if !r.longTerm || r.longTermIdx != 0 {
+				t.Fatalf("long-term entry = %+v, want longTerm=true longTermIdx=0", r)
+			}
+		}
+	}
+	if !found {
+		t.Fatal("the picture marked long term by op 6 was evicted by the sliding window")
 	}
 }
 
