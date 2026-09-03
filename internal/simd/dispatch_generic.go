@@ -59,3 +59,7 @@ func DeblockLumaNormal(plane []byte, offset, stride int, tc0, bs *[16]uint8, alp
 func DeblockLumaStrong(plane []byte, offset, stride, alpha, beta int) bool {
 	return false
 }
+
+func DeblockLumaVerticalNormal(plane []byte, offset, stride int, tc0, bs *[16]uint8, alpha, beta int) bool {
+	return false
+}

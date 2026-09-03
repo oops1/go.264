@@ -33,6 +33,7 @@ func main() {
 	genSATD8x8()
 	genSATD8x8AVX2()
 	genDeblockLumaNormalAVX2()
+	genDeblockLumaVerticalNormalAVX2()
 	genDeblockLumaStrongAVX2()
 
 	for _, size := range lumaMCSizes {
@@ -1462,41 +1463,8 @@ func genDeblockLumaNormalAVX2() {
 	}
 	p2, p1, p0, q0, q1, q2 := rows[0], rows[1], rows[2], rows[3], rows[4], rows[5]
 
-	tc0V := YMM()
-	VPMOVZXBW(Mem{Base: tc0Ptr}, tc0V)
-	zero := YMM()
-	VPXOR(zero, zero, zero)
-
-	apply := func() reg.VecVirtual {
-		alphaV := yBroadcastReg(alphaGP.(reg.GPVirtual))
-		betaV := yBroadcastReg(betaGP.(reg.GPVirtual))
-		bsV := YMM()
-		VPMOVZXBW(Mem{Base: bsPtr}, bsV)
-		m := yAnd(yGreater(alphaV, yAbs(ySub(p0, q0))), yGreater(bsV, zero))
-		m = yAnd(m, yGreater(betaV, yAbs(ySub(p1, p0))))
-		return yAnd(m, yGreater(betaV, yAbs(ySub(q1, q0))))
-	}()
-
-	betaV := yBroadcastReg(betaGP.(reg.GPVirtual))
-	nearP := yAnd(apply, yGreater(betaV, yAbs(ySub(p2, p0))))
-	nearQ := yAnd(apply, yGreater(betaV, yAbs(ySub(q2, q0))))
-
-	outP0, outQ0 := func() (reg.VecVirtual, reg.VecVirtual) {
-		tc := ySub(ySub(tc0V, nearP), nearQ)
-		d := yShr(yAdd(yAdd(yShl(ySub(q0, p0), 2), ySub(p1, q1)), yBroadcast(4)), 3)
-		d = yClip(d, tc, ySub(zero, tc))
-		full := yBroadcast(255)
-		a := yMax(yMin(yAdd(p0, d), full), zero)
-		b := yMax(yMin(ySub(q0, d), full), zero)
-		return ySelect(apply, a, p0), ySelect(apply, b, q0)
-	}()
-
-	mid := yShr(yAdd(yAdd(p0, q0), yBroadcast(1)), 1)
-	negTc0 := ySub(zero, tc0V)
-	stepP := yClip(yShr(ySub(yAdd(p2, mid), yShl(p1, 1)), 1), tc0V, negTc0)
-	outP1 := ySelect(nearP, yAdd(p1, stepP), p1)
-	stepQ := yClip(yShr(ySub(yAdd(q2, mid), yShl(q1, 1)), 1), tc0V, negTc0)
-	outQ1 := ySelect(nearQ, yAdd(q1, stepQ), q1)
+	outP1, outP0, outQ0, outQ1 := lumaNormalOutputs(p2, p1, p0, q0, q1, q2,
+		Mem{Base: tc0Ptr}, Mem{Base: bsPtr}, alphaGP.(reg.GPVirtual), betaGP.(reg.GPVirtual))
 
 	storePtr := GP64()
 	MOVQ(base, storePtr)
@@ -1607,4 +1575,204 @@ func genDeblockLumaStrongAVX2() {
 
 	VZEROUPPER()
 	RET()
+}
+
+func xLowBytes(a, b reg.VecVirtual) reg.VecVirtual {
+	d := XMM()
+	VPUNPCKLBW(b, a, d)
+	return d
+}
+
+func xHighBytes(a, b reg.VecVirtual) reg.VecVirtual {
+	d := XMM()
+	VPUNPCKHBW(b, a, d)
+	return d
+}
+
+func xLowWords(a, b reg.VecVirtual) reg.VecVirtual {
+	d := XMM()
+	VPUNPCKLWD(b, a, d)
+	return d
+}
+
+func xHighWords(a, b reg.VecVirtual) reg.VecVirtual {
+	d := XMM()
+	VPUNPCKHWD(b, a, d)
+	return d
+}
+
+func xLowLongs(a, b reg.VecVirtual) reg.VecVirtual {
+	d := XMM()
+	VPUNPCKLDQ(b, a, d)
+	return d
+}
+
+func xHighLongs(a, b reg.VecVirtual) reg.VecVirtual {
+	d := XMM()
+	VPUNPCKHDQ(b, a, d)
+	return d
+}
+
+func xLowQuads(a, b reg.VecVirtual) reg.VecVirtual {
+	d := XMM()
+	VPUNPCKLQDQ(b, a, d)
+	return d
+}
+
+func xHighQuads(a, b reg.VecVirtual) reg.VecVirtual {
+	d := XMM()
+	VPUNPCKHQDQ(b, a, d)
+	return d
+}
+
+func transposeEightRows(rows []reg.VecVirtual) [4]reg.VecVirtual {
+	a0 := xLowBytes(rows[0], rows[1])
+	a1 := xLowBytes(rows[2], rows[3])
+	a2 := xLowBytes(rows[4], rows[5])
+	a3 := xLowBytes(rows[6], rows[7])
+	b0 := xLowWords(a0, a1)
+	b1 := xHighWords(a0, a1)
+	b2 := xLowWords(a2, a3)
+	b3 := xHighWords(a2, a3)
+	return [4]reg.VecVirtual{
+		xLowLongs(b0, b2),
+		xHighLongs(b0, b2),
+		xLowLongs(b1, b3),
+		xHighLongs(b1, b3),
+	}
+}
+
+func loadSampleColumns(base, stride reg.Register, want []int) []reg.VecVirtual {
+	rowPtr := GP64()
+	MOVQ(base, rowPtr)
+	halves := make([][4]reg.VecVirtual, 2)
+	for half := 0; half < 2; half++ {
+		rows := make([]reg.VecVirtual, 8)
+		for i := range rows {
+			x := XMM()
+			MOVQ(Mem{Base: rowPtr}, x)
+			rows[i] = x
+			ADDQ(stride, rowPtr)
+		}
+		halves[half] = transposeEightRows(rows)
+	}
+	out := make([]reg.VecVirtual, 8)
+	for _, k := range want {
+		packed := halves[0][k/2]
+		upper := halves[1][k/2]
+		var joined reg.VecVirtual
+		if k%2 == 0 {
+			joined = xLowQuads(packed, upper)
+		} else {
+			joined = xHighQuads(packed, upper)
+		}
+		wide := YMM()
+		VPMOVZXBW(joined, wide)
+		out[k] = wide
+	}
+	return out
+}
+
+func lumaNormalOutputs(p2, p1, p0, q0, q1, q2 reg.VecVirtual, tc0At, bsAt Mem, alphaGP, betaGP reg.GPVirtual) (reg.VecVirtual, reg.VecVirtual, reg.VecVirtual, reg.VecVirtual) {
+	tc0V := YMM()
+	VPMOVZXBW(tc0At, tc0V)
+	zero := YMM()
+	VPXOR(zero, zero, zero)
+
+	apply := func() reg.VecVirtual {
+		alphaV := yBroadcastReg(alphaGP)
+		betaV := yBroadcastReg(betaGP)
+		bsV := YMM()
+		VPMOVZXBW(bsAt, bsV)
+		m := yAnd(yGreater(alphaV, yAbs(ySub(p0, q0))), yGreater(bsV, zero))
+		m = yAnd(m, yGreater(betaV, yAbs(ySub(p1, p0))))
+		return yAnd(m, yGreater(betaV, yAbs(ySub(q1, q0))))
+	}()
+
+	betaV := yBroadcastReg(betaGP)
+	nearP := yAnd(apply, yGreater(betaV, yAbs(ySub(p2, p0))))
+	nearQ := yAnd(apply, yGreater(betaV, yAbs(ySub(q2, q0))))
+
+	outP0, outQ0 := func() (reg.VecVirtual, reg.VecVirtual) {
+		tc := ySub(ySub(tc0V, nearP), nearQ)
+		d := yShr(yAdd(yAdd(yShl(ySub(q0, p0), 2), ySub(p1, q1)), yBroadcast(4)), 3)
+		d = yClip(d, tc, ySub(zero, tc))
+		full := yBroadcast(255)
+		a := yMax(yMin(yAdd(p0, d), full), zero)
+		b := yMax(yMin(ySub(q0, d), full), zero)
+		return ySelect(apply, a, p0), ySelect(apply, b, q0)
+	}()
+
+	mid := yShr(yAdd(yAdd(p0, q0), yBroadcast(1)), 1)
+	negTc0 := ySub(zero, tc0V)
+	stepP := yClip(yShr(ySub(yAdd(p2, mid), yShl(p1, 1)), 1), tc0V, negTc0)
+	outP1 := ySelect(nearP, yAdd(p1, stepP), p1)
+	stepQ := yClip(yShr(ySub(yAdd(q2, mid), yShl(q1, 1)), 1), tc0V, negTc0)
+	outQ1 := ySelect(nearQ, yAdd(q1, stepQ), q1)
+	return outP1, outP0, outQ0, outQ1
+}
+
+func genDeblockLumaVerticalNormalAVX2() {
+	TEXT("deblockLumaVerticalNormalAVX2", NOSPLIT,
+		"func(plane []byte, offset int, stride int, tc0 *[16]uint8, bs *[16]uint8, alpha int32, beta int32)")
+	Pragma("noescape")
+	Doc("")
+	base := Load(Param("plane").Base(), GP64())
+	offset := Load(Param("offset"), GP64())
+	stride := Load(Param("stride"), GP64())
+	tc0Ptr := Load(Param("tc0"), GP64())
+	bsPtr := Load(Param("bs"), GP64())
+	alphaGP := Load(Param("alpha"), GP32())
+	betaGP := Load(Param("beta"), GP32())
+	ADDQ(offset, base)
+
+	left := GP64()
+	MOVQ(base, left)
+	SUBQ(Imm(4), left)
+	cols := loadSampleColumns(left, stride, []int{1, 2, 3, 4, 5, 6})
+
+	outP1, outP0, outQ0, outQ1 := lumaNormalOutputs(cols[1], cols[2], cols[3], cols[4], cols[5], cols[6],
+		Mem{Base: tc0Ptr}, Mem{Base: bsPtr}, alphaGP.(reg.GPVirtual), betaGP.(reg.GPVirtual))
+
+	a := yPackBytes(outP1)
+	b := yPackBytes(outP0)
+	c := yPackBytes(outQ0)
+	d := yPackBytes(outQ1)
+
+	t0 := xLowBytes(a, b)
+	t1 := xHighBytes(a, b)
+	t2 := xLowBytes(c, d)
+	t3 := xHighBytes(c, d)
+	quads := [4]reg.VecVirtual{
+		xLowWords(t0, t2),
+		xHighWords(t0, t2),
+		xLowWords(t1, t3),
+		xHighWords(t1, t3),
+	}
+
+	rowPtr := GP64()
+	MOVQ(base, rowPtr)
+	SUBQ(Imm(2), rowPtr)
+	for _, q := range quads {
+		for lane := 0; lane < 4; lane++ {
+			if lane == 0 {
+				VMOVD(q, Mem{Base: rowPtr})
+			} else {
+				VPEXTRD(Imm(uint64(lane)), q, Mem{Base: rowPtr})
+			}
+			ADDQ(stride, rowPtr)
+		}
+	}
+	VZEROUPPER()
+	RET()
+}
+
+func yPackBytes(v reg.VecVirtual) reg.VecVirtual {
+	packed := YMM()
+	VPACKUSWB(v, v, packed)
+	ordered := YMM()
+	VPERMQ(Imm(0xD8), packed, ordered)
+	narrow := XMM()
+	VMOVDQU(ordered.AsX(), narrow)
+	return narrow
 }

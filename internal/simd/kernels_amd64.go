@@ -78,6 +78,10 @@ func deblockLumaNormalAVX2(plane []byte, offset int, stride int, tc0 *[16]uint8,
 
 //
 //go:noescape
+func deblockLumaVerticalNormalAVX2(plane []byte, offset int, stride int, tc0 *[16]uint8, bs *[16]uint8, alpha int32, beta int32)
+
+//
+//go:noescape
 func deblockLumaStrongAVX2(plane []byte, offset int, stride int, alpha int32, beta int32)
 
 //

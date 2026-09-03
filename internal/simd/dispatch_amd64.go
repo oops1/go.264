@@ -247,3 +247,11 @@ func DeblockLumaStrong(plane []byte, offset, stride, alpha, beta int) bool {
 	deblockLumaStrongAVX2(plane, offset, stride, int32(alpha), int32(beta))
 	return true
 }
+
+func DeblockLumaVerticalNormal(plane []byte, offset, stride int, tc0, bs *[16]uint8, alpha, beta int) bool {
+	if !hasAVX2 || offset < 4 || stride <= 0 || len(plane)-offset < 15*stride+4 {
+		return false
+	}
+	deblockLumaVerticalNormalAVX2(plane, offset, stride, tc0, bs, int32(alpha), int32(beta))
+	return true
+}

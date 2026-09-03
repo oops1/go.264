@@ -1823,6 +1823,221 @@ TEXT ·deblockLumaNormalAVX2(SB), NOSPLIT, $0-64
 	VZEROUPPER
 	RET
 
+// func deblockLumaVerticalNormalAVX2(plane []byte, offset int, stride int, tc0 *[16]uint8, bs *[16]uint8, alpha int32, beta int32)
+// Requires: AVX, AVX2, SSE2
+TEXT ·deblockLumaVerticalNormalAVX2(SB), NOSPLIT, $0-64
+	MOVQ         plane_base+0(FP), AX
+	MOVQ         offset+24(FP), CX
+	MOVQ         stride+32(FP), DX
+	MOVQ         tc0+40(FP), BX
+	MOVQ         bs+48(FP), SI
+	MOVL         alpha+56(FP), DI
+	MOVL         beta+60(FP), R8
+	ADDQ         CX, AX
+	MOVQ         AX, CX
+	SUBQ         $0x04, CX
+	MOVQ         (CX), X0
+	ADDQ         DX, CX
+	MOVQ         (CX), X1
+	ADDQ         DX, CX
+	MOVQ         (CX), X2
+	ADDQ         DX, CX
+	MOVQ         (CX), X3
+	ADDQ         DX, CX
+	MOVQ         (CX), X4
+	ADDQ         DX, CX
+	MOVQ         (CX), X5
+	ADDQ         DX, CX
+	MOVQ         (CX), X6
+	ADDQ         DX, CX
+	MOVQ         (CX), X7
+	ADDQ         DX, CX
+	VPUNPCKLBW   X1, X0, X0
+	VPUNPCKLBW   X3, X2, X1
+	VPUNPCKLBW   X5, X4, X2
+	VPUNPCKLBW   X7, X6, X3
+	VPUNPCKLWD   X1, X0, X4
+	VPUNPCKHWD   X1, X0, X0
+	VPUNPCKLWD   X3, X2, X1
+	VPUNPCKHWD   X3, X2, X2
+	VPUNPCKLDQ   X1, X4, X3
+	VPUNPCKHDQ   X1, X4, X1
+	VPUNPCKLDQ   X2, X0, X4
+	VPUNPCKHDQ   X2, X0, X0
+	MOVQ         (CX), X2
+	ADDQ         DX, CX
+	MOVQ         (CX), X5
+	ADDQ         DX, CX
+	MOVQ         (CX), X6
+	ADDQ         DX, CX
+	MOVQ         (CX), X7
+	ADDQ         DX, CX
+	MOVQ         (CX), X8
+	ADDQ         DX, CX
+	MOVQ         (CX), X9
+	ADDQ         DX, CX
+	MOVQ         (CX), X10
+	ADDQ         DX, CX
+	MOVQ         (CX), X11
+	ADDQ         DX, CX
+	VPUNPCKLBW   X5, X2, X2
+	VPUNPCKLBW   X7, X6, X5
+	VPUNPCKLBW   X9, X8, X6
+	VPUNPCKLBW   X11, X10, X7
+	VPUNPCKLWD   X5, X2, X8
+	VPUNPCKHWD   X5, X2, X2
+	VPUNPCKLWD   X7, X6, X5
+	VPUNPCKHWD   X7, X6, X6
+	VPUNPCKLDQ   X5, X8, X7
+	VPUNPCKHDQ   X5, X8, X5
+	VPUNPCKLDQ   X6, X2, X8
+	VPUNPCKHDQ   X6, X2, X2
+	VPUNPCKHQDQ  X7, X3, X3
+	VPMOVZXBW    X3, Y3
+	VPUNPCKLQDQ  X5, X1, X6
+	VPMOVZXBW    X6, Y6
+	VPUNPCKHQDQ  X5, X1, X1
+	VPMOVZXBW    X1, Y1
+	VPUNPCKLQDQ  X8, X4, X5
+	VPMOVZXBW    X5, Y5
+	VPUNPCKHQDQ  X8, X4, X4
+	VPMOVZXBW    X4, Y4
+	VPUNPCKLQDQ  X2, X0, X0
+	VPMOVZXBW    X0, Y0
+	VPMOVZXBW    (BX), Y2
+	VPXOR        Y7, Y7, Y7
+	VMOVD        DI, X8
+	VPBROADCASTW X8, Y8
+	VMOVD        R8, X9
+	VPBROADCASTW X9, Y9
+	VPMOVZXBW    (SI), Y10
+	VPSUBW       Y5, Y1, Y11
+	VPABSW       Y11, Y11
+	VPCMPGTW     Y11, Y8, Y8
+	VPCMPGTW     Y7, Y10, Y10
+	VPAND        Y8, Y10, Y8
+	VPSUBW       Y1, Y6, Y10
+	VPABSW       Y10, Y10
+	VPCMPGTW     Y10, Y9, Y10
+	VPAND        Y8, Y10, Y8
+	VPSUBW       Y5, Y4, Y10
+	VPABSW       Y10, Y10
+	VPCMPGTW     Y10, Y9, Y9
+	VPAND        Y8, Y9, Y8
+	VMOVD        R8, X9
+	VPBROADCASTW X9, Y9
+	VPSUBW       Y1, Y3, Y10
+	VPABSW       Y10, Y10
+	VPCMPGTW     Y10, Y9, Y10
+	VPAND        Y8, Y10, Y10
+	VPSUBW       Y5, Y0, Y11
+	VPABSW       Y11, Y11
+	VPCMPGTW     Y11, Y9, Y9
+	VPAND        Y8, Y9, Y9
+	VPSUBW       Y10, Y2, Y11
+	VPSUBW       Y9, Y11, Y11
+	VPSUBW       Y1, Y5, Y12
+	VPSLLW       $0x02, Y12, Y12
+	VPSUBW       Y4, Y6, Y13
+	VPADDW       Y12, Y13, Y12
+	MOVL         $0x00000004, CX
+	VMOVD        CX, X13
+	VPBROADCASTW X13, Y13
+	VPADDW       Y12, Y13, Y12
+	VPSRAW       $0x03, Y12, Y12
+	VPSUBW       Y11, Y7, Y13
+	VPMINSW      Y12, Y11, Y11
+	VPMAXSW      Y11, Y13, Y11
+	MOVL         $0x000000ff, CX
+	VMOVD        CX, X12
+	VPBROADCASTW X12, Y12
+	VPADDW       Y1, Y11, Y13
+	VPMINSW      Y13, Y12, Y13
+	VPMAXSW      Y13, Y7, Y13
+	VPSUBW       Y11, Y5, Y11
+	VPMINSW      Y11, Y12, Y11
+	VPMAXSW      Y11, Y7, Y11
+	VPBLENDVB    Y8, Y13, Y1, Y12
+	VPBLENDVB    Y8, Y11, Y5, Y8
+	VPADDW       Y1, Y5, Y1
+	MOVL         $0x00000001, CX
+	VMOVD        CX, X5
+	VPBROADCASTW X5, Y5
+	VPADDW       Y1, Y5, Y1
+	VPSRAW       $0x01, Y1, Y1
+	VPSUBW       Y2, Y7, Y5
+	VPADDW       Y3, Y1, Y3
+	VPSLLW       $0x01, Y6, Y7
+	VPSUBW       Y7, Y3, Y3
+	VPSRAW       $0x01, Y3, Y3
+	VPMINSW      Y3, Y2, Y3
+	VPMAXSW      Y3, Y5, Y3
+	VPADDW       Y6, Y3, Y3
+	VPBLENDVB    Y10, Y3, Y6, Y3
+	VPADDW       Y0, Y1, Y0
+	VPSLLW       $0x01, Y4, Y1
+	VPSUBW       Y1, Y0, Y0
+	VPSRAW       $0x01, Y0, Y0
+	VPMINSW      Y0, Y2, Y0
+	VPMAXSW      Y0, Y5, Y0
+	VPADDW       Y4, Y0, Y0
+	VPBLENDVB    Y9, Y0, Y4, Y0
+	VPACKUSWB    Y3, Y3, Y1
+	VPERMQ       $0xd8, Y1, Y1
+	VMOVDQU      X1, X1
+	VPACKUSWB    Y12, Y12, Y2
+	VPERMQ       $0xd8, Y2, Y2
+	VMOVDQU      X2, X2
+	VPACKUSWB    Y8, Y8, Y3
+	VPERMQ       $0xd8, Y3, Y3
+	VMOVDQU      X3, X3
+	VPACKUSWB    Y0, Y0, Y0
+	VPERMQ       $0xd8, Y0, Y0
+	VMOVDQU      X0, X0
+	VPUNPCKLBW   X2, X1, X4
+	VPUNPCKHBW   X2, X1, X1
+	VPUNPCKLBW   X0, X3, X2
+	VPUNPCKHBW   X0, X3, X0
+	VPUNPCKLWD   X2, X4, X3
+	VPUNPCKHWD   X2, X4, X2
+	VPUNPCKLWD   X0, X1, X4
+	VPUNPCKHWD   X0, X1, X0
+	SUBQ         $0x02, AX
+	VMOVD        X3, (AX)
+	ADDQ         DX, AX
+	VPEXTRD      $0x01, X3, (AX)
+	ADDQ         DX, AX
+	VPEXTRD      $0x02, X3, (AX)
+	ADDQ         DX, AX
+	VPEXTRD      $0x03, X3, (AX)
+	ADDQ         DX, AX
+	VMOVD        X2, (AX)
+	ADDQ         DX, AX
+	VPEXTRD      $0x01, X2, (AX)
+	ADDQ         DX, AX
+	VPEXTRD      $0x02, X2, (AX)
+	ADDQ         DX, AX
+	VPEXTRD      $0x03, X2, (AX)
+	ADDQ         DX, AX
+	VMOVD        X4, (AX)
+	ADDQ         DX, AX
+	VPEXTRD      $0x01, X4, (AX)
+	ADDQ         DX, AX
+	VPEXTRD      $0x02, X4, (AX)
+	ADDQ         DX, AX
+	VPEXTRD      $0x03, X4, (AX)
+	ADDQ         DX, AX
+	VMOVD        X0, (AX)
+	ADDQ         DX, AX
+	VPEXTRD      $0x01, X0, (AX)
+	ADDQ         DX, AX
+	VPEXTRD      $0x02, X0, (AX)
+	ADDQ         DX, AX
+	VPEXTRD      $0x03, X0, (AX)
+	ADDQ         DX, AX
+	VZEROUPPER
+	RET
+
 // func deblockLumaStrongAVX2(plane []byte, offset int, stride int, alpha int32, beta int32)
 // Requires: AVX, AVX2
 TEXT ·deblockLumaStrongAVX2(SB), NOSPLIT, $0-48

@@ -162,7 +162,65 @@ func filterEdge(plane []byte, offset, lineStep, sampleStep, numLines, groupSize 
 }
 
 func FilterLumaEdgeVertical(plane []byte, stride, offset int, bS [4]uint8, indexA, indexB int) {
+	if acceleratedLumaEdgeVertical(plane, offset, stride, bS, indexA, indexB) {
+		return
+	}
 	filterEdge(plane, offset, stride, 1, 16, 4, bS, indexA, indexB, false)
+}
+
+func acceleratedLumaEdgeVertical(plane []byte, offset, stride int, bS [4]uint8, indexA, indexB int) bool {
+	alpha := int(alphaTable[indexA])
+	beta := int(betaTable[indexB])
+	if alpha == 0 || beta == 0 {
+		return true
+	}
+	tc0, bs, kind := edgeStrengths(bS, indexA)
+	switch kind {
+	case edgeIdle:
+		return true
+	case edgeNormal:
+		return simd.DeblockLumaVerticalNormal(plane, offset, stride, &tc0, &bs, alpha, beta)
+	}
+	return false
+}
+
+type edgeKind int
+
+const (
+	edgeIdle edgeKind = iota
+	edgeNormal
+	edgeStrong
+	edgeMixed
+)
+
+func edgeStrengths(bS [4]uint8, indexA int) (tc0, bs [16]uint8, kind edgeKind) {
+	strong, weak := 0, 0
+	for g, b := range bS {
+		switch {
+		case b == 0:
+		case b == 4:
+			strong++
+		default:
+			weak++
+		}
+		for i := 0; i < 4; i++ {
+			bs[g*4+i] = b
+			if b >= 1 && b <= 3 {
+				tc0[g*4+i] = tc0Table[b-1][indexA]
+			}
+		}
+	}
+	switch {
+	case strong+weak == 0:
+		kind = edgeIdle
+	case strong == 4:
+		kind = edgeStrong
+	case strong == 0:
+		kind = edgeNormal
+	default:
+		kind = edgeMixed
+	}
+	return
 }
 
 func FilterLumaEdgeHorizontal(plane []byte, stride, offset int, bS [4]uint8, indexA, indexB int) {
@@ -178,35 +236,16 @@ func acceleratedLumaEdge(plane []byte, offset, stride int, bS [4]uint8, indexA, 
 	if alpha == 0 || beta == 0 {
 		return true
 	}
-	strong, weak := 0, 0
-	for _, b := range bS {
-		switch {
-		case b == 0:
-		case b == 4:
-			strong++
-		default:
-			weak++
-		}
-	}
-	if strong+weak == 0 {
+	tc0, bs, kind := edgeStrengths(bS, indexA)
+	switch kind {
+	case edgeIdle:
 		return true
-	}
-	if strong == 4 {
+	case edgeStrong:
 		return simd.DeblockLumaStrong(plane, offset, stride, alpha, beta)
+	case edgeNormal:
+		return simd.DeblockLumaNormal(plane, offset, stride, &tc0, &bs, alpha, beta)
 	}
-	if strong != 0 {
-		return false
-	}
-	var tc0, bs [16]uint8
-	for g, b := range bS {
-		for i := 0; i < 4; i++ {
-			bs[g*4+i] = b
-			if b != 0 {
-				tc0[g*4+i] = tc0Table[b-1][indexA]
-			}
-		}
-	}
-	return simd.DeblockLumaNormal(plane, offset, stride, &tc0, &bs, alpha, beta)
+	return false
 }
 
 func FilterChromaEdgeVertical(plane []byte, stride, offset int, bS [4]uint8, indexA, indexB int) {
