@@ -86,7 +86,7 @@ func decodeWithFlush(d *Decoder, data []byte) ([]*frame.Picture, error) {
 
 func TestCheckSupportedRejections(t *testing.T) {
 	base := func() *syntax.SPS {
-		return &syntax.SPS{ChromaFormatIDC: syntax.Chroma420, FrameMbsOnly: true}
+		return &syntax.SPS{ChromaFormatIDC: syntax.Chroma420, FrameMbsOnly: true, LevelIDC: 30}
 	}
 
 	cases := []struct {

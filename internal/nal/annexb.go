@@ -53,6 +53,7 @@ func SplitAnnexB(data []byte) [][]byte {
 
 type Scanner struct {
 	buf   []byte
+	head  int
 	start int
 	scan  int
 }
@@ -61,13 +62,32 @@ func NewScanner() *Scanner { return &Scanner{start: -1} }
 
 func (s *Scanner) Reset() {
 	s.buf = s.buf[:0]
+	s.head = 0
 	s.start = -1
 	s.scan = 0
 }
 
-func (s *Scanner) Buffered() int { return len(s.buf) }
+func (s *Scanner) Buffered() int { return len(s.buf) - s.head }
 
-func (s *Scanner) Append(p []byte) { s.buf = append(s.buf, p...) }
+func (s *Scanner) Append(p []byte) {
+	s.compact()
+	s.buf = append(s.buf, p...)
+}
+
+func (s *Scanner) compact() {
+	if s.head == 0 || s.head < len(s.buf)-s.head {
+		return
+	}
+	s.buf = s.buf[:copy(s.buf, s.buf[s.head:])]
+	if s.start >= 0 {
+		s.start -= s.head
+	}
+	s.scan -= s.head
+	if s.scan < 0 {
+		s.scan = 0
+	}
+	s.head = 0
+}
 
 func (s *Scanner) rewindScan(floor int) {
 	s.scan = len(s.buf) - 2
@@ -81,7 +101,11 @@ func (s *Scanner) Next() ([]byte, bool) {
 		if s.start < 0 {
 			k := indexStartCode(s.buf, s.scan)
 			if k < 0 {
-				s.rewindScan(0)
+				if n := len(s.buf) - 2; n > s.head {
+					s.head = n
+				}
+				s.rewindScan(s.head)
+				s.compact()
 				return nil, false
 			}
 			s.start = k + 3
@@ -94,9 +118,10 @@ func (s *Scanner) Next() ([]byte, bool) {
 		}
 		payload := trimTrailingZeros(s.buf[s.start:j])
 		out := append([]byte(nil), payload...)
-		s.buf = s.buf[:copy(s.buf, s.buf[j+3:])]
-		s.start = 0
-		s.scan = 0
+		s.head = j + 3
+		s.start = s.head
+		s.scan = s.head
+		s.compact()
 		if len(out) > 0 {
 			return out, true
 		}

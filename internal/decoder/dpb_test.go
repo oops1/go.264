@@ -794,7 +794,7 @@ func TestSameFramesComparesIdentityAndLength(t *testing.T) {
 }
 
 func TestAdaptiveMarkingReplacesTheSlidingWindow(t *testing.T) {
-	b := &dpb{maxNumRefs: 2, maxFrameNum: 16}
+	b := &dpb{maxNumRefs: 3, maxFrameNum: 16}
 	first := newRef(0, false, 0)
 	second := newRef(1, false, 0)
 	b.refs = []*refFrame{first, second}

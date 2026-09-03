@@ -6,6 +6,7 @@ import (
 
 	"github.com/oops1/go.264/internal/bits"
 	"github.com/oops1/go.264/internal/nal"
+	"github.com/oops1/go.264/internal/testutil"
 )
 
 func FuzzParseSPS(f *testing.F) {
@@ -18,6 +19,9 @@ func FuzzParseSPS(f *testing.F) {
 		if b, err := WriteSPS(c); err == nil {
 			f.Add(b)
 		}
+	}
+	for _, rbsp := range testutil.RBSPOfType(testutil.NALTypeSPS) {
+		f.Add(rbsp)
 	}
 	f.Add([]byte{})
 	f.Add([]byte{0x64, 0x00, 0x1f})
@@ -68,6 +72,9 @@ func FuzzParsePPS(f *testing.F) {
 			f.Add(b)
 		}
 	}
+	for _, rbsp := range testutil.RBSPOfType(testutil.NALTypePPS) {
+		f.Add(rbsp)
+	}
 	f.Add([]byte{})
 
 	f.Fuzz(func(t *testing.T, data []byte) {
@@ -105,6 +112,10 @@ func FuzzParseSliceHeader(f *testing.F) {
 		if b != nil {
 			f.Add(b)
 		}
+	}
+
+	for _, rbsp := range testutil.RBSPOfType(testutil.NALTypeSliceNonIDR, testutil.NALTypeSliceIDR) {
+		f.Add(rbsp)
 	}
 
 	sps := baseSPS()
@@ -149,6 +160,9 @@ func FuzzParseSEI(f *testing.F) {
 		if b, err := WriteSEI(msgs, activeSPS, lookup); err == nil {
 			f.Add(b)
 		}
+	}
+	for _, rbsp := range testutil.RBSPOfType(testutil.NALTypeSEI) {
+		f.Add(rbsp)
 	}
 	f.Add([]byte{})
 

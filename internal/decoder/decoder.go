@@ -6,6 +6,7 @@ import (
 
 	"github.com/oops1/go.264/internal/bits"
 	"github.com/oops1/go.264/internal/frame"
+	"github.com/oops1/go.264/internal/level"
 	"github.com/oops1/go.264/internal/loopfilter"
 	"github.com/oops1/go.264/internal/nal"
 	"github.com/oops1/go.264/internal/syntax"
@@ -30,6 +31,13 @@ type Decoder struct {
 	scalPPS *syntax.PPS
 
 	sliceCount int
+	limits     Limits
+}
+
+type Limits struct {
+	MaxFrameMBs  int
+	MaxNALBytes  int
+	EnforceLevel bool
 }
 
 func New() *Decoder {
@@ -39,6 +47,10 @@ func New() *Decoder {
 		scanner: nal.NewScanner(),
 	}
 }
+
+func (d *Decoder) SetLimits(l Limits) { d.limits = l }
+
+func (d *Decoder) Limits() Limits { return d.limits }
 
 func (d *Decoder) SPS(id uint32) *syntax.SPS { return d.spsMap[id] }
 
@@ -57,6 +69,10 @@ func (d *Decoder) Decode(data []byte) ([]*frame.Picture, error) {
 		if err != nil {
 			return out, err
 		}
+	}
+	if d.limits.MaxNALBytes > 0 && d.scanner.Buffered() > d.limits.MaxNALBytes {
+		return out, fmt.Errorf("%w: %d bytes buffered without a NAL unit boundary, the caller allows %d",
+			ErrOverLimit, d.scanner.Buffered(), d.limits.MaxNALBytes)
 	}
 	return out, nil
 }
@@ -170,6 +186,20 @@ func (d *Decoder) checkSupported(sps *syntax.SPS) error {
 	}
 	if sps.QpprimeYZeroTransformBypass {
 		return fmt.Errorf("%w: lossless transform bypass", ErrUnsupported)
+	}
+	if err := level.CheckCeiling(sps); err != nil {
+		return fmt.Errorf("%w: %s", ErrOverLimit, err)
+	}
+	if d.limits.EnforceLevel {
+		if err := level.CheckSPS(sps); err != nil {
+			return fmt.Errorf("%w: %s", ErrOverLimit, err)
+		}
+	}
+	if d.limits.MaxFrameMBs > 0 {
+		if n := sps.PicWidthInMbs() * sps.FrameHeightInMbs(); n > d.limits.MaxFrameMBs {
+			return fmt.Errorf("%w: %d macroblocks per frame, the caller allows %d",
+				ErrOverLimit, n, d.limits.MaxFrameMBs)
+		}
 	}
 	return nil
 }

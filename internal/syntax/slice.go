@@ -461,6 +461,8 @@ func parsePredWeightTable(r *bits.Reader, h *SliceHeader, sps *SPS) error {
 	return nil
 }
 
+func inWeightRange(v int32) bool { return v >= -128 && v <= 127 }
+
 func parseWeightList(r *bits.Reader, n int, hasChroma bool, defLuma, defChroma int32) ([]WeightEntry, error) {
 	out := make([]WeightEntry, n)
 	for i := range out {
@@ -475,6 +477,9 @@ func parseWeightList(r *bits.Reader, n int, hasChroma bool, defLuma, defChroma i
 			}
 			if e.LumaOffset, err = r.ReadSE(); err != nil {
 				return nil, err
+			}
+			if !inWeightRange(e.LumaWeight) || !inWeightRange(e.LumaOffset) {
+				return nil, fmt.Errorf("%w: luma weight %d offset %d", ErrInvalidValue, e.LumaWeight, e.LumaOffset)
 			}
 		} else {
 			e.LumaWeight = defLuma
@@ -492,6 +497,10 @@ func parseWeightList(r *bits.Reader, n int, hasChroma bool, defLuma, defChroma i
 				}
 				if e.ChromaOffset[j], err = r.ReadSE(); err != nil {
 					return nil, err
+				}
+				if !inWeightRange(e.ChromaWeight[j]) || !inWeightRange(e.ChromaOffset[j]) {
+					return nil, fmt.Errorf("%w: chroma weight %d offset %d",
+						ErrInvalidValue, e.ChromaWeight[j], e.ChromaOffset[j])
 				}
 			}
 		} else {

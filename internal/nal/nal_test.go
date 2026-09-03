@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"math/rand"
 	"testing"
+
+	"github.com/oops1/go.264/internal/testutil"
 )
 
 func TestHeaderRoundTrip(t *testing.T) {
@@ -572,6 +574,9 @@ func TestSplitAVCCSkipsZeroLengthEntries(t *testing.T) {
 }
 
 func FuzzEscapeUnescapeRoundTrip(f *testing.F) {
+	for _, u := range testutil.EBSPUnits() {
+		f.Add(u)
+	}
 	f.Add([]byte{})
 	f.Add([]byte{0x00, 0x00, 0x00})
 	f.Add([]byte{0x00, 0x00, 0x01, 0x00, 0x00, 0x02, 0x00, 0x00, 0x03})
@@ -586,6 +591,9 @@ func FuzzEscapeUnescapeRoundTrip(f *testing.F) {
 }
 
 func FuzzScannerNeverPanics(f *testing.F) {
+	for _, st := range testutil.Streams() {
+		f.Add(st)
+	}
 	f.Add(buildAnnexBStream(annexBTestUnits(), []bool{true, false}))
 	f.Add([]byte{0x00, 0x00, 0x01})
 	f.Add([]byte{})
@@ -609,6 +617,9 @@ func FuzzScannerNeverPanics(f *testing.F) {
 }
 
 func FuzzSplitAnnexB(f *testing.F) {
+	for _, st := range testutil.Streams() {
+		f.Add(st)
+	}
 	f.Add(buildAnnexBStream(annexBTestUnits(), []bool{true, false}))
 	f.Add([]byte{0x00, 0x00, 0x01})
 	f.Add([]byte{})
@@ -621,6 +632,11 @@ func FuzzSplitAnnexB(f *testing.F) {
 }
 
 func FuzzSplitAVCC(f *testing.F) {
+	for _, u := range testutil.EBSPUnits() {
+		if b, err := AppendAVCC(nil, Unit{Header: Header{Type: Type(u[0] & 0x1F)}, RBSP: u[1:]}, 4); err == nil {
+			f.Add(b)
+		}
+	}
 	seed, _ := AppendAVCC(nil, Unit{Header: Header{RefIDC: 1, Type: TypeSPS}, RBSP: []byte{0x01, 0x02, 0x03}}, 4)
 	f.Add(seed)
 	f.Add([]byte{})

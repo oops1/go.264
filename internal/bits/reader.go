@@ -149,7 +149,7 @@ func (r *Reader) ReadSE() (int32, error) {
 	} else {
 		v = -int64(k / 2)
 	}
-	if v < -2147483648 || v > 2147483647 {
+	if v < -2147483647 || v > 2147483647 {
 		return 0, ErrRange
 	}
 	return int32(v), nil

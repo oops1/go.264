@@ -134,15 +134,22 @@ func TestDecodeInChunks(t *testing.T) {
 }
 
 func FuzzDecoderNeverPanics(f *testing.F) {
-	for _, clip := range testutil.Corpus {
+	for _, clip := range testutil.AllClips() {
 		data, err := os.ReadFile(filepath.Join(testutil.CorpusDir(), clip.Name+".264"))
 		if err == nil {
 			f.Add(data)
 		}
 	}
+	for _, u := range testutil.EBSPUnits() {
+		f.Add(append([]byte{0, 0, 1}, u...))
+	}
 	f.Add([]byte{0, 0, 1, 0x67, 0x42})
+	f.Add([]byte{})
+	f.Add([]byte{0, 0, 1})
+	f.Add([]byte{0, 0, 1, 0x65, 0x88, 0x84, 0x00, 0x00, 0x01, 0x68})
 	f.Fuzz(func(t *testing.T, data []byte) {
 		d := New()
+		d.SetLimits(Limits{MaxFrameMBs: 1620, MaxNALBytes: 1 << 20})
 		pics, _ := d.Decode(data)
 		rest, _ := d.Flush()
 		for _, p := range append(pics, rest...) {

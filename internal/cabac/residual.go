@@ -65,6 +65,16 @@ func absLevelBase(cat int) (base, limit int) {
 	return offAbsLevel + catOffsetAbsLevel[cat], 4
 }
 
+const maxCoeffLevel = 32767
+
+func (d *Decoder) boundedLevel(v int) int {
+	if v > maxCoeffLevel {
+		d.overflow = true
+		return maxCoeffLevel
+	}
+	return v
+}
+
 func (d *Decoder) absLevelMinus1At(base, limit, numGt1, numEq1 int) int {
 	prefix := 0
 	for prefix < 14 {
@@ -120,7 +130,7 @@ func (d *Decoder) ResidualBlock(coeffs []int32, cat, condTermA, condTermB, numC8
 		if !significant[i] {
 			continue
 		}
-		level := d.absLevelMinus1At(levelBase, levelLimit, numGt1, numEq1) + 1
+		level := d.boundedLevel(d.absLevelMinus1At(levelBase, levelLimit, numGt1, numEq1) + 1)
 		if level > 1 {
 			numGt1++
 		} else {

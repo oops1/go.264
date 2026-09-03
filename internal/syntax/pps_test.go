@@ -429,8 +429,8 @@ func TestPPSPicInitQSMinus26RangeRejected(t *testing.T) {
 	b := []byte("\xce\xce\x00\x00\x00\x01\x00\x00\x00\x010")
 
 	_, err := ParsePPS(b, lookup)
-	if !errors.Is(err, ErrInvalidValue) {
-		t.Fatalf("ParsePPS(% x) = %v, want error wrapping ErrInvalidValue", b, err)
+	if !errors.Is(err, ErrInvalidValue) && !errors.Is(err, bits.ErrRange) {
+		t.Fatalf("ParsePPS(% x) = %v, want ErrInvalidValue or bits.ErrRange", b, err)
 	}
 
 	for _, tc := range []struct {

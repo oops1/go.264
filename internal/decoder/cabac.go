@@ -344,13 +344,22 @@ func (d *sliceDecoder) cabacRefIdx(list, x, y, w, h int, maxRef int) (int8, erro
 	return int8(ref), nil
 }
 
+func (d *sliceDecoder) cabacMVDComponent(base, absSum int) int16 {
+	v := d.cb.MVD(base, absSum)
+	if v < -32768 || v > 32767 {
+		d.mvdOverflow = true
+		return 0
+	}
+	return int16(v)
+}
+
 func (d *sliceDecoder) cabacMVD(list, x, y, w, h int) [2]int16 {
 	curZ := zscanOf[y>>2][x>>2]
 	a := d.neighbourMVD(list, x-1, y, curZ)
 	b := d.neighbourMVD(list, x, y-1, curZ)
 	var mvd [2]int16
-	mvd[0] = int16(d.cb.MVD(cabac.MVDHorizontal, int(a[0])+int(b[0])))
-	mvd[1] = int16(d.cb.MVD(cabac.MVDVertical, int(a[1])+int(b[1])))
+	mvd[0] = d.cabacMVDComponent(cabac.MVDHorizontal, int(a[0])+int(b[0]))
+	mvd[1] = d.cabacMVDComponent(cabac.MVDVertical, int(a[1])+int(b[1]))
 	d.storeMVD(list, x, y, w, h, mvd)
 	return mvd
 }
@@ -620,6 +629,15 @@ func (d *sliceDecoder) runCABAC() error {
 			return err
 		}
 		d.cur.Decoded = true
+		if d.mvdOverflow {
+			return fmt.Errorf("%w: motion vector difference out of range", ErrCorrupt)
+		}
+		if d.cb.Overrun() != 0 {
+			return fmt.Errorf("%w: CABAC decoding ran past the end of the slice data", ErrCorrupt)
+		}
+		if d.cb.LevelOverflow() {
+			return fmt.Errorf("%w: coefficient level out of range", ErrCorrupt)
+		}
 		if d.cb.EndOfSlice() {
 			return nil
 		}

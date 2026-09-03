@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/oops1/go.264/internal/bits"
+	"github.com/oops1/go.264/internal/testutil"
 )
 
 func roundTrip(t *testing.T, coeffs []int32, nC int) {
@@ -226,6 +227,15 @@ func TestZeroBlockCostsOneToken(t *testing.T) {
 }
 
 func FuzzReadBlock(f *testing.F) {
+	slices := testutil.RBSPOfType(testutil.NALTypeSliceIDR, testutil.NALTypeSliceNonIDR)
+	for i, rbsp := range slices {
+		if i >= 24 {
+			break
+		}
+		for _, nC := range []int{-1, 0, 2, 4, 8, 17} {
+			f.Add(rbsp, nC)
+		}
+	}
 	f.Add([]byte{0x80}, 0)
 	f.Add([]byte{0x00, 0x00, 0x01}, 4)
 	f.Add([]byte{0xFF, 0xFF, 0xFF, 0xFF}, 8)

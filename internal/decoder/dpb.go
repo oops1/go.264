@@ -325,11 +325,24 @@ func (b *dpb) store(pic *frame.Picture, hdr *syntax.SliceHeader) {
 		b.applyMMCO(hdr, entry)
 		b.refs = append(b.refs, entry)
 		b.updatePicNums(hdr.FrameNum)
+		b.enforceCapacity()
 		return
 	}
 	b.refs = append(b.refs, &refFrame{pic: pic, frameNum: hdr.FrameNum})
 	b.updatePicNums(hdr.FrameNum)
 	b.slidingWindow()
+	b.enforceCapacity()
+}
+
+func (b *dpb) enforceCapacity() {
+	n := b.maxNumRefs
+	if n < 1 {
+		n = 1
+	}
+	if len(b.refs) <= n {
+		return
+	}
+	b.refs = append(b.refs[:0], b.refs[len(b.refs)-n:]...)
 }
 
 func (b *dpb) applyMMCO(hdr *syntax.SliceHeader, current *refFrame) {

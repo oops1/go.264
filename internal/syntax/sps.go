@@ -375,6 +375,12 @@ func ParseSPS(rbsp []byte) (*SPS, error) {
 		if s.FrameCropBottomOffset, err = r.ReadUE(); err != nil {
 			return nil, err
 		}
+		cx, cy := s.cropUnits()
+		horizontal := uint64(cx) * (uint64(s.FrameCropLeftOffset) + uint64(s.FrameCropRightOffset))
+		vertical := uint64(cy) * (uint64(s.FrameCropTopOffset) + uint64(s.FrameCropBottomOffset))
+		if horizontal >= uint64(s.Width()) || vertical >= uint64(s.Height()) {
+			return nil, fmt.Errorf("%w: frame cropping removes the whole picture", ErrInvalidValue)
+		}
 	}
 	if s.VUIPresent, err = r.ReadFlag(); err != nil {
 		return nil, err
@@ -542,11 +548,20 @@ var maxDpbMbsByLevel = [...]struct {
 	{62, false, 696320},
 }
 
+func (s *SPS) IsLevel1b() bool {
+	if s.LevelIDC == 9 {
+		return true
+	}
+	return !profileHasChromaFormat(s.ProfileIDC) && s.LevelIDC == 11 && s.ConstraintSet&0x10 != 0
+}
+
 func (s *SPS) maxDpbMbs() int {
-	constraint3 := s.ConstraintSet&0x10 != 0
+	if s.IsLevel1b() {
+		return 396
+	}
 	best := 0
 	for _, e := range maxDpbMbsByLevel {
-		if e.levelIDC == s.LevelIDC && e.constraint3 == constraint3 {
+		if e.levelIDC == s.LevelIDC && !e.constraint3 && e.levelIDC != 9 {
 			return e.maxDpbMbs
 		}
 		if e.maxDpbMbs > best {
@@ -559,7 +574,7 @@ func (s *SPS) maxDpbMbs() int {
 func (s *SPS) MaxDpbFrames() int {
 	frameMbs := s.PicWidthInMbs() * s.FrameHeightInMbs()
 	if frameMbs <= 0 {
-		return 16
+		return 1
 	}
 	n := s.maxDpbMbs() / frameMbs
 	if n > 16 {
@@ -572,8 +587,13 @@ func (s *SPS) MaxDpbFrames() int {
 }
 
 func (s *SPS) MaxNumReorder() int {
+	limit := s.MaxDpbFrames()
 	if s.VUIPresent && s.VUI.BitstreamRestriction {
-		return int(s.VUI.MaxNumReorderFrames)
+		n := int(s.VUI.MaxNumReorderFrames)
+		if n > limit || n < 0 {
+			return limit
+		}
+		return n
 	}
-	return s.MaxDpbFrames()
+	return limit
 }

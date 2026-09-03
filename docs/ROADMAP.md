@@ -257,6 +257,53 @@ refusal.
 against real silicon, and no remote desktop client has yet accepted a
 stream. Neither can be settled on the machine this was written on.
 
+## Hostile input, and a leak the hardware found
+
+The decoder was read through as if every byte came from an attacker, and
+the result is written up in [DECODER-HARDENING.md](DECODER-HARDENING.md):
+what it refuses, what it deliberately tolerates, what it allocates in the
+worst case, and the ceilings a caller can set. The largest single finding
+was allocation: a thirty byte stream declaring a picture of 1024 by 1024
+macroblocks — seven and a half times the largest frame size in table A-1 —
+took 1035 MiB before any of it was checked. It is now refused having
+allocated nothing.
+
+Two of the fixes are worth naming because both were unbounded, not merely
+generous. `max_num_reorder_frames` is a `ue(v)` and was used raw as the
+reorder queue depth, so a stream could ask the decoder to hold four
+billion pictures before emitting one. And adaptive reference marking
+appended without ever running the sliding window, so a stream that marked
+on every picture and evicted on none grew the reference list forever, each
+entry a whole picture.
+
+Two things were tightened and then deliberately loosened again, because
+strictness that refuses real streams is not security. Holding a stream to
+the level it declares is now behind `Limits.EnforceLevel` rather than
+unconditional: encoders that understate their level are common, ffmpeg
+only warns, and the table A-1 ceiling — which is unconditional — is what
+actually bounds the allocation. And an unrecognised `level_idc` still
+falls back to the largest buffer in the table, because `MaxDpbFrames` caps
+at sixteen regardless, so the strict fallback bought no bound and cost
+every frame of reordering on a level the table does not yet list.
+
+Level 1b is written two ways and both are now recognised. The first
+attempt accepted only `level_idc` 11 with `constraint_set3_flag`, which is
+the Baseline and Main spelling; for the High family the spelling is
+`level_idc` 9, and rejecting it collapsed the buffer to a single frame.
+ffmpeg's own transcription of table A-1 carries both rows.
+
+Separately, the Windows continuous integration went red for three runs
+with a Media Foundation platform count of seven where two were expected.
+Both `closeHere` paths left through an early return when the flush failed,
+losing the platform reference and the transform object with it — and the
+flush fails exactly when configuration did not finish, which is what
+happens on a machine with no adapter. It could not reproduce on the
+development machine for that reason. The regression tests build the
+unconfigured state directly, so they fail with or without an adapter.
+
+The same three runs also hit the forty minute test timeout, which was not
+a fault: the encoder suite genuinely grew past it. Raised to ninety.
+
 ## A correction to the 1.5.0 notes
 
 Two things that release says are wrong, and the record should say so

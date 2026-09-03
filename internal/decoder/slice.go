@@ -47,6 +47,7 @@ type sliceDecoder struct {
 	prevQPDeltaNonZero bool
 
 	subPartsAtLeast8x8 bool
+	mvdOverflow        bool
 }
 
 func (d *sliceDecoder) transform8x8Inc() int {

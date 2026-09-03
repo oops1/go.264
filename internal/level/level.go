@@ -8,7 +8,12 @@ import (
 	"github.com/oops1/go.264/internal/syntax"
 )
 
-var ErrNoLevel = errors.New("go264/level: no level carries the stream")
+var (
+	ErrNoLevel      = errors.New("go264/level: no level carries the stream")
+	ErrUnknownLevel = errors.New("go264/level: level_idc is not a level in Table A-1")
+	ErrExceedsLevel = errors.New("go264/level: sequence parameter set exceeds the level it declares")
+	ErrAboveTable   = errors.New("go264/level: sequence parameter set is larger than any level in Table A-1")
+)
 
 type Limits struct {
 	IDC       uint8
@@ -50,6 +55,84 @@ func Lookup(idc uint8) (Limits, bool) {
 		}
 	}
 	return Limits{}, false
+}
+
+const IDCLevel1bAlias = 9
+
+var level1b = Limits{IDC: 11, MaxMBPS: 1485, MaxFS: 99, MaxDpbMbs: 396, MaxBR: 128, MaxCPB: 350}
+
+func Level1b() Limits { return level1b }
+
+func Declared(s *syntax.SPS) (Limits, bool) {
+	if s.IsLevel1b() {
+		return level1b, true
+	}
+	return Lookup(s.LevelIDC)
+}
+
+func (l Limits) DpbFrames(frameMBs int) int {
+	if frameMBs <= 0 {
+		return 0
+	}
+	n := l.MaxDpbMbs / frameMBs
+	if n > 16 {
+		n = 16
+	}
+	return n
+}
+
+func MaxFrameSizeMBs() int {
+	n := 0
+	for _, l := range table {
+		if l.MaxFS > n {
+			n = l.MaxFS
+		}
+	}
+	return n
+}
+
+func checkGeometry(s *syntax.SPS, maxFS int, kind error, where string) error {
+	widthMBs := s.PicWidthInMbs()
+	heightMBs := s.FrameHeightInMbs()
+	if frameMBs := widthMBs * heightMBs; frameMBs > maxFS {
+		return fmt.Errorf("%w: %d macroblocks per frame, %s allows %d", kind, frameMBs, where, maxFS)
+	}
+	if widthMBs*widthMBs > 8*maxFS {
+		return fmt.Errorf("%w: %d macroblocks wide, %s allows %d", kind, widthMBs, where, isqrt(8*maxFS))
+	}
+	if heightMBs*heightMBs > 8*maxFS {
+		return fmt.Errorf("%w: %d macroblocks high, %s allows %d", kind, heightMBs, where, isqrt(8*maxFS))
+	}
+	return nil
+}
+
+func CheckCeiling(s *syntax.SPS) error {
+	return checkGeometry(s, MaxFrameSizeMBs(), ErrAboveTable, "the highest level in Table A-1")
+}
+
+func CheckSPS(s *syntax.SPS) error {
+	l, ok := Declared(s)
+	if !ok {
+		return fmt.Errorf("%w: level_idc %d", ErrUnknownLevel, s.LevelIDC)
+	}
+	where := fmt.Sprintf("level %d", s.LevelIDC)
+	if err := checkGeometry(s, l.MaxFS, ErrExceedsLevel, where); err != nil {
+		return err
+	}
+	frameMBs := s.PicWidthInMbs() * s.FrameHeightInMbs()
+	if dpb := l.DpbFrames(frameMBs); int(s.MaxNumRefFrames) > dpb {
+		return fmt.Errorf("%w: max_num_ref_frames %d, %s allows %d at this picture size",
+			ErrExceedsLevel, s.MaxNumRefFrames, where, dpb)
+	}
+	return nil
+}
+
+func isqrt(v int) int {
+	n := 0
+	for (n+1)*(n+1) <= v {
+		n++
+	}
+	return n
 }
 
 func cpbBrNalFactor(profileIDC uint8) int64 {

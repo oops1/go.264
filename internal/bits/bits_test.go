@@ -5,6 +5,8 @@ import (
 	"math"
 	"math/rand"
 	"testing"
+
+	"github.com/oops1/go.264/internal/testutil"
 )
 
 func TestReadBitsAcrossByteBoundaries(t *testing.T) {
@@ -343,6 +345,20 @@ func TestSERangeOverflow(t *testing.T) {
 	}
 	if _, err := NewReader(w2.Bytes()).ReadSE(); !errors.Is(err, ErrRange) {
 		t.Fatalf("ReadSE(MaxUint32 codeNum) = %v, want ErrRange", err)
+	}
+}
+
+func TestReadSERejectsMinInt32(t *testing.T) {
+	w := NewWriter()
+	w.WriteBits(0, 32)
+	w.WriteBit(1)
+	w.WriteBits(1, 32)
+	w.AlignZero()
+	if err := w.Err(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := NewReader(w.Bytes()).ReadSE(); !errors.Is(err, ErrRange) {
+		t.Fatalf("ReadSE(codeNum 2^32) = %v, want ErrRange", err)
 	}
 }
 
@@ -728,6 +744,12 @@ func TestReadBitMatchesReadBits(t *testing.T) {
 }
 
 func FuzzReaderNeverPanics(f *testing.F) {
+	for _, rbsp := range testutil.RBSPOfType(
+		testutil.NALTypeSPS, testutil.NALTypePPS, testutil.NALTypeSEI,
+		testutil.NALTypeSliceIDR, testutil.NALTypeSliceNonIDR,
+	) {
+		f.Add(rbsp)
+	}
 	f.Add([]byte{0x00})
 	f.Add([]byte{0xFF, 0x80})
 	f.Add([]byte{0x00, 0x00, 0x00, 0x01, 0x67, 0x42})

@@ -163,6 +163,10 @@ committed. CI verifies generated files are in sync.
 - Fuzzing: native Go fuzzing on NAL/syntax/CAVLC/decoder entry points;
   corpus seeded from conformance streams.
 - Coverage gate in CI (target: >=90% overall, 100% on bits/nal/syntax).
+- Hostile input: what the decoder refuses, what it tolerates and what it
+  allocates in the worst case is written up in
+  [DECODER-HARDENING.md](DECODER-HARDENING.md), along with the
+  `decoder.Limits` ceilings a caller can set.
 
 ## Tooling and conventions
 

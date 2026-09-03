@@ -23,6 +23,8 @@ type Decoder struct {
 	r          *bits.Reader
 	codIRange  uint32
 	codIOffset uint32
+	overrun    int
+	overflow   bool
 	ctx        [NumContexts]context
 }
 
@@ -52,7 +54,13 @@ func (d *Decoder) initContexts(table *[1024][2]int8, sliceQPY int) {
 	}
 }
 
+func (d *Decoder) Overrun() int { return d.overrun }
+
+func (d *Decoder) LevelOverflow() bool { return d.overflow }
+
 func (d *Decoder) Init(r *bits.Reader, sliceQPY int, intra bool, initIDC uint32) error {
+	d.overrun = 0
+	d.overflow = false
 	if !r.ByteAligned() {
 		if err := d.consumeAlignmentBits(r); err != nil {
 			return err
@@ -96,6 +104,7 @@ func (d *Decoder) consumeAlignmentBits(r *bits.Reader) error {
 func (d *Decoder) readBit() uint32 {
 	b, err := d.r.ReadBit()
 	if err != nil {
+		d.overrun++
 		return 0
 	}
 	return b

@@ -58,7 +58,7 @@ func (d *Decoder) ResidualBlock8x8(coeffs *[64]int32) int {
 		if !significant[i] {
 			continue
 		}
-		level := d.absLevelMinus1At(offAbsLevel8x8, 4, numGt1, numEq1) + 1
+		level := d.boundedLevel(d.absLevelMinus1At(offAbsLevel8x8, 4, numGt1, numEq1) + 1)
 		if level > 1 {
 			numGt1++
 		} else {
