@@ -1,9 +1,6 @@
 package encoder
 
-import (
-	"fmt"
-	"testing"
-)
+import "testing"
 
 func TestMotionSearchLevelsRoundTrip(t *testing.T) {
 	for _, level := range []struct {
@@ -65,6 +62,6 @@ func TestTheSubPelLadderTradesBitsForTime(t *testing.T) {
 		}
 	}
 	if integer < half {
-		t.Log(fmt.Sprintf("note: integer only came out smaller than half-pel here, %d against %d", integer, half))
+		t.Logf("note: integer only came out smaller than half-pel here, %d against %d", integer, half)
 	}
 }

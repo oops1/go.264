@@ -439,8 +439,11 @@ func TestFFmpegDecodesTrellisStreamsIdentically(t *testing.T) {
 const screenTrellisCase = "screen"
 
 func TestTheTrellisIsStillWrongOnScreenContent(t *testing.T) {
+	if raceDetector {
+		t.Skip("this needs the whole quantiser range: with a trimmed one the two rate curves stop overlapping and there is nothing to compare")
+	}
 	const w, h = 128, 96
-	qps := trim([]int{20, 22, 24, 26, 28, 30, 32, 34, 36, 38}, 3)
+	qps := []int{20, 22, 24, 26, 28, 30, 32, 34, 36, 38}
 	var screen struct {
 		frames [][]byte
 		cfg    Config
@@ -462,9 +465,6 @@ func TestTheTrellisIsStillWrongOnScreenContent(t *testing.T) {
 	t.Logf("screen: %+.1f%% bits at equal quality, worst shortfall %.2f dB near %.0f bytes",
 		saved, shortfall, at)
 
-	if len(qps) < 10 {
-		return
-	}
 	if shortfall < 0.8 {
 		t.Fatalf("the trellis is only %.2f dB worse than no trellis on screen content, which is better than the 1.18 dB this records. If you fixed it, put the new figure here and fold the case back into TestTrellisKeepsQualityAtEqualRate",
 			shortfall)
