@@ -32,10 +32,10 @@ Working today:
 | CABAC | complete in both directions; streams are 18 to 30 per cent smaller than CAVLC |
 | In-loop deblocking filter | complete, shared by encoder and decoder |
 | Reference picture management | sliding window and the memory management operations in both directions, including long-term references |
-| Rate-distortion quantisation | two to seven per cent of the bitrate at equal quality |
+| Rate-distortion quantisation | 4.8 to 7.1 per cent of the bitrate at equal quality; 1.2 dB worse on screen content, so leave it off there |
 | Level selection | from the picture size, the reference count, the bitrate and the buffer |
-| Slices | any count, encoded in parallel; ten times faster on twenty threads for 1.8 per cent more bits |
-| Hardware acceleration | encoding on Windows through Media Foundation, on Linux through NVENC and VA-API; decoding on Windows through Direct3D, nine times our own decoder at 1080p. No cgo on any path |
+| Slices | any count, encoded in parallel; ten times faster on twenty threads for 2 to 12 per cent more bits, depending on how much the picture moves |
+| Hardware acceleration | encoding on Windows through Media Foundation; on Linux through NVENC and VA-API, separate modules that have not yet run on real hardware; decoding on Windows through Direct3D, nine times our own decoder at 1080p. No cgo on any path |
 | Bitrate targeted rate control | complete, and under a buffer model the long run rate never exceeds the request |
 | Mode decision | rate-distortion, with an early skip test that pays for itself six times over on screen content |
 | SIMD kernels | transformed differences, six-tap and bilinear interpolation, block matching, the 4x4 transform and quantisation |
@@ -54,6 +54,44 @@ order, [docs/PLAN.md](docs/PLAN.md) for the phase breakdown and
 ```
 go get github.com/oops1/go.264
 ```
+
+### Hardware encoding on Linux
+
+The Linux backends are separate modules, so a program that never wants
+them never links them. Import one for its side effect and the encoder
+will try it whenever a configuration allows:
+
+```go
+import _ "github.com/oops1/go.264/hwaccel/vaapi" // Intel and AMD
+import _ "github.com/oops1/go.264/hwaccel/nvenc" // NVIDIA
+```
+
+Both load their libraries at run time through purego, so the build stays
+`CGO_ENABLED=0`. VA-API needs `libva.so.2` and `libva-drm.so.2` and a
+driver that offers `VAEntrypointEncSlice` for an H.264 profile, which
+`vainfo` will show; the low-power entry point `VAEntrypointEncSliceLP` is
+not used yet. The process needs read and write access to a
+`/dev/dri/renderD*` node.
+
+Construction falls back to the processor silently, so check which path you
+got rather than assuming:
+
+```go
+enc, err := go264.NewEncoder(cfg)
+// enc.Backend() is "vaapi", "nvenc", "mediafoundation" or "cpu"
+```
+
+A hardware encoder carries the picture size, frame rate, GOP length,
+quantiser and, where the backend has rate control, the bitrate - and
+nothing else. VA-API encodes at a constant quantiser. Any setting only the processor path
+implements - RepeatParameterSets, IntraRefresh, Trellis, long-term
+references, weighted prediction, temporal direct, deblocking control, the
+buffer model - keeps the encoder on the processor, and ForceKeyFrame has no
+effect on a hardware encoder.
+
+Neither Linux backend has yet run against real hardware. Their call
+sequences are tested and their structure layouts are checked against the C
+headers, but treat the first machine you try as the test.
 
 ## Library
 
