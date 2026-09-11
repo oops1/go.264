@@ -362,9 +362,26 @@ macroblock adaptive coding, slice groups, and data partitioning. Each
 has a test that feeds a real stream of that kind and requires the
 refusal.
 
-**Unproven rather than missing**: NVENC and VA-API have never run
-against real silicon. That one cannot be settled on the machine this was
-written on. Client acceptance no longer belongs here - see 1.7.
+**Unproven rather than missing**: NVENC has encoded under WSL2 and
+VA-API on an Intel Gen9, and winline now codes through VA-API in
+production, but neither has met the NVIDIA Linux driver on bare metal or an
+AMD card. Client acceptance no longer belongs here - see 1.7.
+
+**A hardware encoder is told the size, the rate, the GOP and the quantiser,
+and nothing else.** winline's full colour stream, AVC444, interleaves a
+main and an auxiliary picture in one stream with two reference frames and
+chooses which one each picture predicts from, so it stays on the processor
+even where VA-API carries the ordinary stream. hwaccel.EncoderParams would
+need a reference count and a way to name the reference for it to move.
+
+**Media Foundation is not ready to be trusted where VA-API is.** winline
+measured it on Windows through the same code: the first Encode returns
+nothing, because the transform holds one picture back, and ForceKeyFrame
+is not honoured, so a stream that needed an IDR at its first picture and
+at a forced one got its first IDR a picture late and none at the forced
+point. The GOP length is not honoured literally either - two IDRs in
+sixty-five pictures at a GOP of thirty. winline keeps it switched off
+until it returns a picture for each call and forces key frames.
 
 **The trellis is wrong on screen content.** Sampled at ten quantisers
 rather than four, eleven of twelve cases show no quality shortfall at all
