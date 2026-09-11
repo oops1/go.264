@@ -136,8 +136,10 @@ driver faults; closing now drains on its own.
 
 Linux is done too. `hwaccel/nvenc` loads the driver library at run time
 through `purego` and lives in its own nested module, so the core `go.mod`
-stays empty. It has not yet run against a card that answers: the adapter
-in production exposes no encoder under its driver.
+stays empty. (In v1.9.0 it moved into the codec as `internal/hwaccel/nvenc`,
+and purego became the core module's one dependency.) It has not yet run
+against a card that answers: the adapter in production exposes no encoder
+under its driver.
 
 Still to do: VA-API for Intel and AMD, and the direct3d path for hardware
 decoding on Windows.

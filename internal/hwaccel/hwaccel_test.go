@@ -222,6 +222,22 @@ func TestOpenEncoderFirstSucceedingWinsAmongMultiple(t *testing.T) {
 	}
 }
 
+func TestASecondBackendWithTheSameNameIsIgnored(t *testing.T) {
+	resetRegistry(t)
+
+	first := &mockEncoder{}
+	Register(Backend{Name: "vaapi", ProbeEncode: func(EncoderParams) (Encoder, bool) { return first, true }})
+	Register(Backend{Name: "vaapi", ProbeEncode: func(EncoderParams) (Encoder, bool) { return &mockEncoder{}, true }})
+	Register(Backend{Name: "nvenc", ProbeEncode: func(EncoderParams) (Encoder, bool) { return nil, false }})
+
+	if got := Available(); len(got) != 2 || got[0] != "vaapi" || got[1] != "nvenc" {
+		t.Fatalf("Available() = %v, want [vaapi nvenc]: a module that still registers a backend the codec already carries must not add it twice", got)
+	}
+	if enc, _, ok := OpenEncoder(EncoderParams{}); !ok || enc != Encoder(first) {
+		t.Fatal("the backend registered first did not keep its place")
+	}
+}
+
 func TestBackendNilProbeIsSkippedButOtherProbeStillWorks(t *testing.T) {
 	resetRegistry(t)
 

@@ -53,11 +53,15 @@ GitHub repository.
       internal/rc/               rate control: CQP, then ABR
       internal/hwaccel/          hardware codec backends + capability probe:
         hwaccel.go               backend interface, probe, selection order
-        mf_windows.go            Windows Media Foundation MFTs via syscall
-                                 (covers Intel QSV, NVDEC/NVENC, AMD VCN
-                                 through vendor MFTs, D3D11 surfaces)
-        vaapi_linux.go           VA-API via purego dlopen (libva)
-        vt_darwin.go             VideoToolbox via purego (staged, optional)
+        mf/                      Windows Media Foundation MFTs via syscall
+                                 (Intel QSV, NVENC, AMD VCN through vendor
+                                 MFTs, D3D11 surfaces), registered by
+                                 hwaccel_windows.go in the root
+        nvenc/                   NVENC via purego dlopen, 64-bit Linux
+        vaapi/                   VA-API via purego dlopen (libva), 64-bit
+                                 Linux; both registered by hwaccel_linux.go
+                                 in the root, NVENC first, and left out by
+                                 the go264_nohwaccel build tag
       internal/simd/             dispatch table + kernels:
         dispatch.go              runtime CPUID selection (x/sys/cpu)
         generic.go               pure-Go reference implementations
@@ -99,8 +103,10 @@ The public Encoder/Decoder are facades over two engines:
   CPU path for testing and reproducibility.
 - All hardware bindings are CGO-free: on Windows through
   `golang.org/x/sys/windows` syscalls into Media Foundation COM; on
-  Linux through `purego` dlopen of libva; missing libraries simply fail
-  the probe.
+  Linux through `purego` dlopen of libnvidia-encode and libva; missing
+  libraries simply fail the probe. purego is the one dependency of the
+  module, and it makes a Linux binary dynamically linked against glibc;
+  the `go264_nohwaccel` tag drops both backends and keeps it static.
 - The CPU path is the reference: every stream an encoder backend emits
   must decode with the CPU decoder in tests, and hardware decoder output
   is PSNR-compared against CPU decoder output on the same stream.

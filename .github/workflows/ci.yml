@@ -83,39 +83,36 @@ jobs:
           go build -tags purego ./...
           go test -tags purego -count=1 -timeout 90m ./...
 
-  hwaccel-modules:
+  linux-backends:
     runs-on: ubuntu-latest
+    env:
+      CGO_ENABLED: "0"
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
           go-version: '1.27.1'
-      - name: Assert no cgo imports in the backend modules
+      - name: Vet the backends on every 64-bit Linux target, with and without the switch
         run: |
-          if grep -rn --include='*.go' -E '^\s*import\s+"C"|^\s*"C"$' hwaccel; then
-            echo "cgo import found"; exit 1
-          fi
-      - name: Build and vet every backend module on several targets
-        run: |
-          for mod in $(find hwaccel -name go.mod | xargs -n1 dirname); do
-            for target in linux/amd64 linux/arm64 windows/amd64 darwin/arm64; do
-              (cd "$mod" && GOOS=${target%/*} GOARCH=${target#*/} go build ./...) || exit 1
-            done
-            (cd "$mod" && go vet ./...) || exit 1
+          for arch in amd64 arm64; do
+            GOOS=linux GOARCH=$arch go vet ./internal/hwaccel/... . || exit 1
+            GOOS=linux GOARCH=$arch go vet -tags go264_nohwaccel . || exit 1
           done
-      - name: Format and lint the backend modules
+      - name: Run the backend tests without cgo
         run: |
-          go install honnef.co/go/tools/cmd/staticcheck@v0.8.1
-          fmtout=$(gofmt -l hwaccel)
-          if [ -n "$fmtout" ]; then echo "$fmtout"; exit 1; fi
-          for mod in $(find hwaccel -name go.mod | xargs -n1 dirname); do
-            (cd "$mod" && staticcheck ./...) || exit 1
-          done
-      - name: Run the tests that do not need an adapter
+          go test -count=1 ./internal/hwaccel/...
+          go test -count=1 -run 'Linux|Hardware|Backend|KeyFrame' .
+          go test -count=1 -tags go264_nohwaccel -run 'Switch' .
+      - name: The switch keeps a Linux binary static
         run: |
-          for mod in $(find hwaccel -name go.mod | xargs -n1 dirname); do
-            (cd "$mod" && go test -count=1 ./...) || exit 1
-          done
+          mkdir linkprobe
+          printf 'package main\n\nimport (\n\t"fmt"\n\n\tgo264 "github.com/oops1/go.264"\n)\n\nfunc main() { fmt.Println(go264.Backends()) }\n' > linkprobe/main.go
+          go build -o with-backends ./linkprobe
+          go build -tags go264_nohwaccel -o without-backends ./linkprobe
+          file with-backends | tee /dev/stderr | grep -q 'dynamically linked'
+          file without-backends | tee /dev/stderr | grep -q 'statically linked'
+          test "$(./with-backends)" = "[cpu nvenc vaapi]"
+          test "$(./without-backends)" = "[cpu]"
 
   asm-in-sync:
     runs-on: ubuntu-latest

@@ -1,3 +1,5 @@
+//go:build linux && (amd64 || arm64)
+
 package vaapi
 
 import (
@@ -11,8 +13,9 @@ import (
 
 func withProbeCommand(t *testing.T, script string) *int {
 	t.Helper()
-	restore := probeCommand
-	t.Cleanup(func() { probeCommand = restore })
+	restore, restoreNodes := probeCommand, anyRenderNode
+	t.Cleanup(func() { probeCommand, anyRenderNode = restore, restoreNodes })
+	anyRenderNode = func() bool { return true }
 	calls := new(int)
 	probeCommand = func(ctx context.Context, spec string) *exec.Cmd {
 		*calls++
@@ -136,5 +139,18 @@ func TestTheRealProbeProcessExitsBeforeMain(t *testing.T) {
 	out, _ := cmd.CombinedOutput()
 	if strings.Contains(string(out), "PASS") || strings.Contains(string(out), "=== RUN") {
 		t.Fatalf("the probe process ran the program's main as well:\n%s", out)
+	}
+}
+
+func TestAMachineWithoutARenderNodeStartsNoProbe(t *testing.T) {
+	calls := withProbeCommand(t, "exit 0")
+	anyRenderNode = func() bool { return false }
+	err := freshGuard(t).check(guardCfg)
+	var refused *probeRefusal
+	if !errors.As(err, &refused) || !strings.Contains(err.Error(), "render node") {
+		t.Fatalf("with no render node the guard said %v", err)
+	}
+	if *calls != 0 {
+		t.Fatalf("a machine with no graphics device started %d probe processes", *calls)
 	}
 }

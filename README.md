@@ -35,7 +35,7 @@ Working today:
 | Rate-distortion quantisation | 4.8 to 7.1 per cent of the bitrate at equal quality; 1.2 dB worse on screen content, so leave it off there |
 | Level selection | from the picture size, the reference count, the bitrate and the buffer |
 | Slices | any count, encoded in parallel; ten times faster on twenty threads for 2 to 12 per cent more bits, depending on how much the picture moves |
-| Hardware acceleration | encoding on Windows through Media Foundation, on Linux through NVENC and VA-API as separate modules - NVENC proven on an RTX 5060 Ti, VA-API on Intel Gen9 through the free iHD driver; decoding on Windows through Direct3D, nine times our own decoder at 1080p. No cgo on any path |
+| Hardware acceleration | encoding on Windows through Media Foundation, on 64-bit Linux through NVENC and VA-API with nothing to import - NVENC proven on an RTX 5060 Ti, VA-API on Intel Gen9 through the free iHD driver; decoding on Windows through Direct3D, nine times our own decoder at 1080p. No cgo on any path |
 | Bitrate targeted rate control | complete, and under a buffer model the long run rate never exceeds the request |
 | Mode decision | rate-distortion, with an early skip test that pays for itself six times over on screen content |
 | SIMD kernels | transformed differences, six-tap and bilinear interpolation, block matching, the 4x4 transform and quantisation |
@@ -57,17 +57,26 @@ go get github.com/oops1/go.264
 
 ### Hardware encoding on Linux
 
-The Linux backends are separate modules, so a program that never wants
-them never links them. Import one for its side effect and the encoder
-will try it whenever a configuration allows:
-
-```go
-import _ "github.com/oops1/go.264/hwaccel/vaapi" // Intel and AMD
-import _ "github.com/oops1/go.264/hwaccel/nvenc" // NVIDIA
-```
+On amd64 and arm64 Linux the codec carries both backends itself, so there
+is nothing to import. Whenever a configuration allows, the encoder tries
+NVENC, then VA-API (Intel and AMD), then the processor. 32-bit Linux has
+no hardware backend, because purego does not run there.
 
 Both load their libraries at run time through purego, so the build stays
-`CGO_ENABLED=0`. VA-API needs `libva.so.2` and `libva-drm.so.2` and a
+`CGO_ENABLED=0`. purego reaches those libraries through the system's
+dynamic loader, which makes a Linux program that links go264
+dynamically linked against glibc, even without cgo. Where that matters - a
+`scratch` or Alpine image, a single static binary - build with
+`-tags go264_nohwaccel`: the backends are left out, the binary stays
+static, and the encoder always uses the processor. `ForceSoftware` in
+`EncoderConfig` does the same at run time for one encoder.
+
+Before v1.9.0 the backends were the separate modules
+`github.com/oops1/go.264/hwaccel/vaapi` and `.../hwaccel/nvenc`. A program
+that still imports one keeps working, because a backend registered twice
+is used once, but the import and its `require` line should go.
+
+VA-API needs `libva.so.2` and `libva-drm.so.2` and a
 driver that offers `VAEntrypointEncSlice` or `VAEntrypointEncSliceLP` for
 an H.264 profile, which `vainfo` will show; the full one is preferred when
 both exist, and `LIBVA_DRIVER_NAME` chooses between installed drivers as it
@@ -83,9 +92,10 @@ So the first time a process opens the VA-API encoder, it tries the driver
 in a child process first: the program's own binary is run again with
 GO264_VAAPI_PROBE set and no arguments, the backend's init sees it, opens
 the encoder, encodes the test frame and exits before main. If the child is
-killed or hangs, VA-API is not used again in that process. The init
-functions of other packages in the program run in the child too, so keep
-them free of side effects.
+killed or hangs, VA-API is not used again in that process. A machine with
+no `/dev/dri/renderD*` node never starts the child. The init functions of
+other packages in the program run in the child too, so keep them free of
+side effects, or build with `go264_nohwaccel`.
 
 Construction falls back to the processor silently, so check which path you
 got rather than assuming:

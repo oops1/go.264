@@ -1,3 +1,5 @@
+//go:build linux && (amd64 || arm64)
+
 package vaapi
 
 import (
@@ -5,8 +7,8 @@ import (
 	"strings"
 	"testing"
 
-	go264 "github.com/oops1/go.264"
 	"github.com/oops1/go.264/internal/bits"
+	"github.com/oops1/go.264/internal/encoder"
 	"github.com/oops1/go.264/internal/nal"
 	"github.com/oops1/go.264/internal/syntax"
 )
@@ -100,12 +102,10 @@ func TestSliceNumberingCatchesTheRealIHDStream(t *testing.T) {
 }
 
 func TestSliceNumberingAcceptsTheProcessorEncoder(t *testing.T) {
-	enc, err := go264.NewEncoder(go264.EncoderConfig{Width: 176, Height: 144, FPSNum: 30, FPSDen: 1,
-		GOPSize: 30, QP: 22, ForceSoftware: true})
+	enc, err := encoder.New(encoder.Config{Width: 176, Height: 144, FPSNum: 30, FPSDen: 1, GOPSize: 30, QP: 22})
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer enc.Close()
 	frame := make([]byte, 176*144*3/2)
 	var stream []byte
 	for i := 0; i < 65; i++ {

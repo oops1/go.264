@@ -1,3 +1,5 @@
+//go:build linux && (amd64 || arm64)
+
 package vaapi
 
 import (
@@ -5,7 +7,7 @@ import (
 	"fmt"
 	"unsafe"
 
-	go264 "github.com/oops1/go.264"
+	"github.com/oops1/go.264/internal/decoder"
 	"github.com/oops1/go.264/internal/level"
 	"github.com/oops1/go.264/internal/syntax"
 )
@@ -162,8 +164,7 @@ func checkTestFrames(stream []byte, width, height, want int) error {
 	if len(stream) == 0 {
 		return errors.New("the driver returned no coded data")
 	}
-	dec := go264.NewDecoderWithConfig(go264.DecoderConfig{ForceSoftware: true})
-	defer dec.Close()
+	dec := decoder.New()
 	pics, err := dec.Decode(stream)
 	if err != nil {
 		return fmt.Errorf("the coded frames do not decode: %w", err)
@@ -177,17 +178,17 @@ func checkTestFrames(stream []byte, width, height, want int) error {
 		return fmt.Errorf("the coded frames decoded to %d pictures, want %d", len(pics), want)
 	}
 	for i, p := range pics {
-		if p.Width != width || p.Height != height {
-			return fmt.Errorf("coded frame %d decoded at %dx%d, want %dx%d", i, p.Width, p.Height, width, height)
+		if p.CropWidth != width || p.CropHeight != height {
+			return fmt.Errorf("coded frame %d decoded at %dx%d, want %dx%d", i, p.CropWidth, p.CropHeight, width, height)
 		}
 		sum := 0
-		for y := 0; y < p.Height; y++ {
-			row := p.Y[y*p.StrideY : y*p.StrideY+p.Width]
+		for y := 0; y < height; y++ {
+			row := p.Y[p.LumaOffset(0, y) : p.LumaOffset(0, y)+width]
 			for _, v := range row {
 				sum += int(v)
 			}
 		}
-		if mean := sum / (p.Width * p.Height); mean < 118 || mean > 138 {
+		if mean := sum / (width * height); mean < 118 || mean > 138 {
 			return fmt.Errorf("mid grey frame %d decoded to a mean luma of %d", i, mean)
 		}
 	}

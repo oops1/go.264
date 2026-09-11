@@ -1,3 +1,5 @@
+//go:build linux && (amd64 || arm64)
+
 package vaapi
 
 import (
@@ -25,6 +27,15 @@ var probeCommand = func(ctx context.Context, spec string) *exec.Cmd {
 	cmd.Args = []string{os.Args[0]}
 	cmd.Env = append(os.Environ(), probeEnv+"="+spec)
 	return cmd
+}
+
+var anyRenderNode = func() bool {
+	for _, path := range renderNodeCandidates() {
+		if _, err := os.Stat(path); err == nil {
+			return true
+		}
+	}
+	return false
 }
 
 func init() {
@@ -56,6 +67,9 @@ func (g *processGuard) check(cfg Config) error {
 	}
 	if g.fatal != nil {
 		return g.fatal
+	}
+	if !anyRenderNode() {
+		return &probeRefusal{reason: "no DRM render node was found"}
 	}
 	spec := probeSpec(cfg)
 	if err, seen := g.refusals[spec]; seen {

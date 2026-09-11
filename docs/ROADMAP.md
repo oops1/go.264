@@ -260,7 +260,7 @@ cent for 192.
 
 ## 1.8 — Wider hardware
 
-Three separate pieces, none blocking the others.
+Four separate pieces, none blocking the others.
 
 **NVENC on real silicon, done for WSL2.** The backend has encoded on the
 development machine's two RTX 5060 Ti cards under WSL2 since 31 August,
@@ -318,6 +318,19 @@ encoder now remembers them and puts them back in front of any IDR a driver
 sends without them, so the guarantee does not rest on a driver's habits.
 Media Foundation, incidentally, did not honour the GOP length literally:
 two IDRs in sixty-five frames at a GOP of thirty.
+
+**The Linux backends inside the codec, v1.9.0.** NVENC and VA-API were
+nested modules a program had to import, kept apart so the core `go.mod`
+stayed empty. That made every fix a second release and a second tag, and
+left a Linux program without hardware unless someone remembered the
+import. They now live in `internal/hwaccel` beside Media Foundation and
+register themselves on 64-bit Linux, NVENC first. The price is one
+dependency, purego, and a Linux binary that is dynamically linked against
+glibc even without cgo; `-tags go264_nohwaccel` leaves both out and keeps
+the binary static, and CI checks both links. A machine with no render
+node no longer starts the VA-API probe child at all. A program that still
+imports the old modules works, because a backend registered under a name
+already taken is ignored.
 
 **Direct3D 11 for decoding on Windows** is done. Handing the decoder
 transform a Direct3D 11 device makes it bind the adapter, and the
@@ -642,8 +655,9 @@ the Linux path is written and tested but not proven.
 
 The same rules that got the codec this far, unchanged.
 
-- `CGO_ENABLED=0` everywhere, tests and CI included. The core module has
-  no dependencies; anything that needs one lives in a nested module.
+- `CGO_ENABLED=0` everywhere, tests and CI included. The module has one
+  dependency, purego, for the Linux hardware backends, and a build tag
+  leaves it out for a program that wants a static binary.
 - Correctness is measured against an outside implementation, never
   asserted. Our decoder reads our stream, ffmpeg decodes it to the same
   bytes, and the encoder's own reconstruction matches both.

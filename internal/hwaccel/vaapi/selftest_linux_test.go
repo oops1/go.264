@@ -1,3 +1,5 @@
+//go:build linux && (amd64 || arm64)
+
 package vaapi
 
 import (
@@ -6,7 +8,7 @@ import (
 	"testing"
 	"unsafe"
 
-	go264 "github.com/oops1/go.264"
+	"github.com/oops1/go.264/internal/encoder"
 )
 
 func stubEntrypoints(t *testing.T, offered map[Profile][]Entrypoint) {
@@ -86,12 +88,10 @@ func TestADecodeOnlyDriverOffersNoEncoder(t *testing.T) {
 
 func encodedTestFrames(t *testing.T, width, height int, luma byte, count int) []byte {
 	t.Helper()
-	enc, err := go264.NewEncoder(go264.EncoderConfig{Width: width, Height: height, FPSNum: 30, FPSDen: 1,
-		GOPSize: 30, QP: 22, ForceSoftware: true})
+	enc, err := encoder.New(encoder.Config{Width: width, Height: height, FPSNum: 30, FPSDen: 1, GOPSize: 30, QP: 22})
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer enc.Close()
 	frame := make([]byte, width*height*3/2)
 	for i := range frame {
 		frame[i] = 128

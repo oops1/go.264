@@ -1,14 +1,13 @@
+//go:build linux && (amd64 || arm64)
+
 package nvenc
 
 import "github.com/oops1/go.264/internal/hwaccel"
 
 const backendName = "nvenc"
 
-func init() {
-	hwaccel.Register(hwaccel.Backend{
-		Name:        backendName,
-		ProbeEncode: probeEncode,
-	})
+func Backend() hwaccel.Backend {
+	return hwaccel.Backend{Name: backendName, ProbeEncode: probeEncode}
 }
 
 type registeredEncoder struct {

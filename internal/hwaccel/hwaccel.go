@@ -59,6 +59,11 @@ var (
 func Register(b Backend) {
 	mu.Lock()
 	defer mu.Unlock()
+	for _, have := range backends {
+		if have.Name == b.Name {
+			return
+		}
+	}
 	backends = append(backends, b)
 }
 
