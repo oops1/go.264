@@ -148,7 +148,7 @@ func probeInChild(spec string) error {
 		}
 		return &probeRefusal{reason: reason}
 	}
-	detail := lastLine(stderr.Bytes())
+	detail := crashReason(stderr.Bytes())
 	if detail == "" {
 		detail = "no message"
 	}

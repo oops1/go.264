@@ -63,6 +63,7 @@ type Encoder struct {
 	qp        uint8
 
 	gopPos      int
+	idrPos      int
 	frameNum    uint32
 	idrPicID    uint16
 	havePrevRef bool
@@ -139,10 +140,14 @@ func (e *Encoder) selfTest() error {
 		}
 		stream = append(stream, out...)
 	}
+	if err := checkSliceNumbering(stream); err != nil {
+		return err
+	}
 	if err := checkTestFrames(stream, e.width, e.height, selfTestFrames); err != nil {
 		return err
 	}
 	e.gopPos = 0
+	e.idrPos = 0
 	e.frameNum = 0
 	e.idrPicID = 0
 	e.havePrevRef = false
@@ -150,7 +155,7 @@ func (e *Encoder) selfTest() error {
 	return nil
 }
 
-const selfTestFrames = 2
+const selfTestFrames = 4
 
 func checkTestFrames(stream []byte, width, height, want int) error {
 	if len(stream) == 0 {
@@ -327,7 +332,7 @@ func (e *Encoder) Encode(i420 []byte) (out []byte, err error) {
 }
 
 func (e *Encoder) encodeHere(i420 []byte) ([]byte, error) {
-	isIDR := e.gopPos%e.gopLength == 0
+	isIDR := e.beginPicture()
 
 	if err := e.uploadFrame(i420); err != nil {
 		return nil, err
@@ -356,8 +361,8 @@ func (e *Encoder) encodeHere(i420 []byte) ([]byte, error) {
 	currPic := PictureH264{
 		PictureID:           e.refSurfaces[currSlot],
 		FrameIdx:            e.frameNum,
-		TopFieldOrderCnt:    int32(e.gopPos % maxPicOrderCntLsb),
-		BottomFieldOrderCnt: int32(e.gopPos % maxPicOrderCntLsb),
+		TopFieldOrderCnt:    e.picOrderCnt(),
+		BottomFieldOrderCnt: e.picOrderCnt(),
 	}
 
 	if err := e.renderPicture(codedBuf, currPic, isIDR); err != nil {
@@ -387,13 +392,7 @@ func (e *Encoder) encodeHere(i420 []byte) ([]byte, error) {
 	currPic.Flags = PictureH264ShortTermReference
 	e.prevRef = currPic
 	e.havePrevRef = true
-	if isIDR {
-		e.frameNum = 0
-		e.idrPicID++
-	} else {
-		e.frameNum = (e.frameNum + 1) % maxFrameNum
-	}
-	e.gopPos++
+	e.endPicture(isIDR)
 
 	return e.withParameterSets(out, isIDR)
 }
@@ -562,7 +561,7 @@ func (e *Encoder) renderSlice(isIDR bool) error {
 			slice.RefPicList0[0] = e.prevRef
 		}
 	}
-	slice.PicOrderCntLsb = uint16(e.gopPos % maxPicOrderCntLsb)
+	slice.PicOrderCntLsb = uint16(e.picOrderCnt())
 
 	var buf uint32
 	if err := check("vaCreateBuffer(slice)", vaCreateBuffer(e.disp.handle, e.context, int32(BufferTypeEncSliceParameter),
@@ -648,4 +647,25 @@ func (e *Encoder) Close() error {
 	e.disp.close()
 	e.disp = nil
 	return nil
+}
+
+func (e *Encoder) beginPicture() bool {
+	isIDR := e.gopPos%e.gopLength == 0
+	if isIDR {
+		e.frameNum = 0
+		e.idrPos = e.gopPos
+	}
+	return isIDR
+}
+
+func (e *Encoder) picOrderCnt() int32 {
+	return int32((e.gopPos - e.idrPos) % maxPicOrderCntLsb)
+}
+
+func (e *Encoder) endPicture(isIDR bool) {
+	if isIDR {
+		e.idrPicID++
+	}
+	e.frameNum = (e.frameNum + 1) % maxFrameNum
+	e.gopPos++
 }
