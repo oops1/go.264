@@ -101,7 +101,7 @@ type EncoderConfig struct {
 func (c EncoderConfig) needsSoftware() bool {
 	return c.Trellis || c.LongTermReferences > 0 ||
 		c.WeightedPrediction != WeightedPredictionOff ||
-		c.DirectMode != DirectSpatial || c.RepeatParameterSets ||
+		c.DirectMode != DirectSpatial ||
 		c.IntraRefresh > 0 || c.Deblocking != DeblockingOn ||
 		c.DeblockAlphaOffset != 0 || c.DeblockBetaOffset != 0 ||
 		c.VBVBufferKbits > 0 || c.VBVMaxrateKbps > 0 || c.CBR
@@ -170,6 +170,9 @@ type Encoder struct {
 	hw      hwaccel.Encoder
 	backend string
 	closed  bool
+
+	sps []byte
+	pps []byte
 }
 
 func NewEncoder(cfg EncoderConfig) (*Encoder, error) {
@@ -238,7 +241,7 @@ func (e *Encoder) Encode(i420 []byte) ([]byte, error) {
 		return nil, ErrClosed
 	}
 	if e.hw != nil {
-		return e.hw.Encode(i420)
+		return e.fromHardware(e.hw.Encode(i420))
 	}
 	return e.cpu.Encode(i420)
 }
@@ -248,7 +251,7 @@ func (e *Encoder) EncodeWithHints(i420 []byte, changed []image.Rectangle, region
 		return nil, ErrClosed
 	}
 	if e.hw != nil {
-		return e.hw.Encode(i420)
+		return e.fromHardware(e.hw.Encode(i420))
 	}
 	return e.cpu.EncodeWithHints(i420, encoder.Hints{Changed: changed, Regions: regions})
 }
@@ -262,9 +265,45 @@ func (e *Encoder) EncodeFrame(f *Frame, changed []image.Rectangle, regions []Reg
 	}
 	yuv := f.AppendI420(make([]byte, 0, f.I420Size()))
 	if e.hw != nil {
-		return e.hw.Encode(yuv)
+		return e.fromHardware(e.hw.Encode(yuv))
 	}
 	return e.cpu.EncodeWithHints(yuv, encoder.Hints{Changed: changed, Regions: regions})
+}
+
+func (e *Encoder) fromHardware(pkt []byte, err error) ([]byte, error) {
+	if err != nil || len(pkt) == 0 {
+		return pkt, err
+	}
+	var sps, pps []byte
+	idr := false
+	for _, u := range nal.SplitAnnexB(pkt) {
+		if len(u) == 0 {
+			continue
+		}
+		switch nal.Type(u[0] & 0x1f) {
+		case nal.TypeSPS:
+			sps = u
+		case nal.TypePPS:
+			pps = u
+		case nal.TypeSliceIDR:
+			idr = true
+		}
+	}
+	if sps != nil {
+		e.sps = append(e.sps[:0], sps...)
+	}
+	if pps != nil {
+		e.pps = append(e.pps[:0], pps...)
+	}
+	if !idr || (sps != nil && pps != nil) || e.sps == nil || e.pps == nil {
+		return pkt, nil
+	}
+	out := make([]byte, 0, 8+len(e.sps)+len(e.pps)+len(pkt))
+	out = append(out, 0, 0, 0, 1)
+	out = append(out, e.sps...)
+	out = append(out, 0, 0, 0, 1)
+	out = append(out, e.pps...)
+	return append(out, pkt...), nil
 }
 
 func (e *Encoder) ForceKeyFrame() {
@@ -278,7 +317,7 @@ func (e *Encoder) Flush() ([]byte, error) {
 		return nil, ErrClosed
 	}
 	if e.hw != nil {
-		return e.hw.Drain()
+		return e.fromHardware(e.hw.Drain())
 	}
 	return e.cpu.Flush()
 }
