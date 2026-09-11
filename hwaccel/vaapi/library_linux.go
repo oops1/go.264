@@ -21,6 +21,7 @@ var (
 
 	vaInitialize             func(uintptr, *int32, *int32) int32
 	vaTerminate              func(uintptr) int32
+	vaQueryVendorString      func(uintptr) string
 	vaMaxNumEntrypoints      func(uintptr) int32
 	vaQueryConfigEntrypoints func(uintptr, int32, unsafe.Pointer, *int32) int32
 	vaCreateConfig           func(uintptr, int32, int32, unsafe.Pointer, int32, *uint32) int32
@@ -68,6 +69,7 @@ func loadLibrary() error {
 
 		purego.RegisterLibFunc(&vaInitialize, core, "vaInitialize")
 		purego.RegisterLibFunc(&vaTerminate, core, "vaTerminate")
+		purego.RegisterLibFunc(&vaQueryVendorString, core, "vaQueryVendorString")
 		purego.RegisterLibFunc(&vaMaxNumEntrypoints, core, "vaMaxNumEntrypoints")
 		purego.RegisterLibFunc(&vaQueryConfigEntrypoints, core, "vaQueryConfigEntrypoints")
 		purego.RegisterLibFunc(&vaCreateConfig, core, "vaCreateConfig")

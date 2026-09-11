@@ -15,9 +15,11 @@ func requireAdapter(t *testing.T) {
 	if !Available() {
 		t.Skip("libva.so.2 or libva-drm.so.2 is not available on this machine")
 	}
-	if _, err := openDisplay(); err != nil {
-		t.Skipf("no VA-API render node could be opened: %v", err)
+	d, _, _, err := openEncodeDisplay()
+	if err != nil {
+		t.Skipf("no VA-API render node offers H.264 encoding: %v", err)
 	}
+	d.close()
 }
 
 func TestConfigValidation(t *testing.T) {

@@ -3,6 +3,7 @@ package vaapi
 import (
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"unsafe"
 )
@@ -12,6 +13,7 @@ type display struct {
 	handle uintptr
 	major  int32
 	minor  int32
+	vendor string
 }
 
 func renderNodeCandidates() []string {
@@ -22,22 +24,32 @@ func renderNodeCandidates() []string {
 	return nodes
 }
 
-func openDisplay() (*display, error) {
+func openEncodeDisplay() (*display, profileChoice, Entrypoint, error) {
 	if err := loadLibrary(); err != nil {
-		return nil, err
+		return nil, profileChoice{}, 0, err
 	}
 	var lastErr error
 	for _, path := range renderNodeCandidates() {
 		d, err := openDisplayAt(path)
-		if err == nil {
-			return d, nil
+		if errors.Is(err, fs.ErrNotExist) {
+			continue
 		}
-		lastErr = err
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		choice, entry, err := d.findEncodeProfile()
+		if err != nil {
+			lastErr = fmt.Errorf("vaapi: %s (%s): %w", path, d.vendor, err)
+			d.close()
+			continue
+		}
+		return d, choice, entry, nil
 	}
 	if lastErr == nil {
 		lastErr = errors.New("vaapi: no DRM render node was found")
 	}
-	return nil, lastErr
+	return nil, profileChoice{}, 0, lastErr
 }
 
 func openDisplayAt(path string) (*display, error) {
@@ -56,7 +68,11 @@ func openDisplayAt(path string) (*display, error) {
 		f.Close()
 		return nil, fmt.Errorf("vaapi: %s: %w", path, err)
 	}
-	return &display{node: f, handle: handle, major: major, minor: minor}, nil
+	d := &display{node: f, handle: handle, major: major, minor: minor}
+	if vaQueryVendorString != nil {
+		d.vendor = vaQueryVendorString(handle)
+	}
+	return d, nil
 }
 
 func (d *display) close() {
@@ -84,37 +100,41 @@ var candidateProfiles = []profileChoice{
 	{ProfileH264ConstrainedBaseline, true},
 }
 
-func (d *display) findEncodeProfile() (profileChoice, error) {
+var encodeEntrypoints = []Entrypoint{EntrypointEncSlice, EntrypointEncSliceLP}
+
+func (d *display) findEncodeProfile() (profileChoice, Entrypoint, error) {
 	max := vaMaxNumEntrypoints(d.handle)
 	if max <= 0 {
 		max = 32
 	}
 	entrypoints := make([]int32, max)
-	for _, cand := range candidateProfiles {
-		n := int32(len(entrypoints))
-		st := vaQueryConfigEntrypoints(d.handle, int32(cand.profile), unsafe.Pointer(&entrypoints[0]), &n)
-		if Status(st) != StatusSuccess {
-			continue
-		}
-		if n < 0 || int(n) > len(entrypoints) {
-			n = int32(len(entrypoints))
-		}
-		for _, e := range entrypoints[:n] {
-			if Entrypoint(e) == EntrypointEncSlice {
-				return cand, nil
+	for _, want := range encodeEntrypoints {
+		for _, cand := range candidateProfiles {
+			n := int32(len(entrypoints))
+			st := vaQueryConfigEntrypoints(d.handle, int32(cand.profile), unsafe.Pointer(&entrypoints[0]), &n)
+			if Status(st) != StatusSuccess {
+				continue
+			}
+			if n < 0 || int(n) > len(entrypoints) {
+				n = int32(len(entrypoints))
+			}
+			for _, e := range entrypoints[:n] {
+				if Entrypoint(e) == want {
+					return cand, want, nil
+				}
 			}
 		}
 	}
-	return profileChoice{}, errors.New("vaapi: no H.264 encode entry point was found")
+	return profileChoice{}, 0, errors.New("no H.264 encode entry point was found")
 }
 
-func (d *display) createConfig(profile Profile) (uint32, error) {
+func (d *display) createConfig(profile Profile, entry Entrypoint) (uint32, error) {
 	attribs := [2]ConfigAttrib{
 		{Type: ConfigAttribRTFormat, Value: RTFormatYUV420},
 		{Type: ConfigAttribRateControl, Value: RCCQP},
 	}
 	var cfg uint32
-	err := check("vaCreateConfig", vaCreateConfig(d.handle, int32(profile), int32(EntrypointEncSlice),
+	err := check("vaCreateConfig", vaCreateConfig(d.handle, int32(profile), int32(entry),
 		unsafe.Pointer(&attribs[0]), int32(len(attribs)), &cfg))
 	if err != nil {
 		return 0, err

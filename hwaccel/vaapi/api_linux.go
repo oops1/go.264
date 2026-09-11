@@ -100,7 +100,20 @@ const (
 
 type Entrypoint int32
 
-const EntrypointEncSlice Entrypoint = 6
+const (
+	EntrypointEncSlice   Entrypoint = 6
+	EntrypointEncSliceLP Entrypoint = 8
+)
+
+func (e Entrypoint) String() string {
+	switch e {
+	case EntrypointEncSlice:
+		return "VAEntrypointEncSlice"
+	case EntrypointEncSliceLP:
+		return "VAEntrypointEncSliceLP"
+	}
+	return fmt.Sprintf("VAEntrypoint(%d)", int32(e))
+}
 
 type ConfigAttribType int32
 

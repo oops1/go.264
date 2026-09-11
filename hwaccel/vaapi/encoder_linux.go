@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"unsafe"
 
+	go264 "github.com/oops1/go.264"
 	"github.com/oops1/go.264/internal/level"
 	"github.com/oops1/go.264/internal/syntax"
 )
@@ -40,10 +41,11 @@ func (c Config) valid() error {
 func mbAlign(v int) int { return (v + 15) &^ 15 }
 
 type Encoder struct {
-	disp     *display
-	profile  Profile
-	baseline bool
-	levelIDC uint8
+	disp       *display
+	profile    Profile
+	baseline   bool
+	entrypoint Entrypoint
+	levelIDC   uint8
 
 	config  uint32
 	context uint32
@@ -84,28 +86,95 @@ func Open(cfg Config) (*Encoder, error) {
 	if err := loadLibrary(); err != nil {
 		return nil, err
 	}
-	disp, err := openDisplay()
+	disp, choice, entry, err := openEncodeDisplay()
 	if err != nil {
 		return nil, err
 	}
-	e, err := openHere(disp, cfg)
+	e, err := openHere(disp, choice, entry, cfg)
 	if err != nil {
 		disp.close()
 		return nil, err
 	}
+	if err := e.selfTest(); err != nil {
+		where := e.Describe()
+		e.Close()
+		return nil, fmt.Errorf("vaapi: %s is advertised but a test frame failed: %w", where, err)
+	}
 	return e, nil
 }
 
-func openHere(disp *display, cfg Config) (*Encoder, error) {
-	choice, err := disp.findEncodeProfile()
-	if err != nil {
-		return nil, err
+func (e *Encoder) Describe() string {
+	if e.disp == nil {
+		return "vaapi, closed"
 	}
+	node := ""
+	if e.disp.node != nil {
+		node = e.disp.node.Name()
+	}
+	return fmt.Sprintf("%s, %s, profile %d, %s", node, e.disp.vendor, int32(e.profile), e.entrypoint)
+}
+
+func (e *Encoder) selfTest() error {
+	frame := make([]byte, I420Size(e.width, e.height))
+	for i := range frame {
+		frame[i] = 128
+	}
+	out, err := e.encodeHere(frame)
+	if err != nil {
+		return err
+	}
+	if err := checkTestFrame(out, e.width, e.height); err != nil {
+		return err
+	}
+	e.gopPos = 0
+	e.frameNum = 0
+	e.idrPicID = 0
+	e.havePrevRef = false
+	e.nextSlot = 0
+	return nil
+}
+
+func checkTestFrame(stream []byte, width, height int) error {
+	if len(stream) == 0 {
+		return errors.New("the driver returned no coded data")
+	}
+	dec := go264.NewDecoderWithConfig(go264.DecoderConfig{ForceSoftware: true})
+	defer dec.Close()
+	pics, err := dec.Decode(stream)
+	if err != nil {
+		return fmt.Errorf("the coded frame does not decode: %w", err)
+	}
+	rest, err := dec.Flush()
+	if err != nil {
+		return fmt.Errorf("the coded frame does not decode: %w", err)
+	}
+	pics = append(pics, rest...)
+	if len(pics) != 1 {
+		return fmt.Errorf("the coded frame decoded to %d pictures, want 1", len(pics))
+	}
+	p := pics[0]
+	if p.Width != width || p.Height != height {
+		return fmt.Errorf("the coded frame decoded at %dx%d, want %dx%d", p.Width, p.Height, width, height)
+	}
+	sum := 0
+	for y := 0; y < p.Height; y++ {
+		row := p.Y[y*p.StrideY : y*p.StrideY+p.Width]
+		for _, v := range row {
+			sum += int(v)
+		}
+	}
+	if mean := sum / (p.Width * p.Height); mean < 118 || mean > 138 {
+		return fmt.Errorf("a mid grey frame decoded to a mean luma of %d", mean)
+	}
+	return nil
+}
+
+func openHere(disp *display, choice profileChoice, entry Entrypoint, cfg Config) (*Encoder, error) {
 	levelIDC, err := pickLevelIDC(cfg, choice.profile)
 	if err != nil {
 		return nil, err
 	}
-	vaConfig, err := disp.createConfig(choice.profile)
+	vaConfig, err := disp.createConfig(choice.profile, entry)
 	if err != nil {
 		return nil, err
 	}
@@ -115,6 +184,7 @@ func openHere(disp *display, cfg Config) (*Encoder, error) {
 		disp:          disp,
 		profile:       choice.profile,
 		baseline:      choice.baseline,
+		entrypoint:    entry,
 		levelIDC:      levelIDC,
 		config:        vaConfig,
 		width:         cfg.Width,
