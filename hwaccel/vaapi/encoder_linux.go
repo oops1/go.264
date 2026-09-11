@@ -86,6 +86,16 @@ func Open(cfg Config) (*Encoder, error) {
 	if err := loadLibrary(); err != nil {
 		return nil, err
 	}
+	if err := guard.check(cfg); err != nil {
+		return nil, err
+	}
+	return openUnguarded(cfg)
+}
+
+func openUnguarded(cfg Config) (*Encoder, error) {
+	if err := loadLibrary(); err != nil {
+		return nil, err
+	}
 	disp, choice, entry, err := openEncodeDisplay()
 	if err != nil {
 		return nil, err

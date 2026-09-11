@@ -262,19 +262,40 @@ cent for 192.
 
 Three separate pieces, none blocking the others.
 
-**NVENC on real silicon.** The Linux backend is written and its call
-sequence is tested, but it has never run against a card that answers.
-The adapter in production is a Kepler GT 710 on nouveau, which exposes
-no encoder, and the proprietary branch that would has been dropped from
-the distribution. Verification waits for the P40 or V100 planned for
-that machine.
+**NVENC on real silicon, done for WSL2.** The development machine turned
+out to have what the production one lacks: its two RTX 5060 Ti cards are
+passed through to WSL2 with libnvidia-encode, and the module's test
+binary, cross-compiled with cgo off, runs there as it is. All fifty tests
+pass - the stream decodes in our decoder, ffmpeg reads the same twelve
+pictures and agrees with ours byte for byte, the public encoder chooses
+the adapter on its own, and the two tests that cycle encoders with a
+garbage collection between frames hold on a driver that answers. What it
+does not prove is the Linux driver on bare metal, which is a different
+build of the same branch; the P40 or V100 planned for production is still
+the place to settle that. The production GT 710 on nouveau has no encoder
+at all and never will.
 
 **VA-API for Intel and AMD** is written, in its own nested module
-loading libva at run time, but has never met a driver. The structures
-are transcribed from the installed headers with their sizes and offsets
-measured by compiling C against those same headers, and the library
-loads and marshals arguments against a live libva; what is unproven is
-everything a driver would answer.
+loading libva at run time, and has still not encoded on a driver. The
+first machine to try it, a Coffee Lake with Debian's free iHD build,
+showed why it would not have worked as written: that driver offers H.264
+encoding only through the low-power entry point, and the backend asked
+only for the full one. It now takes either, the full one first. Because
+low power on that generation needs HuC firmware the kernel does not load
+by default, a driver can advertise an entry point it cannot drive, so the
+backend encodes one test frame and reads it back with our own decoder
+before trusting it; a driver that fails is refused and the encoder stays
+on the processor. The same machine with i965 offers the full entry point.
+
+**Parameter sets on every IDR, whoever encodes.** The processor encoder
+always wrote them at IDR; RepeatParameterSets only adds them at intra
+refresh recovery points, yet it was keeping every configuration that set
+it off the hardware. Measured on the adapters available here, NVENC and
+Media Foundation both write them at every IDR as well, and the public
+encoder now remembers them and puts them back in front of any IDR a driver
+sends without them, so the guarantee does not rest on a driver's habits.
+Media Foundation, incidentally, did not honour the GOP length literally:
+two IDRs in sixty-five frames at a GOP of thirty.
 
 **Direct3D 11 for decoding on Windows** is done. Handing the decoder
 transform a Direct3D 11 device makes it bind the adapter, and the

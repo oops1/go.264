@@ -35,7 +35,7 @@ Working today:
 | Rate-distortion quantisation | 4.8 to 7.1 per cent of the bitrate at equal quality; 1.2 dB worse on screen content, so leave it off there |
 | Level selection | from the picture size, the reference count, the bitrate and the buffer |
 | Slices | any count, encoded in parallel; ten times faster on twenty threads for 2 to 12 per cent more bits, depending on how much the picture moves |
-| Hardware acceleration | encoding on Windows through Media Foundation; on Linux through NVENC and VA-API, separate modules that have not yet run on real hardware; decoding on Windows through Direct3D, nine times our own decoder at 1080p. No cgo on any path |
+| Hardware acceleration | encoding on Windows through Media Foundation, on Linux through NVENC and VA-API as separate modules - NVENC proven on an RTX 5060 Ti, VA-API not yet on real hardware; decoding on Windows through Direct3D, nine times our own decoder at 1080p. No cgo on any path |
 | Bitrate targeted rate control | complete, and under a buffer model the long run rate never exceeds the request |
 | Mode decision | rate-distortion, with an early skip test that pays for itself six times over on screen content |
 | SIMD kernels | transformed differences, six-tap and bilinear interpolation, block matching, the 4x4 transform and quantisation |
@@ -68,10 +68,24 @@ import _ "github.com/oops1/go.264/hwaccel/nvenc" // NVIDIA
 
 Both load their libraries at run time through purego, so the build stays
 `CGO_ENABLED=0`. VA-API needs `libva.so.2` and `libva-drm.so.2` and a
-driver that offers `VAEntrypointEncSlice` for an H.264 profile, which
-`vainfo` will show; the low-power entry point `VAEntrypointEncSliceLP` is
-not used yet. The process needs read and write access to a
-`/dev/dri/renderD*` node.
+driver that offers `VAEntrypointEncSlice` or `VAEntrypointEncSliceLP` for
+an H.264 profile, which `vainfo` will show; the full one is preferred when
+both exist, and `LIBVA_DRIVER_NAME` chooses between installed drivers as it
+does for any libva program. Before handing an encoder over, the VA-API
+backend encodes a test frame and decodes it back, so a driver that
+advertises an entry point it cannot drive is refused rather than trusted.
+The process needs read and write access to a `/dev/dri/renderD*` node.
+
+A driver can also abort inside libva, which no recover can catch - i965 on
+a Coffee Lake machine did exactly that, asserting while the context was
+created.
+So the first time a process opens the VA-API encoder, it tries the driver
+in a child process first: the program's own binary is run again with
+GO264_VAAPI_PROBE set and no arguments, the backend's init sees it, opens
+the encoder, encodes the test frame and exits before main. If the child is
+killed or hangs, VA-API is not used again in that process. The init
+functions of other packages in the program run in the child too, so keep
+them free of side effects.
 
 Construction falls back to the processor silently, so check which path you
 got rather than assuming:
@@ -83,15 +97,25 @@ enc, err := go264.NewEncoder(cfg)
 
 A hardware encoder carries the picture size, frame rate, GOP length,
 quantiser and, where the backend has rate control, the bitrate - and
-nothing else. VA-API encodes at a constant quantiser. Any setting only the processor path
-implements - RepeatParameterSets, IntraRefresh, Trellis, long-term
-references, weighted prediction, temporal direct, deblocking control, the
-buffer model - keeps the encoder on the processor, and ForceKeyFrame has no
-effect on a hardware encoder.
+nothing else. VA-API encodes at a constant quantiser. Any setting only the
+processor path implements - IntraRefresh, Trellis, long-term references,
+weighted prediction, temporal direct, deblocking control, the buffer model -
+keeps the encoder on the processor, and ForceKeyFrame has no effect on a
+hardware encoder.
 
-Neither Linux backend has yet run against real hardware. Their call
-sequences are tested and their structure layouts are checked against the C
-headers, but treat the first machine you try as the test.
+Every IDR carries the sequence and picture parameter sets whichever path
+produced it: the processor encoder always writes them, and if a hardware
+driver sends them only once, the encoder remembers them and puts them back
+in front of each later IDR. `RepeatParameterSets` adds them at intra refresh
+recovery points as well, which is the only thing it changes, so on its own
+it no longer keeps the encoder on the processor.
+
+The NVENC backend has encoded on real hardware: its whole test suite, fifty
+tests, passes on two RTX 5060 Ti cards under WSL2 with driver 580.97, and
+ffmpeg decodes what it writes identically to our own decoder. That is the
+Windows driver passed through to WSL, not the Linux driver on bare metal.
+The VA-API backend has not yet encoded on a real driver; treat the first
+machine you try as the test.
 
 ## Library
 
