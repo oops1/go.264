@@ -42,3 +42,5 @@ func (r *registeredEncoder) Encode(i420 []byte) ([]byte, error) { return r.enc.E
 func (r *registeredEncoder) Drain() ([]byte, error) { return r.enc.Drain() }
 
 func (r *registeredEncoder) Close() error { return r.enc.Close() }
+
+func (r *registeredEncoder) ForceKeyFrame() { r.enc.ForceKeyFrame() }

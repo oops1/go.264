@@ -309,6 +309,10 @@ func (e *Encoder) fromHardware(pkt []byte, err error) ([]byte, error) {
 func (e *Encoder) ForceKeyFrame() {
 	if e.cpu != nil {
 		e.cpu.ForceKeyFrame()
+		return
+	}
+	if f, ok := e.hw.(hwaccel.KeyFrameForcer); ok {
+		f.ForceKeyFrame()
 	}
 }
 

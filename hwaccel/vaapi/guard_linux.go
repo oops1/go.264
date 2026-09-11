@@ -22,6 +22,7 @@ var probeTimeout = 20 * time.Second
 
 var probeCommand = func(ctx context.Context, spec string) *exec.Cmd {
 	cmd := exec.CommandContext(ctx, "/proc/self/exe")
+	cmd.Args = []string{os.Args[0]}
 	cmd.Env = append(os.Environ(), probeEnv+"="+spec)
 	return cmd
 }

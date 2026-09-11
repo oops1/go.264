@@ -143,3 +143,26 @@ gs     0x0
 		t.Fatalf("without an assertion crashReason chose %q", got)
 	}
 }
+
+func TestAForcedKeyFrameRestartsTheGOP(t *testing.T) {
+	e := &Encoder{gopLength: 30}
+	want := map[int]bool{0: true, 17: true, 47: true}
+	last := 0
+	for pos := 0; pos < 60; pos++ {
+		if pos == 17 {
+			e.ForceKeyFrame()
+		}
+		isIDR := e.beginPicture()
+		if isIDR != want[pos] {
+			t.Fatalf("picture %d: IDR %v, want %v", pos, isIDR, want[pos])
+		}
+		if isIDR {
+			last = pos
+		}
+		if e.frameNum != uint32(pos-last) || e.picOrderCnt() != int32(pos-last) {
+			t.Fatalf("picture %d, %d after the IDR at %d: frame_num %d, picture order count %d",
+				pos, pos-last, last, e.frameNum, e.picOrderCnt())
+		}
+		e.endPicture(isIDR)
+	}
+}

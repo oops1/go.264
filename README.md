@@ -100,8 +100,10 @@ quantiser and, where the backend has rate control, the bitrate - and
 nothing else. VA-API encodes at a constant quantiser. Any setting only the
 processor path implements - IntraRefresh, Trellis, long-term references,
 weighted prediction, temporal direct, deblocking control, the buffer model -
-keeps the encoder on the processor, and ForceKeyFrame has no effect on a
-hardware encoder.
+keeps the encoder on the processor. ForceKeyFrame reaches the VA-API
+encoder, which starts a new GOP at the next picture; NVENC and Media
+Foundation do not honour it yet, so there a key frame comes only at the
+end of the GOP.
 
 Every IDR carries the sequence and picture parameter sets whichever path
 produced it: the processor encoder always writes them, and if a hardware

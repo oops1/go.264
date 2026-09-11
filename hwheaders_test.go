@@ -112,3 +112,28 @@ func TestRepeatedParameterSetsAloneDoNotDemandTheProcessor(t *testing.T) {
 		t.Fatal("intra refresh no longer keeps the encoder on the processor")
 	}
 }
+
+type forcingEncoder struct {
+	forced int
+}
+
+func (f *forcingEncoder) Encode(i420 []byte) ([]byte, error) { return nil, nil }
+func (f *forcingEncoder) Drain() ([]byte, error)             { return nil, nil }
+func (f *forcingEncoder) Close() error                       { return nil }
+func (f *forcingEncoder) ForceKeyFrame()                     { f.forced++ }
+
+type silentEncoder struct{}
+
+func (silentEncoder) Encode(i420 []byte) ([]byte, error) { return nil, nil }
+func (silentEncoder) Drain() ([]byte, error)             { return nil, nil }
+func (silentEncoder) Close() error                       { return nil }
+
+func TestForceKeyFrameReachesAHardwareEncoderThatCanDoIt(t *testing.T) {
+	hw := &forcingEncoder{}
+	e := &Encoder{hw: hw, backend: "fake"}
+	e.ForceKeyFrame()
+	if hw.forced != 1 {
+		t.Fatalf("the hardware encoder was asked for a key frame %d times, want 1", hw.forced)
+	}
+	(&Encoder{hw: silentEncoder{}, backend: "fake"}).ForceKeyFrame()
+}

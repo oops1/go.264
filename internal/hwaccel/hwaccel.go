@@ -19,6 +19,10 @@ type Encoder interface {
 	Close() error
 }
 
+type KeyFrameForcer interface {
+	ForceKeyFrame()
+}
+
 type DecoderParams struct {
 	Width  int
 	Height int

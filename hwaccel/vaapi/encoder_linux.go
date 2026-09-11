@@ -64,6 +64,7 @@ type Encoder struct {
 
 	gopPos      int
 	idrPos      int
+	forceIDR    bool
 	frameNum    uint32
 	idrPicID    uint16
 	havePrevRef bool
@@ -649,11 +650,14 @@ func (e *Encoder) Close() error {
 	return nil
 }
 
+func (e *Encoder) ForceKeyFrame() { e.forceIDR = true }
+
 func (e *Encoder) beginPicture() bool {
-	isIDR := e.gopPos%e.gopLength == 0
+	isIDR := e.forceIDR || e.gopPos == 0 || e.gopPos-e.idrPos >= e.gopLength
 	if isIDR {
 		e.frameNum = 0
 		e.idrPos = e.gopPos
+		e.forceIDR = false
 	}
 	return isIDR
 }
