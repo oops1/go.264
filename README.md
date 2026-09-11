@@ -35,7 +35,7 @@ Working today:
 | Rate-distortion quantisation | 4.8 to 7.1 per cent of the bitrate at equal quality; 1.2 dB worse on screen content, so leave it off there |
 | Level selection | from the picture size, the reference count, the bitrate and the buffer |
 | Slices | any count, encoded in parallel; ten times faster on twenty threads for 2 to 12 per cent more bits, depending on how much the picture moves |
-| Hardware acceleration | encoding on Windows through Media Foundation, on Linux through NVENC and VA-API as separate modules - NVENC proven on an RTX 5060 Ti, VA-API not yet on real hardware; decoding on Windows through Direct3D, nine times our own decoder at 1080p. No cgo on any path |
+| Hardware acceleration | encoding on Windows through Media Foundation, on Linux through NVENC and VA-API as separate modules - NVENC proven on an RTX 5060 Ti, VA-API on Intel Gen9 through the free iHD driver; decoding on Windows through Direct3D, nine times our own decoder at 1080p. No cgo on any path |
 | Bitrate targeted rate control | complete, and under a buffer model the long run rate never exceeds the request |
 | Mode decision | rate-distortion, with an early skip test that pays for itself six times over on screen content |
 | SIMD kernels | transformed differences, six-tap and bilinear interpolation, block matching, the 4x4 transform and quantisation |
@@ -116,8 +116,10 @@ The NVENC backend has encoded on real hardware: its whole test suite, fifty
 tests, passes on two RTX 5060 Ti cards under WSL2 with driver 580.97, and
 ffmpeg decodes what it writes identically to our own decoder. That is the
 Windows driver passed through to WSL, not the Linux driver on bare metal.
-The VA-API backend has not yet encoded on a real driver; treat the first
-machine you try as the test.
+The VA-API backend has encoded on a Coffee Lake UHD 630 through Debian's
+free iHD driver and its low-power entry point, with HuC firmware loaded by
+i915.enable_guc=2, and ffmpeg reads what it writes without a warning. It
+has not met an AMD driver.
 
 ## Library
 

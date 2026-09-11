@@ -262,30 +262,52 @@ cent for 192.
 
 Three separate pieces, none blocking the others.
 
-**NVENC on real silicon, done for WSL2.** The development machine turned
-out to have what the production one lacks: its two RTX 5060 Ti cards are
-passed through to WSL2 with libnvidia-encode, and the module's test
-binary, cross-compiled with cgo off, runs there as it is. All fifty tests
-pass - the stream decodes in our decoder, ffmpeg reads the same twelve
-pictures and agrees with ours byte for byte, the public encoder chooses
-the adapter on its own, and the two tests that cycle encoders with a
-garbage collection between frames hold on a driver that answers. What it
+**NVENC on real silicon, done for WSL2.** The backend has encoded on the
+development machine's two RTX 5060 Ti cards under WSL2 since 31 August,
+checked three ways at the time: our decoder reads the stream, ffmpeg reads
+it to the same bytes, and the public encoder picks the adapter up by
+itself. An earlier line in this document still said it had never met a
+card that answers; that line was stale, and it was repeated for a while as
+news. Run again on the current code, all fifty tests pass, including the
+two that cycle encoders with a garbage collection between frames. What it
 does not prove is the Linux driver on bare metal, which is a different
 build of the same branch; the P40 or V100 planned for production is still
 the place to settle that. The production GT 710 on nouveau has no encoder
 at all and never will.
 
-**VA-API for Intel and AMD** is written, in its own nested module
-loading libva at run time, and has still not encoded on a driver. The
-first machine to try it, a Coffee Lake with Debian's free iHD build,
-showed why it would not have worked as written: that driver offers H.264
-encoding only through the low-power entry point, and the backend asked
-only for the full one. It now takes either, the full one first. Because
-low power on that generation needs HuC firmware the kernel does not load
-by default, a driver can advertise an entry point it cannot drive, so the
-backend encodes one test frame and reads it back with our own decoder
-before trusting it; a driver that fails is refused and the encoder stays
-on the processor. The same machine with i965 offers the full entry point.
+**VA-API on real silicon, done for Intel Gen9.** The backend has encoded
+on winline's Coffee Lake machine - UHD 630, Debian 13, kernel 6.12 - through
+Debian's free iHD driver, and ffmpeg reads the stream it writes with no
+warning at all. Getting there took four things that only a real driver
+could show, and the order matters because each one was hidden behind the
+last.
+
+That driver offers H.264 encoding only through the low-power entry point,
+and the backend asked only for the full one, so it saw no encoder. It now
+takes either, the full one first. Low power on that generation needs HuC
+firmware, which the kernel loads only with i915.enable_guc=2; with it set,
+the entry point works.
+
+The driver encoded the frame but wrote no sequence or picture parameter
+set, and a test frame that our own decoder reads back before the encoder is
+trusted refused it cleanly. The backend now writes both from the same
+values it hands the driver.
+
+Then ffmpeg warned that the reference frames exceeded the maximum. That
+one was ours: frame_num lagged a picture behind, so a P frame repeated its
+IDR's number and every later IDR carried the running count. The counter was
+reset after an IDR instead of before. Our decoder is lenient about
+numbering where ffmpeg is not, so the test now parses every slice header
+and holds it to the rule, and the stream that exposed it is kept as test
+data.
+
+And i965 on the same machine asserts inside vaCreateContext and takes the
+process with it, which no recover catches. The first open in a process now
+tries the driver in a child - the program's own binary re-run with an
+environment variable, exiting in init before main - and a driver that
+kills the child is never opened in the program. On that machine the
+program survives, and the refusal names the driver's assertion. A driver
+that fails later, in the middle of a stream, is still not covered.
 
 **Parameter sets on every IDR, whoever encodes.** The processor encoder
 always wrote them at IDR; RepeatParameterSets only adds them at intra

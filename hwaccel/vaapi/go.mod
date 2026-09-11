@@ -6,7 +6,7 @@ toolchain go1.27.1
 
 require (
 	github.com/ebitengine/purego v0.9.0
-	github.com/oops1/go.264 v1.7.1
+	github.com/oops1/go.264 v1.8.0
 )
 
 replace github.com/oops1/go.264 => ../..
