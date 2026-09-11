@@ -69,6 +69,8 @@ type Encoder struct {
 	prevRef     PictureH264
 	nextSlot    int
 
+	headers []byte
+
 	closed bool
 }
 
@@ -129,11 +131,15 @@ func (e *Encoder) selfTest() error {
 	for i := range frame {
 		frame[i] = 128
 	}
-	out, err := e.encodeHere(frame)
-	if err != nil {
-		return err
+	var stream []byte
+	for i := 0; i < selfTestFrames; i++ {
+		out, err := e.encodeHere(frame)
+		if err != nil {
+			return err
+		}
+		stream = append(stream, out...)
 	}
-	if err := checkTestFrame(out, e.width, e.height); err != nil {
+	if err := checkTestFrames(stream, e.width, e.height, selfTestFrames); err != nil {
 		return err
 	}
 	e.gopPos = 0
@@ -144,7 +150,9 @@ func (e *Encoder) selfTest() error {
 	return nil
 }
 
-func checkTestFrame(stream []byte, width, height int) error {
+const selfTestFrames = 2
+
+func checkTestFrames(stream []byte, width, height, want int) error {
 	if len(stream) == 0 {
 		return errors.New("the driver returned no coded data")
 	}
@@ -152,29 +160,30 @@ func checkTestFrame(stream []byte, width, height int) error {
 	defer dec.Close()
 	pics, err := dec.Decode(stream)
 	if err != nil {
-		return fmt.Errorf("the coded frame does not decode: %w", err)
+		return fmt.Errorf("the coded frames do not decode: %w", err)
 	}
 	rest, err := dec.Flush()
 	if err != nil {
-		return fmt.Errorf("the coded frame does not decode: %w", err)
+		return fmt.Errorf("the coded frames do not decode: %w", err)
 	}
 	pics = append(pics, rest...)
-	if len(pics) != 1 {
-		return fmt.Errorf("the coded frame decoded to %d pictures, want 1", len(pics))
+	if len(pics) != want {
+		return fmt.Errorf("the coded frames decoded to %d pictures, want %d", len(pics), want)
 	}
-	p := pics[0]
-	if p.Width != width || p.Height != height {
-		return fmt.Errorf("the coded frame decoded at %dx%d, want %dx%d", p.Width, p.Height, width, height)
-	}
-	sum := 0
-	for y := 0; y < p.Height; y++ {
-		row := p.Y[y*p.StrideY : y*p.StrideY+p.Width]
-		for _, v := range row {
-			sum += int(v)
+	for i, p := range pics {
+		if p.Width != width || p.Height != height {
+			return fmt.Errorf("coded frame %d decoded at %dx%d, want %dx%d", i, p.Width, p.Height, width, height)
 		}
-	}
-	if mean := sum / (p.Width * p.Height); mean < 118 || mean > 138 {
-		return fmt.Errorf("a mid grey frame decoded to a mean luma of %d", mean)
+		sum := 0
+		for y := 0; y < p.Height; y++ {
+			row := p.Y[y*p.StrideY : y*p.StrideY+p.Width]
+			for _, v := range row {
+				sum += int(v)
+			}
+		}
+		if mean := sum / (p.Width * p.Height); mean < 118 || mean > 138 {
+			return fmt.Errorf("mid grey frame %d decoded to a mean luma of %d", i, mean)
+		}
 	}
 	return nil
 }
@@ -386,7 +395,7 @@ func (e *Encoder) encodeHere(i420 []byte) ([]byte, error) {
 	}
 	e.gopPos++
 
-	return out, nil
+	return e.withParameterSets(out, isIDR)
 }
 
 func (e *Encoder) uploadFrame(i420 []byte) error {

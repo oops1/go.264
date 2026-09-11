@@ -84,7 +84,7 @@ func TestADecodeOnlyDriverOffersNoEncoder(t *testing.T) {
 	}
 }
 
-func encodedTestFrame(t *testing.T, width, height int, luma byte) []byte {
+func encodedTestFrames(t *testing.T, width, height int, luma byte, count int) []byte {
 	t.Helper()
 	enc, err := go264.NewEncoder(go264.EncoderConfig{Width: width, Height: height, FPSNum: 30, FPSDen: 1,
 		GOPSize: 30, QP: 22, ForceSoftware: true})
@@ -99,16 +99,20 @@ func encodedTestFrame(t *testing.T, width, height int, luma byte) []byte {
 	for i := 0; i < width*height; i++ {
 		frame[i] = luma
 	}
-	out, err := enc.Encode(frame)
-	if err != nil {
-		t.Fatal(err)
+	var stream []byte
+	for i := 0; i < count; i++ {
+		out, err := enc.Encode(frame)
+		if err != nil {
+			t.Fatal(err)
+		}
+		stream = append(stream, out...)
 	}
-	return out
+	return stream
 }
 
-func TestTheTestFrameCheckAcceptsAProperGreyFrame(t *testing.T) {
-	if err := checkTestFrame(encodedTestFrame(t, 176, 144, 128), 176, 144); err != nil {
-		t.Fatalf("a correct grey frame was refused: %v", err)
+func TestTheTestFrameCheckAcceptsProperGreyFrames(t *testing.T) {
+	if err := checkTestFrames(encodedTestFrames(t, 176, 144, 128, 2), 176, 144, 2); err != nil {
+		t.Fatalf("two correct grey frames were refused: %v", err)
 	}
 }
 
@@ -123,13 +127,14 @@ func TestTheTestFrameCheckRefusesWhatADriverMightGetWrong(t *testing.T) {
 		says   string
 	}{
 		{"nothing at all", nil, 176, 144, "no coded data"},
-		{"the wrong picture size", encodedTestFrame(t, 176, 144, 128), 320, 240, "decoded at 176x144"},
-		{"the wrong picture", encodedTestFrame(t, 176, 144, 20), 176, 144, "mean luma"},
+		{"the wrong picture size", encodedTestFrames(t, 176, 144, 128, 2), 320, 240, "decoded at 176x144"},
+		{"the wrong picture", encodedTestFrames(t, 176, 144, 20, 2), 176, 144, "mean luma"},
+		{"a frame short", encodedTestFrames(t, 176, 144, 128, 1), 176, 144, "1 pictures, want 2"},
 		{"bytes that are not a stream", garbage, 176, 144, ""},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			err := checkTestFrame(c.stream, c.width, c.height)
+			err := checkTestFrames(c.stream, c.width, c.height, 2)
 			if err == nil {
 				t.Fatal("accepted")
 			}
