@@ -1,6 +1,6 @@
-# go264
-
 ![go264: H.264 in pure Go, no cgo](docs/social-preview.png)
+
+# go264
 
 H.264/AVC encoder and decoder in pure Go. No cgo, ever.
 
