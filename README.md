@@ -1,5 +1,7 @@
 # go264
 
+![go264: H.264 in pure Go, no cgo](docs/social-preview.png)
+
 H.264/AVC encoder and decoder in pure Go. No cgo, ever.
 
 - **CGO-free.** Builds and passes its full test suite with `CGO_ENABLED=0` on
