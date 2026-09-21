@@ -677,10 +677,38 @@ frames per second. Nothing in the encoded output moved: the plane
 derivation is checked against the direct filter over 16,875 predictions,
 every fractional position and nine block shapes, byte for byte.
 
-## Three measurements that said no
+## Four measurements that said no
 
-Recorded because a profile is a hypothesis generator, not an answer, and
-these three looked as convincing as the ones that worked.
+Recorded because a profile is a hypothesis generator and an analogy with
+film is not an answer, and these four looked as convincing as the ones
+that worked.
+
+**A key frame at a scene change buys nothing on screen content.** Window
+switching is the most common event in a remote desktop session, and
+cutting to an IDR where the scene changes is what an encoder does on
+film, so it looked like the next thing to build. Measured with perfect
+detection - the cuts were known rather than detected - at equal bitrate
+it is 0.20 dB on the clip that keeps switching windows and -0.06 dB on
+one cut between unrelated pictures. Nothing.
+
+The reason is that a window switch is not a full picture change. The
+desktop, the taskbar and the window chrome survive it, so the mode
+decision already picks intra exactly where prediction failed and keeps
+what still predicts: a picture coded as P with 62 per cent of its
+macroblocks intra cost 15,488 bits where the same picture forced to I
+cost 44,840. The encoder was already doing macroblock by macroblock what
+a scene cut flag would have done for the whole picture, and doing it
+better.
+
+Detection would have been the hard half, and it is worse than it looks. A
+luma histogram distance separates the switches in the test set from
+everything else by ten times, 0.15 at the weakest cut against 0.016 at
+the busiest quiet picture - until fade.yuv, where a fade of ten luma
+levels a picture scores 0.95, higher than any real cut in the set.
+Coarser bins and compensating for the mean shift bring the two within a
+ratio of 1.6, which is not a margin to hang a threshold on. And winline
+knows when the user switched windows; ForceKeyFrame is already there for
+a caller that knows more than the codec can guess.
 
 **Reading variable length codes with one peek instead of bit by bit** was
 1.2 per cent slower, reproducibly. The code words are short: most resolve
