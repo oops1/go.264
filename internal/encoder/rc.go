@@ -1,6 +1,10 @@
 package encoder
 
-import "math"
+import (
+	"math"
+
+	"github.com/oops1/go.264/internal/syntax"
+)
 
 type rateControl struct {
 	enabled    bool
@@ -17,6 +21,7 @@ type rateControl struct {
 	framesCoded  int
 	bitsProduced float64
 
+	crf      *constantQuality
 	vbv      bool
 	cbr      bool
 	cpbSize  float64
@@ -34,6 +39,10 @@ func newRateControl(cfg Config) *rateControl {
 	fps := float64(cfg.FPSNum) / float64(cfg.FPSDen)
 	if fps <= 0 {
 		fps = 25
+	}
+	if rc.crf = newConstantQuality(cfg); rc.crf != nil {
+		rc.minQP = 0
+		rc.maxQP = 51
 	}
 	if cfg.VBVBufferKbits > 0 && cfg.VBVMaxrateKbps > 0 {
 		rc.vbv = true
@@ -60,7 +69,10 @@ func newRateControl(cfg Config) *rateControl {
 
 func (rc *rateControl) intraTarget() float64 { return rc.targetBits * 4 }
 
-func (rc *rateControl) frameQP(idr bool) int {
+func (rc *rateControl) frameQP(t syntax.SliceType, idr bool) int {
+	if rc.crf != nil {
+		return rc.constantQualityQP(t, idr)
+	}
 	if rc.vbv {
 		return rc.vbvQP(idr)
 	}
@@ -82,6 +94,17 @@ func (rc *rateControl) frameQP(idr bool) int {
 	}
 	qp := 6 * math.Log2(complexity/target)
 	return rc.clamp(int(math.Round(qp)))
+}
+
+func (rc *rateControl) constantQualityQP(t syntax.SliceType, idr bool) int {
+	qp := rc.clamp(int(math.Round(rc.crf.qp(rc.complexityInter, t))))
+	if !rc.vbv {
+		return qp
+	}
+	if ceiling := rc.vbvQP(idr); ceiling > qp {
+		return ceiling
+	}
+	return qp
 }
 
 func (rc *rateControl) vbvTarget(idr bool) float64 {
@@ -174,7 +197,7 @@ func (rc *rateControl) clamp(qp int) int {
 	return qp
 }
 
-func (rc *rateControl) update(bits, qp int, idr, dropped bool) {
+func (rc *rateControl) update(bits, qp int, t syntax.SliceType, idr, dropped bool) {
 	rc.framesCoded++
 	rc.bitsProduced += float64(bits)
 	if rc.vbv {
@@ -187,17 +210,25 @@ func (rc *rateControl) update(bits, qp int, idr, dropped bool) {
 			rc.fill = rc.cpbSize
 		}
 	}
-	if !rc.enabled || dropped {
+	if dropped || (!rc.enabled && rc.crf == nil) {
 		return
 	}
-	observed := float64(bits) * math.Exp2(float64(qp)/6)
-	if idr {
-		rc.complexityIntra = blend(rc.complexityIntra, observed, 0.5)
-	} else {
-		rc.complexityInter = blend(rc.complexityInter, observed, 0.4)
-		if rc.complexityIntra == 0 {
-			rc.complexityIntra = observed * 4
+	if rc.crf != nil {
+		rc.crf.coded(qp, t)
+	}
+	if rc.crf == nil || !t.IsB() {
+		observed := float64(bits) * math.Exp2(float64(qp)/6)
+		if idr {
+			rc.complexityIntra = blend(rc.complexityIntra, observed, 0.5)
+		} else {
+			rc.complexityInter = blend(rc.complexityInter, observed, 0.4)
+			if rc.complexityIntra == 0 {
+				rc.complexityIntra = observed * 4
+			}
 		}
+	}
+	if !rc.enabled {
+		return
 	}
 	target := rc.targetBits
 	if idr {

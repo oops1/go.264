@@ -57,6 +57,11 @@ type Config struct {
 	VBVBufferKbits int
 	VBVMaxrateKbps int
 	CBR            bool
+
+	RateFactor float64
+	QComp      float64
+	IPRatio    float64
+	PBRatio    float64
 }
 
 type DeblockMode uint8
@@ -134,6 +139,9 @@ func (c *Config) validate() error {
 	if c.DeblockBetaOffset < -6 || c.DeblockBetaOffset > 6 {
 		return fmt.Errorf("%w: DeblockBetaOffset %d outside -6..6", ErrConfig, c.DeblockBetaOffset)
 	}
+	if err := c.validateConstantQuality(); err != nil {
+		return err
+	}
 	if c.VBVBufferKbits < 0 || c.VBVMaxrateKbps < 0 {
 		return fmt.Errorf("%w: the buffer model cannot take negative sizes", ErrConfig)
 	}
@@ -154,6 +162,44 @@ func (c *Config) validate() error {
 			return fmt.Errorf("%w: CBR needs VBVBufferKbits and VBVMaxrateKbps", ErrConfig)
 		}
 		c.BitrateKbps = c.VBVMaxrateKbps
+	}
+	return nil
+}
+
+func (c *Config) validateConstantQuality() error {
+	if c.RateFactor < 0 || c.RateFactor > 51 {
+		return fmt.Errorf("%w: RateFactor %g outside 0..51", ErrConfig, c.RateFactor)
+	}
+	if c.RateFactor == 0 {
+		if c.QComp != 0 || c.IPRatio != 0 || c.PBRatio != 0 {
+			return fmt.Errorf("%w: QComp, IPRatio and PBRatio only mean something with a RateFactor", ErrConfig)
+		}
+		return nil
+	}
+	if c.BitrateKbps > 0 {
+		return fmt.Errorf("%w: RateFactor %g asks for constant quality and BitrateKbps %d for a bit budget; pick one, and reach for VBVMaxrateKbps if what you want is constant quality under a ceiling",
+			ErrConfig, c.RateFactor, c.BitrateKbps)
+	}
+	if c.CBR {
+		return fmt.Errorf("%w: CBR fixes the bitrate, which is the one thing a RateFactor will not hold still", ErrConfig)
+	}
+	if c.QComp == 0 {
+		c.QComp = crfQCompDefault
+	}
+	if c.IPRatio == 0 {
+		c.IPRatio = crfIPRatioDefault
+	}
+	if c.PBRatio == 0 {
+		c.PBRatio = crfPBRatioDefault
+	}
+	if c.QComp < 0 || c.QComp > 1 {
+		return fmt.Errorf("%w: QComp %g outside 0..1", ErrConfig, c.QComp)
+	}
+	if c.IPRatio < 1 || c.IPRatio > 10 {
+		return fmt.Errorf("%w: IPRatio %g outside 1..10", ErrConfig, c.IPRatio)
+	}
+	if c.PBRatio < 1 || c.PBRatio > 10 {
+		return fmt.Errorf("%w: PBRatio %g outside 1..10", ErrConfig, c.PBRatio)
 	}
 	return nil
 }
@@ -709,7 +755,7 @@ func (e *Encoder) encodePicture(p picture) ([]byte, error) {
 		refIDC = 0
 	}
 
-	qp := e.rc.frameQP(p.idr)
+	qp := e.rc.frameQP(p.sliceType, p.idr)
 	active := len(e.refL0)
 	if active < 1 {
 		active = 1
@@ -786,7 +832,7 @@ func (e *Encoder) encodePicture(p picture) ([]byte, error) {
 	} else {
 		e.rec.Motion = nil
 	}
-	e.rc.update(len(out)*8, qp, p.idr, dropped)
+	e.rc.update(len(out)*8, qp, p.sliceType, p.idr, dropped)
 	e.cpbFrame++
 	return out, nil
 }

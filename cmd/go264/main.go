@@ -22,7 +22,8 @@ func main() {
 func usage() string {
 	return strings.Join([]string{
 		"usage:",
-		"  go264 encode -s WxH [-qp N | -b KBPS] [-gop N] [-refs N] [-fps N] [-i in.yuv] [-o out.264]",
+		"  go264 encode -s WxH [-qp N | -b KBPS | -crf N] [-gop N] [-refs N] [-fps N] [-i in.yuv] [-o out.264]",
+		"                     [-qcomp F] [-ip-ratio F] [-pb-ratio F]",
 		"                     [-cabac] [-trellis] [-bframes N] [-slices N] [-long-term-refs N]",
 		"                     [-intra-refresh N] [-deblock 0|1|2] [-deblock-alpha N] [-deblock-beta N]",
 		"                     [-vbv-bufsize KBIT -vbv-maxrate KBPS [-cbr]]",
@@ -108,6 +109,10 @@ func runEncode(args []string) error {
 	size := fs.String("s", "", "frame size, for example 1280x720")
 	qp := fs.Int("qp", 26, "constant quantiser, 0 to 51")
 	bitrate := fs.Int("b", 0, "target bitrate in kbit/s, zero for constant quantiser")
+	rateFactor := fs.Float64("crf", 0, "hold quality rather than bitrate at this point on the quantiser scale, zero for off")
+	qcomp := fs.Float64("qcomp", 0, "how much of a complexity swing reaches the quantiser under -crf: 0 tracks the bitrate, 1 holds the quantiser still")
+	ipRatio := fs.Float64("ip-ratio", 0, "how much finer a key picture is quantised than a predicted one under -crf")
+	pbRatio := fs.Float64("pb-ratio", 0, "how much coarser a bi-predictive picture is quantised than a predicted one under -crf")
 	gop := fs.Int("gop", 30, "distance between IDR pictures")
 	refs := fs.Int("refs", 1, "number of reference frames, 1 to 16")
 	longTerm := fs.Int("long-term-refs", 0, "long-term reference slots held outside the sliding window, 0 for none")
@@ -172,6 +177,11 @@ func runEncode(args []string) error {
 		VBVBufferKbits:     *vbvBuffer,
 		VBVMaxrateKbps:     *vbvMaxrate,
 		CBR:                *cbr,
+
+		RateFactor: *rateFactor,
+		QComp:      *qcomp,
+		IPRatio:    *ipRatio,
+		PBRatio:    *pbRatio,
 	}
 	if *exhaustive {
 		cfg.ModeDecision = go264.ModeDecisionExhaustive

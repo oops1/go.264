@@ -23,6 +23,7 @@ than absent.
 | Slices | any count on macroblock row boundaries, encoded in parallel |
 | Intra refresh | a sweeping band with motion constrained across the boundary, recovery point announced |
 | Buffer model | a real coded picture buffer, constant bitrate, announced in the parameters and the messages |
+| Constant quality | a rate factor on the quantiser scale, with or without a bitrate ceiling; 1.3 dB over a fixed quantiser at equal rate |
 | Deblocking control | off, on, or kept inside slices, with both offsets |
 | Weighted prediction | both directions, explicit and implicit, off by default |
 | Temporal direct | both directions; the encoder writes spatial or temporal on request |
@@ -339,6 +340,112 @@ textures are copied back through a staging surface. Registered as
 own decoder is faster and registering it there would repeat the mistake
 described next.
 
+## 1.10 — Constant quality, done
+
+winline's session_processor lost constant quality when it moved off
+libx264 and has been coding at a flat quantiser since, so scenes of
+middling activity - text scrolling, a window being dragged - wander in
+both quality and rate. The mode is back, and measuring it turned up more
+about this material than about the mode.
+
+**The shape is libx264's.** Once at startup the rate factor becomes a
+constant, and every picture divides its complexity by it:
+
+    rateFactorConst = baseComplexity^(1-QComp) / qp2qscale(RateFactor)
+    qscale          = complexity^(1-QComp) / rateFactorConst
+
+which written out is QP = RateFactor + 6*(1-QComp)*log2(complexity/base),
+so the base is simply the complexity at which a rate factor and a fixed
+quantiser of the same number mean the same thing. An I picture divides
+its qscale by 1.4 and a B picture multiplies by 1.3. Under a
+VBVMaxrateKbps ceiling the quantiser is the worse of the rate factor's
+and the buffer's, so the buffer wins every argument; the buffer tests are
+unchanged and still green.
+
+**libx264's constants could not be transplanted.** Its base complexity of
+80 per macroblock, 120 with B pictures, is in the units its lookahead
+produces: half resolution SATD. Ours is the one already in rc.go, bits
+times two to the quantiser over six, a different scale entirely. Measured
+across the six screencast clips the geometric mean is 213 per macroblock
+without B pictures and 355 with them, so the constants are 210 and 350 - a
+ratio of 1.66 against libx264's 1.5, which is the one constant of theirs
+that nearly survived.
+
+**The gain is real: 1.3 dB at equal rate.** Over the full set - six
+clips of ten seconds each at 1920x1080, 1500 frames, played as one
+session - a rate factor of 23 codes 3844 kbit/s at 36.88 dB of SSIM where
+a fixed quantiser at the same rate reaches 35.61, with the quantiser
+moving between 17 and 26. The gain grows with how long each scene lasts,
+because every scene change costs a few frames of adjustment: at 30 frames
+a scene it is 0.85 dB, at 20 it is 0.83, and at 12 it is gone. The
+committed test runs 30 frames a scene so it fits a build, brackets with
+three quantisers rather than six, and asks only for half a decibel - it
+understates the mode on purpose, so that it fails for a real reason
+rather than a measurement one.
+
+**The second acceptance criterion is not attainable, and saying so is the
+result.** The brief asked for the frame to frame spread of SSIM to fall
+well below a fixed quantiser's, and called that the point of the mode. It
+cannot fall. A compressed complexity curve is defined by giving a busy
+scene a coarser quantiser than a quiet one, so across scenes of different
+complexity the spread necessarily widens; a fixed quantiser is already
+the flattest quality a coder can produce, and QComp of 1 is exactly a
+fixed quantiser. Measured over the full set, the spread is 3.303 dB
+against 2.594 - wider, not narrower, and by the 0.7 dB the curve's
+compression predicts. The one case where it does narrow is a clip whose
+scenes keep switching, where the rate factor holds 2.854 dB against a
+fixed quantiser's 3.488, because it absorbs the shock of the change
+rather than letting each new scene land at whatever quality its content
+dictates. There is a test for each half of that, and the one recording
+the widening fails if it ever stops being true.
+
+**QComp of 0.8 beats libx264's 0.6 on this material, for free.** Swept
+over the same session: at 0.6 the mode gains 1.43 dB and spreads 1.55 dB
+wider than a fixed quantiser; at 0.8 it gains 1.41 and spreads only 0.72
+wider; at 0.9 the spread matches but half the gain is gone. 0.8 dominates
+0.6 outright here - the same quality for half the wandering - so it is
+the default, and the brief's 0.6 is recorded as the libx264 figure it
+was.
+
+**Bits barely move with the quantiser on a near still screen, which
+breaks the complexity model.** At 1920x1080 the idle desktop clip costs
+about 2000 bits a picture at a fixed quantiser of 14, of 18 and of 26 -
+the same to within five per cent. Almost all of it is headers and skip
+runs; the handful of changed blocks is the rest. So bits times two to the
+quantiser over six, a content measure everywhere else, collapses as the
+quantiser falls, the curve reads that as an easier picture, and the
+quantiser falls further. Left alone it settles at 4 or 5 on the typing
+clip instead of the 17 the complexity actually asks for. Until there is a
+complexity estimate taken before the encode rather than after it, the
+quantiser is not allowed more than six steps below the rate factor, and
+not allowed to move more than four steps between pictures - libx264's
+qp_step, for the same reason it has one.
+
+**Moving the quantiser on screen content is expensive.** The same idle
+desktop that costs 2000 bits a picture at a fixed quantiser spikes to
+166,000 when the quantiser drops by a step, because macroblocks that were
+skippable against a reference quantised one way are not against another,
+and the picture refreshes. That is the strongest argument for the step
+limit, and it is why a mode that wanders is worse here than one that sits
+still - which is the same thing the customer was complaining about from
+the other end.
+
+**The test set is generated, not stored.** Six clips, in the encoder's
+own tests: an idle desktop with a cursor, typing in an editor, a page of
+text scrolling, a window being dragged, video playing in a window, and
+windows being switched. Each is drawn deterministically at any size, so
+the round trip tests run them small and the measurements run them at
+1920x1080, and no binary enters the repository. SSIM is measured the way
+libx264 measures it, on eight by eight windows stepped by four, and
+reported in decibels because on screen content the plain figure sits
+above 0.999 and says nothing.
+
+**What was not built.** A cheap pre-encode complexity estimate, the third
+stage of the brief, stays unbuilt: it was made conditional on the lag
+being visible, and what the measurements found instead was the collapse
+described above. It is now a better shaped piece of work than it was -
+see below.
+
 ## A measurement that was wrong, and what it cost
 
 Worth keeping because the shape of the mistake is general.
@@ -395,6 +502,17 @@ at a forced one got its first IDR a picture late and none at the forced
 point. The GOP length is not honoured literally either - two IDRs in
 sixty-five pictures at a GOP of thirty. winline keeps it switched off
 until it returns a picture for each call and forces key frames.
+
+**Constant quality has no complexity estimate of its own.** It reads the
+one the bitrate model keeps, which is derived from the bits a picture
+cost, and on a near still screen that is not a measure of the picture at
+all. A SAD of the source against the previous reconstruction at half
+resolution, taken before the encode, would be independent of the
+quantiser and would let the floor and the step limit come off. The brief
+put it at ten to fifteen per cent of the processor; a plain zero motion
+SAD is far cheaper than that, but it would read a scrolling page - one of
+the six clips - as far harder than it is, so it needs at least a coarse
+search to be worth having.
 
 **The trellis is wrong on screen content.** Sampled at ten quantisers
 rather than four, eleven of twelve cases show no quality shortfall at all

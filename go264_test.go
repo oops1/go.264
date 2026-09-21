@@ -735,3 +735,49 @@ func TestTheHardwareDecoderAgreesWithOursThroughThePublicAPI(t *testing.T) {
 	}
 	t.Logf("%s and our decoder agree sample for sample on %d frames of %dx%d", backend, n, w, h)
 }
+
+func TestRateControlOptionsReachTheSoftwareEncoder(t *testing.T) {
+	cases := []struct {
+		name string
+		edit func(c *EncoderConfig)
+	}{
+		{"a rate factor", func(c *EncoderConfig) { c.RateFactor = 23 }},
+		{"a complexity curve", func(c *EncoderConfig) { c.QComp = 0.8 }},
+		{"an I to P ratio", func(c *EncoderConfig) { c.IPRatio = 1.4 }},
+		{"a P to B ratio", func(c *EncoderConfig) { c.PBRatio = 1.3 }},
+	}
+	plain := EncoderConfig{Width: 176, Height: 144, FPSNum: 25, FPSDen: 1, GOPSize: 12, QP: 26}
+	if plain.needsSoftware() {
+		t.Fatal("a plain configuration already demands the software encoder, so this test proves nothing")
+	}
+	for _, tc := range cases {
+		cfg := plain
+		tc.edit(&cfg)
+		if !cfg.needsSoftware() {
+			t.Errorf("%s does not force the software encoder, so a hardware backend could silently ignore it", tc.name)
+		}
+	}
+}
+
+func TestConstantQualityThroughThePublicAPI(t *testing.T) {
+	cfg := EncoderConfig{Width: 176, Height: 144, FPSNum: 25, FPSDen: 1,
+		GOPSize: 12, RateFactor: 26, CABAC: true}
+	stream, _ := encodeThroughPublicAPI(t, cfg, 24)
+	if n := decodeThroughPublicAPI(t, stream); n != 24 {
+		t.Fatalf("decoded %d frames, want 24", n)
+	}
+	fixed, _ := encodeThroughPublicAPI(t, EncoderConfig{Width: 176, Height: 144, FPSNum: 25, FPSDen: 1,
+		GOPSize: 12, QP: 26, CABAC: true}, 24)
+	if len(stream) == len(fixed) {
+		t.Fatalf("a rate factor of 26 produced the same %d bytes as a fixed quantiser of 26", len(stream))
+	}
+	t.Logf("24 frames: %d bytes at a fixed quantiser of 26, %d bytes at a rate factor of 26", len(fixed), len(stream))
+}
+
+func TestConstantQualityAndBitrateTogetherAreRefused(t *testing.T) {
+	cfg := EncoderConfig{Width: 176, Height: 144, FPSNum: 25, FPSDen: 1,
+		GOPSize: 12, RateFactor: 23, BitrateKbps: 1000}
+	if _, err := NewEncoder(cfg); err == nil {
+		t.Fatal("a rate factor and a bitrate were accepted together")
+	}
+}

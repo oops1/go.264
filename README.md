@@ -37,6 +37,7 @@ Working today:
 | Slices | any count, encoded in parallel; ten times faster on twenty threads for 2 to 12 per cent more bits, depending on how much the picture moves |
 | Hardware acceleration | encoding on Windows through Media Foundation, on 64-bit Linux through NVENC and VA-API with nothing to import - NVENC proven on an RTX 5060 Ti, VA-API on Intel Gen9 through the free iHD driver; decoding on Windows through Direct3D, nine times our own decoder at 1080p. No cgo on any path |
 | Bitrate targeted rate control | complete, and under a buffer model the long run rate never exceeds the request |
+| Constant quality | a rate factor on the quantiser scale instead of a bit budget, 1.3 dB better than a fixed quantiser at the same rate over a ten second screencast session |
 | Mode decision | rate-distortion, with an early skip test that pays for itself six times over on screen content |
 | SIMD kernels | transformed differences, six-tap and bilinear interpolation, block matching, the 4x4 transform and quantisation |
 | Scaling matrices | resolved and applied in both directions; the JVT defaults save 8 to 18 per cent of the bits |
@@ -178,6 +179,12 @@ Or aim at a bitrate instead of a fixed quantiser:
 go264 encode -s 1280x720 -b 2500 -gop 30 -i input.yuv -o output.264
 ```
 
+Or hold the quality rather than either of them:
+
+```bash
+go264 encode -s 1280x720 -crf 23 -gop 30 -i input.yuv -o output.264
+```
+
 ```bash
 go264 decode -i input.264 -o output.yuv
 ```
@@ -188,6 +195,52 @@ with ffmpeg:
 ```bash
 ffmpeg -i movie.mp4 -pix_fmt yuv420p -f rawvideo - | go264 encode -s 1280x720 -o out.264
 ```
+
+## Rate control
+
+Three modes, one at a time.
+
+**A fixed quantiser.** `QP`, or `-qp`. Every picture is quantised the same
+way, so the quality follows the content and the bitrate follows both.
+
+**A bitrate.** `BitrateKbps`, or `-b`. The quantiser moves to hold the
+average rate. Adding `VBVBufferKbits` and `VBVMaxrateKbps` puts a real coded
+picture buffer underneath it, announced to the decoder, and `CBR` pads the
+stream so the buffer never overflows.
+
+**A rate factor.** `RateFactor`, or `-crf`, on the same 0 to 51 scale as the
+quantiser. There is no bit budget: the quantiser follows how hard the
+picture is to code, along a curve flat enough that an easy picture is not
+coded wastefully and a hard one is not starved. `RateFactor` and
+`BitrateKbps` together are a configuration error, but `RateFactor` with
+`VBVMaxrateKbps` is not, and is the useful combination: constant quality
+under a ceiling the channel can carry.
+
+Three knobs shape the curve, and the defaults are the ones measured on
+screencast material rather than libx264's, which were tuned for film.
+`QComp` is how much of a complexity swing reaches the quantiser: 0 lets all
+of it through, which is constant bitrate, and 1 lets none through, which is
+a fixed quantiser. It defaults to 0.8 rather than libx264's 0.6: over a mixed
+session both keep the same gain, but at 0.8 the frame to frame spread runs
+0.7 dB wider than a fixed quantiser's where at 0.6 it runs 1.6 dB wider.
+`IPRatio` (1.4) is how much finer a key picture is
+quantised than a predicted one, and `PBRatio` (1.3) how much coarser a
+bi-predictive one. Leaving any of the three at zero takes the default.
+
+Two limits hold the curve together on near still screen content, where the
+bits a picture costs stop depending on the quantiser and the complexity the
+model reads from them collapses: the quantiser never goes more than six
+steps below the rate factor, and never moves more than four steps between
+pictures. Both are there for reasons [docs/ROADMAP.md](docs/ROADMAP.md)
+records, and both would come off with a complexity estimate taken before
+the encode rather than after it.
+
+What the mode does not do is steady the quality. Compressing the complexity
+curve gives a busy scene a coarser quantiser than a quiet one, so across
+scenes of different complexity the spread widens rather than narrows; it
+narrows only on a clip whose scenes keep changing, where it holds 2.9 dB of
+frame to frame variation against a fixed quantiser's 3.5. If what you want
+is the steadiest possible quality, a fixed quantiser is already that.
 
 ## Verification
 
