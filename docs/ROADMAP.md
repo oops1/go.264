@@ -24,6 +24,7 @@ than absent.
 | Intra refresh | a sweeping band with motion constrained across the boundary, recovery point announced |
 | Buffer model | a real coded picture buffer, constant bitrate, announced in the parameters and the messages |
 | Constant quality | a rate factor on the quantiser scale, with or without a bitrate ceiling; 1.3 dB over a fixed quantiser at equal rate |
+| Adaptive quantisation | by macroblock variance, off by default: it costs 1.8 dB on scrolling text |
 | Deblocking control | off, on, or kept inside slices, with both offsets |
 | Weighted prediction | both directions, explicit and implicit, off by default |
 | Temporal direct | both directions; the encoder writes spatial or temporal on request |
@@ -430,6 +431,20 @@ limit, and it is why a mode that wanders is worse here than one that sits
 still - which is the same thing the customer was complaining about from
 the other end.
 
+**Adaptive quantisation was built, measured and left switched off.** The
+brief made it conditional on text not getting worse, and text gets worse:
+on scrolling text at 1920x1080 it is 1.78 dB below a flat quantiser at
+equal rate, consistently across four quantisers, worst 1.97 dB. The
+reason is the same one above. The offsets are taken against the picture's
+own mean so they cancel in quantiser steps, but they do not cancel in
+bits: raising the quantiser on a flat macroblock saves nothing, because a
+flat macroblock was already costing nothing, while lowering it on a
+detailed one costs a great deal. So the mode can only add bits - 15 to 30
+per cent at the same nominal quantiser - and spending those bits by
+simply lowering the quantiser everywhere buys more quality than spending
+them on variance. AQMode defaults to off, the README says why, and the
+test that records the loss fails if it ever turns into a gain.
+
 **The test set is generated, not stored.** Six clips, in the encoder's
 own tests: an idle desktop with a cursor, typing in an editor, a page of
 text scrolling, a window being dragged, video playing in a window, and
@@ -513,6 +528,14 @@ put it at ten to fifteen per cent of the processor; a plain zero motion
 SAD is far cheaper than that, but it would read a scrolling page - one of
 the six clips - as far harder than it is, so it needs at least a coarse
 search to be worth having.
+
+**Adaptive quantisation loses 1.8 dB on scrolling text.** Built, measured
+against the brief's own acceptance test, and left off by default with the
+reason written down. On this material a zero mean offset in quantiser
+steps is not a zero mean offset in bits, because flat macroblocks have no
+bits to give back. It would need to be driven by something other than
+variance - the region hints already carry RegionText, which knows what
+variance cannot - before it is worth switching on.
 
 **The trellis is wrong on screen content.** Sampled at ten quantisers
 rather than four, eleven of twelve cases show no quality shortfall at all

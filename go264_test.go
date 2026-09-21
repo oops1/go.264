@@ -745,6 +745,8 @@ func TestRateControlOptionsReachTheSoftwareEncoder(t *testing.T) {
 		{"a complexity curve", func(c *EncoderConfig) { c.QComp = 0.8 }},
 		{"an I to P ratio", func(c *EncoderConfig) { c.IPRatio = 1.4 }},
 		{"a P to B ratio", func(c *EncoderConfig) { c.PBRatio = 1.3 }},
+		{"adaptive quantisation", func(c *EncoderConfig) { c.AQMode = AQVariance }},
+		{"an adaptive quantisation strength", func(c *EncoderConfig) { c.AQStrength = 1 }},
 	}
 	plain := EncoderConfig{Width: 176, Height: 144, FPSNum: 25, FPSDen: 1, GOPSize: 12, QP: 26}
 	if plain.needsSoftware() {

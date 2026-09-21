@@ -62,6 +62,9 @@ type Config struct {
 	QComp      float64
 	IPRatio    float64
 	PBRatio    float64
+
+	AQMode     AQMode
+	AQStrength float64
 }
 
 type DeblockMode uint8
@@ -142,6 +145,9 @@ func (c *Config) validate() error {
 	if err := c.validateConstantQuality(); err != nil {
 		return err
 	}
+	if err := c.validateAdaptiveQuant(); err != nil {
+		return err
+	}
 	if c.VBVBufferKbits < 0 || c.VBVMaxrateKbps < 0 {
 		return fmt.Errorf("%w: the buffer model cannot take negative sizes", ErrConfig)
 	}
@@ -162,6 +168,25 @@ func (c *Config) validate() error {
 			return fmt.Errorf("%w: CBR needs VBVBufferKbits and VBVMaxrateKbps", ErrConfig)
 		}
 		c.BitrateKbps = c.VBVMaxrateKbps
+	}
+	return nil
+}
+
+func (c *Config) validateAdaptiveQuant() error {
+	if c.AQMode > AQVariance {
+		return fmt.Errorf("%w: AQMode %d outside 0..1", ErrConfig, c.AQMode)
+	}
+	if c.AQMode == AQOff {
+		if c.AQStrength != 0 {
+			return fmt.Errorf("%w: AQStrength only means something with an AQMode", ErrConfig)
+		}
+		return nil
+	}
+	if c.AQStrength == 0 {
+		c.AQStrength = aqStrengthDefault
+	}
+	if c.AQStrength < 0 || c.AQStrength > 4 {
+		return fmt.Errorf("%w: AQStrength %g outside 0..4", ErrConfig, c.AQStrength)
 	}
 	return nil
 }
@@ -235,6 +260,7 @@ type Encoder struct {
 	grid []mbInfo
 
 	rc         *rateControl
+	aqEnergy   []float64
 	frameNum   uint32
 	frameIndex int
 	headers    []byte
@@ -743,6 +769,7 @@ func (e *Encoder) encodePicture(p picture) ([]byte, error) {
 	if p.idr {
 		hints = nil
 	}
+	hints = e.adaptiveQuant(hints)
 	e.setReferenceLists(p)
 	e.mark = e.planMarking(p, hints)
 

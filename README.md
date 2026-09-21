@@ -38,6 +38,7 @@ Working today:
 | Hardware acceleration | encoding on Windows through Media Foundation, on 64-bit Linux through NVENC and VA-API with nothing to import - NVENC proven on an RTX 5060 Ti, VA-API on Intel Gen9 through the free iHD driver; decoding on Windows through Direct3D, nine times our own decoder at 1080p. No cgo on any path |
 | Bitrate targeted rate control | complete, and under a buffer model the long run rate never exceeds the request |
 | Constant quality | a rate factor on the quantiser scale instead of a bit budget, 1.3 dB better than a fixed quantiser at the same rate over a ten second screencast session |
+| Adaptive quantisation | by macroblock variance, and off by default: it costs 1.8 dB at equal rate on scrolling text, which is what a remote desktop carries |
 | Mode decision | rate-distortion, with an early skip test that pays for itself six times over on screen content |
 | SIMD kernels | transformed differences, six-tap and bilinear interpolation, block matching, the 4x4 transform and quantisation |
 | Scaling matrices | resolved and applied in both directions; the JVT defaults save 8 to 18 per cent of the bits |
@@ -241,6 +242,16 @@ scenes of different complexity the spread widens rather than narrows; it
 narrows only on a clip whose scenes keep changing, where it holds 2.9 dB of
 frame to frame variation against a fixed quantiser's 3.5. If what you want
 is the steadiest possible quality, a fixed quantiser is already that.
+
+**Adaptive quantisation** is separate from all three and off by default.
+`AQMode = AQVariance`, or `-aq 1`, varies the quantiser inside each picture
+by macroblock variance, spending the finer quantiser on detail and the
+coarser one on flat areas, with the offsets taken against the picture's own
+mean so they cancel. `AQStrength` (1.0) scales them. It is off because it
+does not pay on this material: on scrolling text it is 1.8 dB worse at equal
+rate than simply lowering the quantiser everywhere, for the reason
+[docs/ROADMAP.md](docs/ROADMAP.md) records. Leave it off unless you have
+measured your own content and found otherwise.
 
 ## Verification
 

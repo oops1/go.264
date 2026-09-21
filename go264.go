@@ -101,6 +101,9 @@ type EncoderConfig struct {
 	QComp      float64
 	IPRatio    float64
 	PBRatio    float64
+
+	AQMode     AQMode
+	AQStrength float64
 }
 
 func (c EncoderConfig) needsSoftware() bool {
@@ -110,8 +113,16 @@ func (c EncoderConfig) needsSoftware() bool {
 		c.IntraRefresh > 0 || c.Deblocking != DeblockingOn ||
 		c.DeblockAlphaOffset != 0 || c.DeblockBetaOffset != 0 ||
 		c.VBVBufferKbits > 0 || c.VBVMaxrateKbps > 0 || c.CBR ||
-		c.RateFactor > 0 || c.QComp != 0 || c.IPRatio != 0 || c.PBRatio != 0
+		c.RateFactor > 0 || c.QComp != 0 || c.IPRatio != 0 || c.PBRatio != 0 ||
+		c.AQMode != AQOff || c.AQStrength != 0
 }
+
+type AQMode = encoder.AQMode
+
+const (
+	AQOff      = encoder.AQOff
+	AQVariance = encoder.AQVariance
+)
 
 type DeblockMode = encoder.DeblockMode
 
@@ -237,6 +248,9 @@ func NewEncoder(cfg EncoderConfig) (*Encoder, error) {
 		QComp:      cfg.QComp,
 		IPRatio:    cfg.IPRatio,
 		PBRatio:    cfg.PBRatio,
+
+		AQMode:     cfg.AQMode,
+		AQStrength: cfg.AQStrength,
 	})
 	if err != nil {
 		return nil, err

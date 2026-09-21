@@ -23,7 +23,7 @@ func usage() string {
 	return strings.Join([]string{
 		"usage:",
 		"  go264 encode -s WxH [-qp N | -b KBPS | -crf N] [-gop N] [-refs N] [-fps N] [-i in.yuv] [-o out.264]",
-		"                     [-qcomp F] [-ip-ratio F] [-pb-ratio F]",
+		"                     [-qcomp F] [-ip-ratio F] [-pb-ratio F] [-aq 0|1] [-aq-strength F]",
 		"                     [-cabac] [-trellis] [-bframes N] [-slices N] [-long-term-refs N]",
 		"                     [-intra-refresh N] [-deblock 0|1|2] [-deblock-alpha N] [-deblock-beta N]",
 		"                     [-vbv-bufsize KBIT -vbv-maxrate KBPS [-cbr]]",
@@ -113,6 +113,8 @@ func runEncode(args []string) error {
 	qcomp := fs.Float64("qcomp", 0, "how much of a complexity swing reaches the quantiser under -crf: 0 tracks the bitrate, 1 holds the quantiser still")
 	ipRatio := fs.Float64("ip-ratio", 0, "how much finer a key picture is quantised than a predicted one under -crf")
 	pbRatio := fs.Float64("pb-ratio", 0, "how much coarser a bi-predictive picture is quantised than a predicted one under -crf")
+	aq := fs.Int("aq", 0, "adaptive quantisation inside the picture: 0 off, 1 by macroblock variance")
+	aqStrength := fs.Float64("aq-strength", 0, "how far -aq is allowed to move the quantiser")
 	gop := fs.Int("gop", 30, "distance between IDR pictures")
 	refs := fs.Int("refs", 1, "number of reference frames, 1 to 16")
 	longTerm := fs.Int("long-term-refs", 0, "long-term reference slots held outside the sliding window, 0 for none")
@@ -141,6 +143,9 @@ func runEncode(args []string) error {
 	}
 	if *deblock < 0 || *deblock > 2 {
 		return errors.New("-deblock must be 0, 1 or 2")
+	}
+	if *aq < 0 || *aq > 1 {
+		return errors.New("-aq must be 0 or 1")
 	}
 	weights, err := parseWeightedPrediction(*weightp)
 	if err != nil {
@@ -182,6 +187,9 @@ func runEncode(args []string) error {
 		QComp:      *qcomp,
 		IPRatio:    *ipRatio,
 		PBRatio:    *pbRatio,
+
+		AQMode:     go264.AQMode(*aq),
+		AQStrength: *aqStrength,
 	}
 	if *exhaustive {
 		cfg.ModeDecision = go264.ModeDecisionExhaustive
