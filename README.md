@@ -37,7 +37,8 @@ Working today:
 | Slices | any count, encoded in parallel; ten times faster on twenty threads for 2 to 12 per cent more bits, depending on how much the picture moves |
 | Hardware acceleration | encoding on Windows through Media Foundation, on 64-bit Linux through NVENC and VA-API with nothing to import - NVENC proven on an RTX 5060 Ti, VA-API on Intel Gen9 through the free iHD driver; decoding on Windows through Direct3D, nine times our own decoder at 1080p. No cgo on any path |
 | Bitrate targeted rate control | complete, and under a buffer model the long run rate never exceeds the request |
-| Constant quality | a rate factor on the quantiser scale instead of a bit budget, 1.3 dB better than a fixed quantiser at the same rate over a ten second screencast session |
+| Constant quality | a rate factor on the quantiser scale instead of a bit budget, 1.9 dB better than a fixed quantiser at the same rate over a ten second screencast session |
+| Complexity estimate | taken from the source pictures before the encode, so it does not know the quantiser, for 0.6 per cent of the encode |
 | Adaptive quantisation | by macroblock variance, and off by default: it costs 1.8 dB at equal rate on scrolling text, which is what a remote desktop carries |
 | Mode decision | rate-distortion, with an early skip test that pays for itself six times over on screen content |
 | SIMD kernels | transformed differences, six-tap and bilinear interpolation, block matching, the 4x4 transform and quantisation |
@@ -228,18 +229,19 @@ session both keep the same gain, but at 0.8 the frame to frame spread runs
 quantised than a predicted one, and `PBRatio` (1.3) how much coarser a
 bi-predictive one. Leaving any of the three at zero takes the default.
 
-Two limits hold the curve together on near still screen content, where the
-bits a picture costs stop depending on the quantiser and the complexity the
-model reads from them collapses: the quantiser never goes more than six
-steps below the rate factor, and never moves more than four steps between
-pictures. Both are there for reasons [docs/ROADMAP.md](docs/ROADMAP.md)
-records, and both would come off with a complexity estimate taken before
-the encode rather than after it.
+The complexity the curve follows is measured before the picture is coded,
+by matching each macroblock against the previous source picture, so it
+never learns anything about the quantiser and cannot drift with it. Two
+limits still hold it: the quantiser never goes more than six steps below
+the rate factor, because dropping it on a near still screen makes
+macroblocks that were skippable against the old reference unskippable and
+refreshes the whole picture for nothing, and it moves no more than four
+steps between pictures, which is libx264's `qp_step`.
 
 What the mode does not do is steady the quality. Compressing the complexity
 curve gives a busy scene a coarser quantiser than a quiet one, so across
 scenes of different complexity the spread widens rather than narrows; it
-narrows only on a clip whose scenes keep changing, where it holds 2.9 dB of
+narrows only on a clip whose scenes keep changing, where it holds 3.3 dB of
 frame to frame variation against a fixed quantiser's 3.5. If what you want
 is the steadiest possible quality, a fixed quantiser is already that.
 

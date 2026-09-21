@@ -69,9 +69,9 @@ func newRateControl(cfg Config) *rateControl {
 
 func (rc *rateControl) intraTarget() float64 { return rc.targetBits * 4 }
 
-func (rc *rateControl) frameQP(t syntax.SliceType, idr bool) int {
+func (rc *rateControl) frameQP(t syntax.SliceType, idr bool, measured float64) int {
 	if rc.crf != nil {
-		return rc.constantQualityQP(t, idr)
+		return rc.constantQualityQP(t, idr, measured)
 	}
 	if rc.vbv {
 		return rc.vbvQP(idr)
@@ -96,8 +96,8 @@ func (rc *rateControl) frameQP(t syntax.SliceType, idr bool) int {
 	return rc.clamp(int(math.Round(qp)))
 }
 
-func (rc *rateControl) constantQualityQP(t syntax.SliceType, idr bool) int {
-	qp := rc.clamp(int(math.Round(rc.crf.qp(rc.complexityInter, t))))
+func (rc *rateControl) constantQualityQP(t syntax.SliceType, idr bool, measured float64) int {
+	qp := rc.clamp(int(math.Round(rc.crf.qp(measured, t))))
 	if !rc.vbv {
 		return qp
 	}

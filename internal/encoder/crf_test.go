@@ -100,9 +100,6 @@ func TestConstantQualityCurvePassesThroughTheRateFactor(t *testing.T) {
 	}
 	for _, f := range []float64{0.25, 0.5, 2, 4} {
 		want := 23 + 6*(1-cfg.QComp)*math.Log2(f)
-		if want < c.floor {
-			want = c.floor
-		}
 		c.last[syntax.SliceP] = -1
 		if got := c.qp(c.baseComplexity*f, syntax.SliceP); math.Abs(got-want) > 1e-9 {
 			t.Fatalf("at %g times the base complexity the curve asks for qp %g, want %g", f, got, want)
@@ -145,15 +142,12 @@ func TestConstantQualityFavoursIPicturesAndPunishesBPictures(t *testing.T) {
 	}
 }
 
-func TestConstantQualityWillNotWalkTheQuantiserOffTheScale(t *testing.T) {
+func TestConstantQualityMovesOneStepAtATime(t *testing.T) {
 	cfg := constantQualityConfig(1920, 1080, 23)
 	if err := cfg.validate(); err != nil {
 		t.Fatal(err)
 	}
 	c := newConstantQuality(cfg)
-	if got := c.qp(1, syntax.SliceP); got != 23-crfQPFloorDrop {
-		t.Fatalf("a picture with almost no complexity asks for qp %g, want the floor %g", got, 23-crfQPFloorDrop)
-	}
 	c.coded(23, syntax.SliceP)
 	if got := c.qp(c.baseComplexity*1024, syntax.SliceP); got != 23+crfQPStep {
 		t.Fatalf("a thousandfold jump in complexity moved the quantiser to %g, want one step of %g", got, crfQPStep)
@@ -438,7 +432,7 @@ func TestConstantQualityAgainstAFixedQuantiserOnAMixedSession(t *testing.T) {
 		len(frames), float64(sessionFactor), got.kbps, got.mean, got.spread,
 		got.qpLo, got.qpHi, mean, spread)
 
-	if got.mean < mean+0.5 {
+	if got.mean < mean+0.7 {
 		t.Errorf("at %.0f kbit/s constant quality reached %.2f dB against %.2f dB for a fixed quantiser, which is not the gain this mode exists for",
 			got.kbps, got.mean, mean)
 	}
@@ -447,8 +441,8 @@ func TestConstantQualityAgainstAFixedQuantiserOnAMixedSession(t *testing.T) {
 		t.Errorf("constant quality now varies %.3f dB against %.3f dB for a fixed quantiser at the same rate. This test records the opposite: a compressed complexity curve gives a busy scene a coarser quantiser than a quiet one, so across scenes of different complexity the spread widens rather than narrows. If something changed that, put the new figures here and say what did it",
 			got.spread, spread)
 	}
-	if got.spread > spread+1.5 {
-		t.Errorf("constant quality varies %.3f dB against %.3f dB for a fixed quantiser, a wider gap than the 0.7 dB a curve of %g measured; the quantiser is wandering further than it should",
+	if got.spread > spread+2.5 {
+		t.Errorf("constant quality varies %.3f dB against %.3f dB for a fixed quantiser, a wider gap than the 1.3 dB a curve of %g measured over this session; the quantiser is wandering further than it should",
 			got.spread, spread, crfQCompDefault)
 	}
 }
@@ -462,7 +456,7 @@ func TestConstantQualityNarrowsTheSwingAcrossSceneChanges(t *testing.T) {
 	crf := base
 	crf.RateFactor = sessionFactor
 	got := measureQuality(t, crf, frames)
-	curve := fixedQuantiserCurve(t, base, frames, []int{14, 18, 22})
+	curve := fixedQuantiserCurve(t, base, frames, []int{14, 18, 22, 26, 30})
 	mean, spread := qualityAtRate(t, curve, got.kbps)
 	t.Logf("on a clip that keeps switching windows constant quality coded %.0f kbit/s at %.2f dB varying %.3f dB from frame to frame; a fixed quantiser at the same rate gives %.2f dB varying %.3f dB",
 		got.kbps, got.mean, got.spread, mean, spread)

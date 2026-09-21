@@ -23,7 +23,8 @@ than absent.
 | Slices | any count on macroblock row boundaries, encoded in parallel |
 | Intra refresh | a sweeping band with motion constrained across the boundary, recovery point announced |
 | Buffer model | a real coded picture buffer, constant bitrate, announced in the parameters and the messages |
-| Constant quality | a rate factor on the quantiser scale, with or without a bitrate ceiling; 1.3 dB over a fixed quantiser at equal rate |
+| Constant quality | a rate factor on the quantiser scale, with or without a bitrate ceiling; 1.9 dB over a fixed quantiser at equal rate |
+| Complexity estimate | matched against the previous source picture before the encode, blind to the quantiser, 0.6 per cent of the encode |
 | Adaptive quantisation | by macroblock variance, off by default: it costs 1.8 dB on scrolling text |
 | Deblocking control | off, on, or kept inside slices, with both offsets |
 | Weighted prediction | both directions, explicit and implicit, off by default |
@@ -518,16 +519,17 @@ point. The GOP length is not honoured literally either - two IDRs in
 sixty-five pictures at a GOP of thirty. winline keeps it switched off
 until it returns a picture for each call and forces key frames.
 
-**Constant quality has no complexity estimate of its own.** It reads the
-one the bitrate model keeps, which is derived from the bits a picture
-cost, and on a near still screen that is not a measure of the picture at
-all. A SAD of the source against the previous reconstruction at half
-resolution, taken before the encode, would be independent of the
-quantiser and would let the floor and the step limit come off. The brief
-put it at ten to fifteen per cent of the processor; a plain zero motion
-SAD is far cheaper than that, but it would read a scrolling page - one of
-the six clips - as far harder than it is, so it needs at least a coarse
-search to be worth having.
+**Two B pictures cost 127 to 250 per cent more bits on screen content, at
+a fixed quantiser.** Measured on a window drag and on scrolling text at
+640x360, quantisers 22 and 28; video in a window costs 10 per cent more.
+It is nothing to do with rate control - the same holds with the quantiser
+nailed down - and it is why the constant quality base is one number
+rather than two. A still region is a free skip when its anchor is the
+picture before it and is not when the anchor is three pictures away, and
+a page scrolling eleven rows a picture has moved thirty-three by the time
+the next anchor arrives. B pictures are off by default; on this material
+they should stay off, and the measurement should be repeated on film
+before anything is concluded about them in general.
 
 **Adaptive quantisation loses 1.8 dB on scrolling text.** Built, measured
 against the brief's own acceptance test, and left off by default with the
@@ -676,6 +678,82 @@ Twelve 1080p frames went from 847 ms to 540, a third off, 1.18 to 1.85
 frames per second. Nothing in the encoded output moved: the plane
 derivation is checked against the direct filter over 16,875 predictions,
 every fractional position and nine block shapes, byte for byte.
+
+## 1.11 — A complexity estimate of its own, done
+
+1.10 shipped constant quality reading the complexity the bitrate model
+keeps, which is derived from the bits a picture cost. On a near still
+screen that is not a measure of the picture: the bits are headers and
+skip runs and barely move with the quantiser, so the estimate collapsed
+as the quantiser fell and the quantiser fell further. The estimate is now
+taken from the source pictures instead, before anything is coded, and it
+cannot know the quantiser at all.
+
+**How it is measured.** Every macroblock is matched against the previous
+source picture with a three step search over plus or minus thirty-two,
+and its cost is the smaller of that match and what the block would cost
+coded alone, which is its mean absolute deviation. Source pictures only,
+so a test can hold it to being blind: the same eight pictures measure
+identically at quantisers 0, 12, 26, 40 and 51.
+
+**Half resolution, which the brief proposed, does not work here.** A page
+scrolling eleven rows a picture is scrolling five and a half at half
+resolution, and an integer search cannot land on it. Measured that way
+scrolling text is the heaviest clip in the set at 970 per macroblock
+against video in a window at 271 - the opposite of what they cost to
+code. At full resolution and still with only a spatial predictor it was
+worse, 3355, because text has a nearly periodic error surface at the
+glyph pitch and a descent lands in the wrong minimum.
+
+**What fixed it was a temporal predictor.** A steady scroll has the same
+motion vector every picture, so the vector this macroblock found last
+time is tried first, and after one picture the search locks on. Scrolling
+text fell from 3355 to 143 per macroblock and the six clips now rank in
+the order they cost to code: 1.9 for a still desktop, 1.3 for typing, 29
+for a window drag, 143 for scrolling text, 526 for video in a window. The
+base complexity is one number now, 44 per macroblock; 1.10 needed a
+second one for B pictures because it measured bits, and bits depend on
+the picture structure.
+
+**It costs 0.6 per cent of the encode, not the ten to fifteen the brief
+budgeted.** A static macroblock leaves on the first candidate, so the
+search only runs where the picture moved; measured at 1920x1080 it is
+0.2 ms against a 36 ms encode on a still desktop and 2.1 ms against 270
+on scrolling text.
+
+**The quantiser floor stays, for a reason 1.10 got wrong.** It was put
+there because the bits based estimate collapsed, so removing the estimate
+should have removed the need for it. It did not. Without the floor the
+quantiser walks down to 3 on a still screen and the clip costs 2.7 times
+the bits - 4,684,000 against 1,762,832 - because dropping the quantiser
+makes macroblocks that were skippable against a reference quantised one
+way unskippable against another, and the picture refreshes. 1.10 measured
+that refresh and filed it under the estimate's defects; it is its own
+defect, and it is what the floor is actually for.
+
+**The gain goes from 1.27 dB to 1.89 dB.** Over the same six ten second
+clips at 1920x1080 a rate factor of 23 now codes 3652 kbit/s at 36.58 dB
+of SSIM where a fixed quantiser at that rate reaches 34.69, against 1.10's
+36.88 at 3844 - five per cent fewer bits for six tenths of a decibel more
+against the fixed quantiser it is measured against. On the shorter
+session the committed test runs, 180 pictures rather than 1500, the same
+comparison is 1.11 dB against 1.10's 0.85: the gain grows with how long
+each scene lasts, so the committed test understates it and asks for only
+0.7 dB.
+
+The quality spread widens with it, from 0.71 dB wider than a fixed
+quantiser to 2.57. The curve is following something real now, so it
+follows it further: typing reaches 44.25 dB because it is nearly free to
+code finely, and video in a window sits at 29.82.
+
+**A guard that could not tell nothing from zero.** The first version read
+an unmeasured picture and a picture measured at zero the same way, so on
+a genuinely still screen the model kept whatever spike it last saw. On
+the clip that switches windows the quantiser stuck at 31 for twenty-eight
+pictures out of forty. It surfaced because two runs of the same
+configuration stopped agreeing with each other, which is the only reason
+it surfaced at all; the estimate now reports minus one for no
+measurement, and zero means zero.
 
 ## Four measurements that said no
 

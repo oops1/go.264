@@ -260,6 +260,7 @@ type Encoder struct {
 	grid []mbInfo
 
 	rc         *rateControl
+	probe      *complexityProbe
 	aqEnergy   []float64
 	frameNum   uint32
 	frameIndex int
@@ -285,9 +286,10 @@ type Encoder struct {
 }
 
 type queuedFrame struct {
-	pic     *frame.Picture
-	hints   Hints
-	display int
+	pic        *frame.Picture
+	hints      Hints
+	display    int
+	complexity float64
 }
 
 func New(cfg Config) (*Encoder, error) {
@@ -301,6 +303,9 @@ func New(cfg Config) (*Encoder, error) {
 		e.ltSlots = make([]longTermSlot, cfg.LongTermReferences)
 	}
 	e.rc = newRateControl(cfg)
+	if e.rc.crf != nil {
+		e.probe = newComplexityProbe(e.widthMBs, e.heightMBs)
+	}
 	if err := e.buildParameterSets(); err != nil {
 		return nil, err
 	}
@@ -482,6 +487,7 @@ func (e *Encoder) EncodeWithHints(yuv []byte, h Hints) ([]byte, error) {
 		return e.encodeReordered(yuv, h)
 	}
 	e.loadSourceInto(e.src, yuv)
+	complexity := e.measureComplexity(e.src)
 
 	idr := e.frameIndex%e.cfg.GOPSize == 0 || e.forceKey
 	if e.cfg.IntraRefresh > 0 {
@@ -496,13 +502,14 @@ func (e *Encoder) EncodeWithHints(yuv []byte, h Hints) ([]byte, error) {
 		sliceType = syntax.SliceI
 	}
 	out, err := e.encodePicture(picture{
-		src:       e.src,
-		hints:     h,
-		poc:       2 * e.frameIndex,
-		display:   e.frameIndex,
-		sliceType: sliceType,
-		idr:       idr,
-		reference: true,
+		src:        e.src,
+		hints:      h,
+		poc:        2 * e.frameIndex,
+		display:    e.frameIndex,
+		sliceType:  sliceType,
+		idr:        idr,
+		reference:  true,
+		complexity: complexity,
 	})
 	if err != nil {
 		return nil, err
@@ -519,13 +526,25 @@ func (e *Encoder) Flush() ([]byte, error) {
 }
 
 type picture struct {
-	src       *frame.Picture
-	hints     Hints
-	poc       int
-	display   int
-	sliceType syntax.SliceType
-	idr       bool
-	reference bool
+	src        *frame.Picture
+	hints      Hints
+	poc        int
+	display    int
+	sliceType  syntax.SliceType
+	idr        bool
+	reference  bool
+	complexity float64
+}
+
+func (e *Encoder) measureComplexity(src *frame.Picture) float64 {
+	if e.probe == nil {
+		return complexityUnknown
+	}
+	cost, ok := e.probe.measure(src)
+	if !ok {
+		return complexityUnknown
+	}
+	return cost
 }
 
 func (e *Encoder) acquireSource() *frame.Picture {
@@ -539,13 +558,14 @@ func (e *Encoder) acquireSource() *frame.Picture {
 
 func (e *Encoder) encodeQueued(q queuedFrame, sliceType syntax.SliceType, idr bool) ([]byte, error) {
 	out, err := e.encodePicture(picture{
-		src:       q.pic,
-		hints:     q.hints,
-		poc:       2 * (q.display - e.lastIDRDisplay),
-		display:   q.display,
-		sliceType: sliceType,
-		idr:       idr,
-		reference: !sliceType.IsB(),
+		src:        q.pic,
+		hints:      q.hints,
+		poc:        2 * (q.display - e.lastIDRDisplay),
+		display:    q.display,
+		sliceType:  sliceType,
+		idr:        idr,
+		reference:  !sliceType.IsB(),
+		complexity: q.complexity,
 	})
 	e.srcPool = append(e.srcPool, q.pic)
 	return out, err
@@ -574,6 +594,7 @@ func (e *Encoder) encodeReordered(yuv []byte, h Hints) ([]byte, error) {
 	}
 	q := queuedFrame{pic: e.acquireSource(), hints: h, display: display}
 	e.loadSourceInto(q.pic, yuv)
+	q.complexity = e.measureComplexity(q.pic)
 
 	if idr {
 		out, err := e.drainQueueAsP()
@@ -782,7 +803,7 @@ func (e *Encoder) encodePicture(p picture) ([]byte, error) {
 		refIDC = 0
 	}
 
-	qp := e.rc.frameQP(p.sliceType, p.idr)
+	qp := e.rc.frameQP(p.sliceType, p.idr, p.complexity)
 	active := len(e.refL0)
 	if active < 1 {
 		active = 1

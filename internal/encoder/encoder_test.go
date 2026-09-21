@@ -327,7 +327,7 @@ func TestRateControlDisabledKeepsConstantQP(t *testing.T) {
 		if _, err := enc.Encode(syntheticFrame(cfg.Width, cfg.Height, i)); err != nil {
 			t.Fatal(err)
 		}
-		if q := enc.rc.frameQP(syntax.SliceP, false); q != 33 {
+		if q := enc.rc.frameQP(syntax.SliceP, false, complexityUnknown); q != 33 {
 			t.Fatalf("frame %d: quantiser drifted to %d with rate control off", i, q)
 		}
 	}
