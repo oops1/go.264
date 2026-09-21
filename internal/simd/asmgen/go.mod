@@ -1,8 +1,6 @@
 module github.com/oops1/go.264/internal/simd/asmgen
 
-go 1.27
-
-toolchain go1.27.1
+go 1.26
 
 require github.com/mmcloughlin/avo v0.6.0
 
