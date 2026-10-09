@@ -270,3 +270,16 @@ func writeVUI(w *bits.Writer, v *VUI) {
 		w.WriteUE(v.MaxDecFrameBuffering)
 	}
 }
+
+func (s *SPS) RestrictBitstream(reorder int) {
+	s.VUIPresent = true
+	v := &s.VUI
+	v.BitstreamRestriction = true
+	v.MotionVectorsOverPicBoundary = true
+	v.MaxBytesPerPicDenom = 2
+	v.MaxBitsPerMBDenom = 1
+	v.Log2MaxMvLengthHorizontal = 15
+	v.Log2MaxMvLengthVertical = 15
+	v.MaxNumReorderFrames = uint32(reorder)
+	v.MaxDecFrameBuffering = uint32(max(int(s.MaxNumRefFrames), reorder, 1))
+}

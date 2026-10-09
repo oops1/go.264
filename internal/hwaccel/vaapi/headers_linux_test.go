@@ -75,6 +75,10 @@ func TestTheParameterSetsSayWhatTheDriverIsTold(t *testing.T) {
 			if sps.MaxNumRefFrames != maxNumRefFrames || !sps.FrameMbsOnly || !sps.Direct8x8Inference {
 				t.Fatal("the reference count or frame flags differ from the sequence buffer")
 			}
+			if !sps.VUIPresent || !sps.VUI.BitstreamRestriction || sps.VUI.MaxNumReorderFrames != 0 ||
+				sps.VUI.MaxDecFrameBuffering != maxNumRefFrames {
+				t.Fatal("the sequence leaves a decoder to hold frames back for reordering the I and P pictures never need")
+			}
 			if sps.CroppedWidth() != c.w || sps.CroppedHeight() != c.h {
 				t.Fatalf("the sequence describes %dx%d, want %dx%d", sps.CroppedWidth(), sps.CroppedHeight(), c.w, c.h)
 			}

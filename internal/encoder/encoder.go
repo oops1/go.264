@@ -353,6 +353,13 @@ func (e *Encoder) pickLevel(profile uint8) (uint8, error) {
 	return idc, nil
 }
 
+func (e *Encoder) reorderDepth() int {
+	if e.cfg.BFrames > 0 {
+		return 1
+	}
+	return 0
+}
+
 func (e *Encoder) buildParameterSets() error {
 	profile := uint8(syntax.ProfileBaseline)
 	constraints := uint8(0xC0)
@@ -398,6 +405,7 @@ func (e *Encoder) buildParameterSets() error {
 	sps.VUI.NumUnitsInTick = uint32(e.cfg.FPSDen)
 	sps.VUI.TimeScale = uint32(e.cfg.FPSNum) * 2
 	sps.VUI.FixedFrameRate = true
+	sps.RestrictBitstream(e.reorderDepth())
 	e.applyHRD(sps)
 
 	pps := &syntax.PPS{

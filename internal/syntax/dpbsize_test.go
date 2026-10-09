@@ -68,3 +68,53 @@ func TestMaxNumReorderPrefersTheBitstreamRestriction(t *testing.T) {
 		t.Fatalf("with a restriction MaxNumReorder() = %d, want 2", got)
 	}
 }
+
+func TestRestrictBitstreamDeclaresTheReordering(t *testing.T) {
+	cases := []struct {
+		refs, reorder int
+		dpb           uint32
+	}{
+		{1, 0, 1},
+		{4, 0, 4},
+		{0, 0, 1},
+		{2, 1, 2},
+		{1, 2, 2},
+	}
+	for _, c := range cases {
+		s := baseSPS()
+		s.MaxNumRefFrames = uint32(c.refs)
+		s.VUIPresent = true
+		s.VUI.TimingInfoPresent = true
+		s.VUI.NumUnitsInTick = 1
+		s.VUI.TimeScale = 60
+		s.VUI.FixedFrameRate = true
+		s.RestrictBitstream(c.reorder)
+		rbsp, err := WriteSPS(s)
+		if err != nil {
+			t.Fatalf("WriteSPS: %v", err)
+		}
+		got, err := ParseSPS(rbsp)
+		if err != nil {
+			t.Fatalf("ParseSPS: %v", err)
+		}
+		v := got.VUI
+		if !got.VUIPresent || !v.BitstreamRestriction {
+			t.Fatalf("%d references, reordering %d: the restriction did not survive a round trip", c.refs, c.reorder)
+		}
+		if int(v.MaxNumReorderFrames) != c.reorder || v.MaxDecFrameBuffering != c.dpb {
+			t.Errorf("%d references, reordering %d: max_num_reorder_frames %d, max_dec_frame_buffering %d, want %d and %d",
+				c.refs, c.reorder, v.MaxNumReorderFrames, v.MaxDecFrameBuffering, c.reorder, c.dpb)
+		}
+		if !v.MotionVectorsOverPicBoundary || v.MaxBytesPerPicDenom != 2 || v.MaxBitsPerMBDenom != 1 ||
+			v.Log2MaxMvLengthHorizontal != 15 || v.Log2MaxMvLengthVertical != 15 {
+			t.Errorf("%d references, reordering %d: the other limits differ from the values inferred without a restriction: %+v",
+				c.refs, c.reorder, v)
+		}
+		if !v.TimingInfoPresent || v.TimeScale != 60 || !v.FixedFrameRate {
+			t.Errorf("%d references, reordering %d: the timing information was lost", c.refs, c.reorder)
+		}
+		if got.MaxNumReorder() != c.reorder {
+			t.Errorf("%d references, reordering %d: MaxNumReorder() = %d", c.refs, c.reorder, got.MaxNumReorder())
+		}
+	}
+}

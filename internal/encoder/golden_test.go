@@ -17,34 +17,34 @@ func goldenConfig(edit func(c *Config)) Config {
 
 func TestTheCodedSizeDoesNotMoveByAccident(t *testing.T) {
 	cases := []goldenCase{
-		{"cavlc, full search", goldenConfig(func(c *Config) {}), 43055},
-		{"cabac, full search", goldenConfig(func(c *Config) { c.CABAC = true }), 39935},
+		{"cavlc, full search", goldenConfig(func(c *Config) {}), 43059},
+		{"cabac, full search", goldenConfig(func(c *Config) { c.CABAC = true }), 39939},
 		{"cabac, half-pel", goldenConfig(func(c *Config) {
 			c.CABAC = true
 			c.MotionSearch = MotionSearchHalf
-		}), 39867},
+		}), 39871},
 		{"cabac, integer only", goldenConfig(func(c *Config) {
 			c.CABAC = true
 			c.MotionSearch = MotionSearchInteger
-		}), 40886},
+		}), 40890},
 		{"cabac, no search", goldenConfig(func(c *Config) {
 			c.CABAC = true
 			c.MotionSearch = MotionSearchZero
-		}), 227578},
+		}), 227582},
 		{"cabac, four slices", goldenConfig(func(c *Config) {
 			c.CABAC = true
 			c.Slices = 4
-		}), 43905},
+		}), 43909},
 		{"cabac, b pictures", goldenConfig(func(c *Config) {
 			c.CABAC = true
 			c.BFrames = 2
 			c.RefFrames = 2
-		}), 77533},
+		}), 77536},
 		{"cabac, 8x8 transform and scaling", goldenConfig(func(c *Config) {
 			c.CABAC = true
 			c.Transform8x8 = true
 			c.ScalingMatrix = ScalingMatrixJVT
-		}), 38949},
+		}), 38952},
 	}
 
 	var frames [][]byte

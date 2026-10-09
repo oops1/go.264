@@ -1,6 +1,7 @@
 package go264
 
 import (
+	"bytes"
 	"errors"
 	"image"
 
@@ -315,6 +316,14 @@ func (e *Encoder) fromHardware(pkt []byte, err error) ([]byte, error) {
 		}
 	}
 	if sps != nil {
+		if restricted := withoutReordering(sps); restricted != nil {
+			at := cap(pkt) - cap(sps)
+			out := make([]byte, 0, len(pkt)+len(restricted)-len(sps))
+			out = append(out, pkt[:at]...)
+			out = append(out, restricted...)
+			pkt = append(out, pkt[at+len(sps):]...)
+			sps = restricted
+		}
 		e.sps = append(e.sps[:0], sps...)
 	}
 	if pps != nil {
@@ -329,6 +338,27 @@ func (e *Encoder) fromHardware(pkt []byte, err error) ([]byte, error) {
 	out = append(out, 0, 0, 0, 1)
 	out = append(out, e.pps...)
 	return append(out, pkt...), nil
+}
+
+func withoutReordering(unit []byte) []byte {
+	u, err := nal.Parse(unit)
+	if err != nil || u.Header.Type != nal.TypeSPS {
+		return nil
+	}
+	sps, err := syntax.ParseSPS(u.RBSP)
+	if err != nil || sps.PicOrderCntType != 2 || (sps.VUIPresent && sps.VUI.BitstreamRestriction) {
+		return nil
+	}
+	same, err := syntax.WriteSPS(sps)
+	if err != nil || !bytes.Equal(same, u.RBSP) {
+		return nil
+	}
+	sps.RestrictBitstream(0)
+	rbsp, err := syntax.WriteSPS(sps)
+	if err != nil {
+		return nil
+	}
+	return nal.Escape([]byte{u.Header.Byte()}, rbsp)
 }
 
 func (e *Encoder) ForceKeyFrame() {

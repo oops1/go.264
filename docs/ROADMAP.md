@@ -23,6 +23,7 @@ than absent.
 | Slices | any count on macroblock row boundaries, encoded in parallel |
 | Intra refresh | a sweeping band with motion constrained across the boundary, recovery point announced |
 | Buffer model | a real coded picture buffer, constant bitrate, announced in the parameters and the messages |
+| Output delay | the sequence declares its reordering, none without B pictures; a hardware decoder in Chrome returns a picture in 0.6 ms instead of 392 |
 | Constant quality | a rate factor on the quantiser scale, with or without a bitrate ceiling; 1.9 dB over a fixed quantiser at equal rate |
 | Complexity estimate | matched against the previous source picture before the encode, blind to the quantiser, 0.6 per cent of the encode |
 | Adaptive quantisation | by macroblock variance, off by default: it costs 1.8 dB on scrolling text |
@@ -754,6 +755,84 @@ pictures out of forty. It surfaced because two runs of the same
 configuration stopped agreeing with each other, which is the only reason
 it surfaced at all; the estimate now reports minus one for no
 measurement, and zero means zero.
+
+## 1.11.1 — A decoder told it need not wait, done
+
+Avanpost PAM shows live sessions in a browser: go264 pictures over a
+WebSocket into a WebCodecs `VideoDecoder`. With Chrome's hardware decoder
+every picture came out twelve pictures late - 394 ms at thirty a second,
+1194 ms at ten - and when the screen stopped changing the last twelve did
+not come out at all, so the viewer saw the session as it was twelve
+pictures ago until something else moved.
+
+**The cause was a field the sequence did not carry.** Without
+`bitstream_restriction_flag` a decoder has to assume pictures may be
+reordered as deeply as its buffer allows, and the buffer comes from the
+level. 1920x1200 is 9000 macroblocks, over level 4.2's 8704, so the
+stream is level 5.0, whose 110400 buffered macroblocks hold twelve such
+pictures - exactly the delay measured. The picture order count type 2 the
+encoder writes without B pictures already means output order is decoding
+order, but Chromium's hardware path does not use it: it reads
+`max_num_reorder_frames` from the restriction or else assumes the whole
+buffer, with an exception only for intra profiles.
+
+**Every sequence now carries the restriction.** `max_num_reorder_frames`
+is 0 without B pictures and 1 with them, whatever their number: B
+pictures are never references here, so each one waits behind exactly one
+anchor. `max_dec_frame_buffering` is `max_num_ref_frames`, as x264 writes
+it. The other four fields take the values the standard infers when the
+flag is absent - motion vectors may cross the boundary, 2 and 1 for the
+two size limits, 15 for both vector lengths - so the restriction tightens
+nothing but the reordering. Those values were checked against ffmpeg's
+reading of the standard rather than written from memory; it infers 15 for
+the vector lengths and notes that the current text allows no more.
+
+**Measured in the same Chrome 152,** the one inside the Claude desktop
+application, on Windows with an RTX 5060 Ti, against the same stream with
+and without the restriction, 1920x1200 at a rate factor of 23:
+
+| Decoder | Without | With |
+| --- | --- | --- |
+| hardware, a picture every 33 ms | 48 of 60 out, 392 ms median, 559 at the 95th percentile | 60 of 60, 0.6 ms, 1.2 |
+| hardware, every 100 ms | 18 of 30, 1200 ms | 30 of 30, 0.6 ms, 0.7 |
+| software, every 33 ms | 60 of 60, 0.9 ms | 60 of 60, 0.8 ms |
+
+Pictures were counted two and a half seconds after the last one went in,
+without `flush()`, which the specification follows with a key frame.
+
+**It costs three or four bytes per sequence parameter set and nothing
+else.** Fifteen configurations were coded before and after and every NAL
+unit but the sequence parameter set hashed: they match, with one
+exception that is correct - under a buffer model the buffering period
+message after the second IDR moves, because the buffer counts the longer
+sequence parameter set, as it should.
+
+**The tests hold the declaration to the stream.** The picture order
+counts are read back in decoding order and the deepest reordering
+measured, which must equal the declaration with B pictures and be zero
+without; and a decoder holding `max_dec_frame_buffering` pictures is
+simulated, outputting early by the declared reordering and again only
+when full, and both must return pictures in order. The simulation was
+wrong first: with B pictures and a buffer of exactly the references it
+filled up, until it let a B picture that is earlier than everything
+waiting leave directly, which is what the reference decoder does. Our own
+decoder reads the restriction too and no longer holds pictures back; it
+still returns each one two calls late, because a NAL unit ends only at
+the next start code, which no browser shares.
+
+**Hardware encoders.** NVENC is now told to write the restriction, and
+does: on the RTX 5060 Ti through WSL2, `max_num_reorder_frames` 0 and a
+buffer of its three references. VA-API's sequence parameter set is ours
+and carries it. Media Foundation writes its own: NVIDIA's transform
+already declares no reordering, and Microsoft's software transform
+declares one picture because it codes B pictures, but the backend never
+chooses it; Intel's stalled on its first picture when opened the way the
+probe opened it, so it was not measured. For a driver that leaves the restriction out, the public
+encoder adds it when the sequence uses picture order count type 2, which
+by definition cannot reorder, and only when our writer reproduces the
+driver's sequence byte for byte. A driver's type 0 sequence without the
+restriction is left alone: the stream alone cannot prove that it never
+reorders.
 
 ## Four measurements that said no
 

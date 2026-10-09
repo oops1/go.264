@@ -46,6 +46,7 @@ Working today:
 | Intra refresh | a sweeping band of intra macroblocks, motion constrained so the refreshed area is never reinfected |
 | Deblocking control | on, off, or kept inside slices, with both offsets |
 | Buffer model | a coded picture buffer with a constant bitrate mode, announced to the decoder |
+| Output delay | every sequence says how far its pictures are reordered - not at all without B pictures - so a hardware decoder in a browser hands each picture back as soon as it is decoded instead of filling its buffer first |
 | Lossless transform bypass | rejected explicitly, in both directions |
 
 See [docs/ROADMAP.md](docs/ROADMAP.md) for what comes next and why in that

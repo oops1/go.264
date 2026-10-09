@@ -318,6 +318,7 @@ func (e *Encoder) applyRateControl(c *NvEncConfig, cfg Config) {
 	h264.SetOutputAUD(false)
 	h264.SetRepeatSPSPPS(true)
 	h264.SetDisableSPSPPS(false)
+	h264.H264VUIParameters.BitstreamRestrictionFlag = 1
 }
 
 func (e *Encoder) createBuffers() error {

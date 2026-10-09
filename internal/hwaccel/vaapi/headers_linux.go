@@ -31,6 +31,7 @@ func (e *Encoder) sequenceParameterSet() *syntax.SPS {
 		sps.FrameCropRightOffset = uint32(e.alignedWidth-e.width) / 2
 		sps.FrameCropBottomOffset = uint32(e.alignedHeight-e.height) / 2
 	}
+	sps.RestrictBitstream(0)
 	return sps
 }
 
