@@ -34,7 +34,8 @@ Working today:
 | Reference picture management | sliding window and the memory management operations in both directions, including long-term references |
 | Rate-distortion quantisation | 4.8 to 7.1 per cent of the bitrate at equal quality; 1.2 dB worse on screen content, so leave it off there |
 | Level selection | from the picture size, the reference count, the bitrate and the buffer |
-| Slices | any count, encoded in parallel; ten times faster on twenty threads for 2 to 12 per cent more bits, depending on how much the picture moves |
+| Slices | any count, encoded in parallel; with CABAC they are what runs in parallel, ten times faster on twenty threads for 2 to 12 per cent more bits |
+| Rows in parallel | with CAVLC every picture of 1024 macroblocks or more is coded as a wavefront of macroblock rows on all threads, bit for bit what raster order writes, so one slice is as fast as sixteen; at 3440x1440 in four slices the 95th percentile of a screen session falls from 139 to 38 ms |
 | Hardware acceleration | encoding on Windows through Media Foundation, on 64-bit Linux through NVENC and VA-API with nothing to import - NVENC proven on an RTX 5060 Ti, VA-API on Intel Gen9 through the free iHD driver; decoding on Windows through Direct3D, nine times our own decoder at 1080p. No cgo on any path |
 | Bitrate targeted rate control | complete, and under a buffer model the long run rate never exceeds the request |
 | Constant quality | a rate factor on the quantiser scale instead of a bit budget, 1.9 dB better than a fixed quantiser at the same rate over a ten second screencast session |

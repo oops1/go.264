@@ -21,6 +21,7 @@ than absent.
 | Hardware decoding | Direct3D 11 through Media Foundation on Windows, above 640x480; nothing on Linux |
 | Screen content interface | changed rectangles, typed regions, forced key frames, switchable motion search |
 | Slices | any count on macroblock row boundaries, encoded in parallel |
+| Rows in parallel | CAVLC pictures coded as a wavefront of macroblock rows, identical to raster order; deblocking, the complexity probe and the interpolation planes across rows too |
 | Intra refresh | a sweeping band with motion constrained across the boundary, recovery point announced |
 | Buffer model | a real coded picture buffer, constant bitrate, announced in the parameters and the messages |
 | Output delay | the sequence declares its reordering, none without B pictures; a hardware decoder in Chrome returns a picture in 0.6 ms instead of 392 |
@@ -861,6 +862,97 @@ which is why the reporter's own x264 clips never reproduced it. A test
 builds the same shape at CIF, rewrites the level to 1.0, which holds one CIF
 picture, and fails on the old bound with picture 2 coming out in place of
 picture 1.
+
+## 1.12 — Rows in parallel, done
+
+Avanpost PAM measured live encoding at 3440x1440 in four slices, three or
+four sessions at once on the 20-thread development machine: 25 to 39 ms at
+the median, 63 to 75 at the 95th percentile, 80 to 101 at the 99th, about
+68 for an IDR, against 33 ms a picture. 218 of 286 pictures were late.
+
+**Where the time went.** 93 per cent of the processor time was inside the
+slices, but a picture waits for its slowest slice, and screen changes
+gather in one window: at four slices the slowest took 116 ms against a mean
+of 69, at sixteen 39 against 20 - and twelve of the twenty threads are
+efficiency cores, which make even an evenly divided picture uneven. Outside
+the slices about 11 ms a picture ran on one thread: deblocking 4.0, the
+interpolation planes 2.3, the complexity probe 2.1, the motion field 1.3,
+loading the source 0.6.
+
+**The stages outside the slices now run across rows,** and none of them
+changes a sample. Deblocking runs as a wavefront, a macroblock row trailing
+the one above by two macroblocks, which is exactly the order raster
+filtering imposes on every sample it touches; the complexity probe the same
+way trailing by one, since its candidates are the blocks to the left and
+above; the planes, the motion field and the source in independent bands.
+The 11 ms fell to 4.7. Each is held to the serial answer by a test, and
+each test was checked by breaking the lag it guards.
+
+**Inside a slice, rows in parallel.** With CAVLC a macroblock's decisions
+depend only on its left, upper-left, upper and upper-right neighbours, all
+final once the row above is two macroblocks ahead, and the only state that
+crosses from one macroblock to the next is the skip run and the quantiser
+predictor - and the predictor stays at the slice quantiser when no
+macroblock varies it. So each row is coded into a bit writer of its own, a
+row's leading skip run is merged with the one the row before left open when
+the rows are joined, and the slice comes out bit for bit what raster order
+writes. A test codes sixteen configurations both ways - B pictures, intra
+refresh, long-term references, trellis, weighted prediction, hints, forced
+key frames, a buffer that drops pictures - and compares the bytes; breaking
+the lag or the carried skip run fails fourteen or fifteen of them. CABAC,
+whose contexts run the length of the slice, and a quantiser varied by
+macroblock keep the slice-by-slice path. The rows of every slice share one
+queue, interleaved, one goroutine per row, so a row waiting on the one above
+hands its thread to a row that can run.
+
+A 3440x1440 session from `BenchmarkLargeScreenSession`, one process, rate
+factor 23, in milliseconds a picture, before and after:
+
+| Session, slices | IDR | 50th | 95th | 99th |
+| --- | --- | --- | --- | --- |
+| office, 1 | 187 → 19 | 56 → 13 | 395 → 38 | 924 → 80 |
+| office, 4 | 58 → 17 | 32 → 12 | 139 → 38 | 307 → 79 |
+| office, 16 | 29 → 18 | 26 → 13 | 64 → 42 | 116 → 75 |
+| busy, 4 | 68 → 19 | 120 → 22 | 264 → 57 | 401 → 77 |
+| busy, 16 | 32 → 18 | 44 → 23 | 92 → 58 | 131 → 78 |
+
+The office session is mostly typing with a scroll and a window drag; busy is
+the six screen clips back to back. Four processes at once, each paced at
+thirty pictures a second, office session in four slices: the old code gave
+30 to 37 ms at the median and 62 to 90 for the IDR, which is PAM's own
+measurement, and 122 to 152 at the 95th percentile, twice theirs - this
+session is heavier at the tail than their sessions. The new code gives 19,
+30 to 47, and 45 to 76.
+
+**What did not help.** Waiting with `runtime.Gosched` put 45 per cent of the
+processor time into the scheduler's lock; a short spin and a park replaced
+it. Remembering sub-pixel candidates already costed saved 7 per cent of
+those evaluations, 2 per cent of the encode, and was not kept. Waking a
+waiting row only once the row above was well ahead parked a third as
+often and ran no faster, and slower with one slice. Dropping the 8x4, 4x8
+and 4x4 sub-partitions would save about 30 per cent of the processor time
+by the profile, and cost 10 per cent more bits at a rate factor of 23,
+nearly all of it on video in a window, 21 per cent and a decibel; it was
+not kept. A bound that skips a
+sub-partition shape when its signalling alone already costs more than the
+8x8 block was kept: it changes nothing and saves 7 per cent of that search.
+
+**What a live encoder can set.** With CAVLC one slice is now as fast as
+sixteen, and smaller: the busy session is 10736 kB in one slice, 11510 in
+four, 11921 in sixteen. Half-pixel motion search costs nothing measurable -
+0.3 per cent more bits and 0.03 dB more SSIM over six 1920x1080 screen clips
+at a rate factor of 23 - and takes the office session's 95th percentile from
+38 ms to 34; integer search takes it to 26 and is as good on screen content,
+but costs 37 per cent more bits on video in a window.
+
+**Against the 30 ms the brief asked for.** One process, office session: 38
+ms with the full search, 34 with half-pixel, 26 with integer. PAM's sessions
+are lighter at the tail than this one; scaled by the ratio measured under
+four processes their 95th percentile lands near 30 ms. That is an estimate
+from synthetic content, not a measurement on theirs.
+
+The decoder gained too, since it shares the deblocking: a 3440x1440 picture
+decodes in 12.7 ms instead of 14.8.
 
 ## Four measurements that said no
 

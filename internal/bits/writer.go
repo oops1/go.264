@@ -131,3 +131,34 @@ func (w *Writer) Bytes() []byte {
 	copy(out, w.buf)
 	return append(out, byte(w.cache<<(8-w.n)))
 }
+
+func (w *Writer) AppendBits(src *Writer, from int) {
+	if src.err != nil {
+		w.fail(src.err)
+		return
+	}
+	full := len(src.buf) * 8
+	i := max(from, 0)
+	for ; i < src.total && i&7 != 0; i++ {
+		w.WriteBit(uint32(src.bitAt(i)))
+	}
+	for ; i+32 <= full; i += 32 {
+		b := src.buf[i>>3:]
+		w.WriteBits(uint32(b[0])<<24|uint32(b[1])<<16|uint32(b[2])<<8|uint32(b[3]), 32)
+	}
+	for ; i+8 <= full; i += 8 {
+		w.WriteBits(uint32(src.buf[i>>3]), 8)
+	}
+	for ; i < src.total; i++ {
+		w.WriteBit(uint32(src.bitAt(i)))
+	}
+}
+
+func (w *Writer) bitAt(i int) byte {
+	full := len(w.buf) * 8
+	if i < full {
+		return w.buf[i>>3] >> (7 - uint(i&7)) & 1
+	}
+	j := uint(i - full)
+	return byte(w.cache>>(w.n-1-j)) & 1
+}

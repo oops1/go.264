@@ -289,6 +289,9 @@ type Encoder struct {
 	srcPool        []*frame.Picture
 	displayIdx     int
 	lastIDRDisplay int
+
+	rowWriters  []*bits.Writer
+	rowEncoders []*mbEncoder
 }
 
 type queuedFrame struct {
@@ -1016,6 +1019,9 @@ func (e *Encoder) mayDropPicture(p picture) bool {
 }
 
 func (e *Encoder) encodeSlices(jobs []sliceJob, hints *frameHints) ([][]byte, error) {
+	if e.rowsInParallel(hints) {
+		return e.encodeSliceRows(jobs, hints)
+	}
 	payloads := make([][]byte, len(jobs))
 	if len(jobs) == 1 {
 		rbsp, err := e.encodeOneSlice(jobs[0], hints)

@@ -99,51 +99,71 @@ func (s *mbEncoder) reset() {
 	s.cur.Transform8x8 = false
 }
 
-func (e *Encoder) encodeSlice(w *bits.Writer, hdr *syntax.SliceHeader, p sliceJob, hints *frameHints) error {
-	qp := p.qp
-	span := sliceRange{firstMB: p.firstMB, endMB: p.endMB}
-	s := &mbEncoder{e: e, w: w, qpY: qp, isP: hdr.SliceType.IsP(), isB: hdr.SliceType.IsB(),
-		numRefs: p.active, numRefsL1: p.activeL1,
-		hints: hints, sliceQP: qp, prevQP: qp, span: span, refresh: e.refresh,
-		skipAll: p.skipAll, trellis: e.cfg.Trellis}
+func (s *mbEncoder) configure(e *Encoder, w *bits.Writer, hdr *syntax.SliceHeader, p sliceJob, hints *frameHints) {
+	s.e, s.w = e, w
+	s.qpY, s.sliceQP, s.prevQP = p.qp, p.qp, p.qp
+	s.isP, s.isB = hdr.SliceType.IsP(), hdr.SliceType.IsB()
+	s.numRefs, s.numRefsL1 = p.active, p.activeL1
+	s.hints = hints
+	s.span = sliceRange{firstMB: p.firstMB, endMB: p.endMB}
+	s.refresh = e.refresh
+	s.skipAll = p.skipAll
+	s.trellis = e.cfg.Trellis
+	s.pendingSkipRun = 0
+	s.cb = nil
+	s.prevQPDeltaNonZero = false
+	s.weights = nil
 	s.weightMode = e.weightModeFor(hdr.SliceType)
 	if s.weightMode == weightExplicit {
 		s.weights = &hdr.PredWeight
 	}
+}
+
+func (s *mbEncoder) encodeAt(addr int, hdr *syntax.SliceHeader, sliceID int) error {
+	e := s.e
+	mbx, mby := addr%e.widthMBs, addr/e.widthMBs
+	s.mbx = mbx
+	s.mby = mby
+	s.qpY = clampQP(s.sliceQP + s.hints.qpDelta(mbx, mby))
+	s.cur = e.at(mbx, mby)
+	*s.cur = mbInfo{MB: loopfilter.MB{
+		QPY:            s.qpY,
+		ChromaQPOffset: [2]int{int(e.pps.ChromaQPIndexOffset), int(e.pps.SecondChromaQPIndexOffset)},
+		Bipredictive:   s.isB,
+		SliceID:        sliceID,
+		DisableDeblock: hdr.DisableDeblockingFilterIDC,
+		AlphaOffset:    int(hdr.SliceAlphaC0OffsetDiv2) * 2,
+		BetaOffset:     int(hdr.SliceBetaOffsetDiv2) * 2,
+	}}
+	for i := range s.cur.refIdx {
+		s.cur.refIdx[i] = -1
+		s.cur.refIdxL1[i] = -1
+	}
+	s.nb = e.around(mbx, mby, s.span)
+	s.refreshNoTopRight = s.refresh.inBand(mbx) && mbx+1 >= s.refresh.end &&
+		s.refresh.end < e.widthMBs && s.nb.topRight != nil
+	s.reset()
+
+	if err := s.encodeMB(); err != nil {
+		return err
+	}
+	s.cur.Decoded = true
+	return nil
+}
+
+func (e *Encoder) encodeSlice(w *bits.Writer, hdr *syntax.SliceHeader, p sliceJob, hints *frameHints) error {
+	s := &mbEncoder{}
+	s.configure(e, w, hdr, p, hints)
 	if e.pps.CABAC {
 		s.cb = &cabac.Encoder{}
-		if err := s.cb.Init(w, qp, hdr.SliceType.IsI(), hdr.CABACInitIDC); err != nil {
+		if err := s.cb.Init(w, p.qp, hdr.SliceType.IsI(), hdr.CABACInitIDC); err != nil {
 			return err
 		}
 	}
 	for addr := p.firstMB; addr < p.endMB; addr++ {
-		mbx, mby := addr%e.widthMBs, addr/e.widthMBs
-		s.mbx = mbx
-		s.mby = mby
-		s.qpY = clampQP(s.sliceQP + hints.qpDelta(mbx, mby))
-		s.cur = e.at(mbx, mby)
-		*s.cur = mbInfo{MB: loopfilter.MB{
-			QPY:            s.qpY,
-			ChromaQPOffset: [2]int{int(e.pps.ChromaQPIndexOffset), int(e.pps.SecondChromaQPIndexOffset)},
-			Bipredictive:   s.isB,
-			SliceID:        p.id + 1,
-			DisableDeblock: hdr.DisableDeblockingFilterIDC,
-			AlphaOffset:    int(hdr.SliceAlphaC0OffsetDiv2) * 2,
-			BetaOffset:     int(hdr.SliceBetaOffsetDiv2) * 2,
-		}}
-		for i := range s.cur.refIdx {
-			s.cur.refIdx[i] = -1
-			s.cur.refIdxL1[i] = -1
-		}
-		s.nb = e.around(mbx, mby, span)
-		s.refreshNoTopRight = s.refresh.inBand(mbx) && mbx+1 >= s.refresh.end &&
-			s.refresh.end < e.widthMBs && s.nb.topRight != nil
-		s.reset()
-
-		if err := s.encodeMB(); err != nil {
+		if err := s.encodeAt(addr, hdr, p.id+1); err != nil {
 			return err
 		}
-		s.cur.Decoded = true
 		if s.cb != nil {
 			s.cb.EndOfSlice(addr == p.endMB-1)
 		}

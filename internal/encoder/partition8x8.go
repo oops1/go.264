@@ -80,10 +80,13 @@ func (s *mbEncoder) searchSubMB(ox, oy, lambda int) subResult {
 			refCost = lambda * bitsForTE(uint32(refIdx), uint32(s.numRefs-1))
 		}
 		for subType, shape := range subMbShapes {
-			s.restoreMotion(entry)
 			sp := subPartitionsOf(shape, ox, oy)
-			results := make([]partResult, sp.n)
 			cost := lambda*bitsForUE(uint32(subType)) + refCost
+			if best.subType >= 0 && bestCost <= cost+2*lambda*sp.n {
+				continue
+			}
+			s.restoreMotion(entry)
+			results := make([]partResult, sp.n)
 			for i := 0; i < sp.n; i++ {
 				p := sp.items[i]
 				r := s.searchPartitionRef(0, p, i, mbTypeP8x8, lambda, int8(refIdx))

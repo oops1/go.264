@@ -126,6 +126,18 @@ func (f *frameHints) unchanged(mbx, mby int) bool {
 	return !f.changedMB[mby*f.widthMBs+mbx]
 }
 
+func (f *frameHints) variesQP() bool {
+	if f == nil {
+		return false
+	}
+	for _, d := range f.qpOffset {
+		if d != 0 {
+			return true
+		}
+	}
+	return false
+}
+
 func (f *frameHints) qpDelta(mbx, mby int) int {
 	if f == nil || f.qpOffset == nil {
 		return 0
