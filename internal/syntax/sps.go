@@ -577,8 +577,8 @@ func (s *SPS) MaxDpbFrames() int {
 		return 1
 	}
 	n := s.maxDpbMbs() / frameMbs
-	if n > 16 {
-		n = 16
+	if n > maxBufferedFrames {
+		n = maxBufferedFrames
 	}
 	if n < 1 {
 		n = 1
@@ -586,14 +586,15 @@ func (s *SPS) MaxDpbFrames() int {
 	return n
 }
 
+const maxBufferedFrames = 16
+
 func (s *SPS) MaxNumReorder() int {
-	limit := s.MaxDpbFrames()
 	if s.VUIPresent && s.VUI.BitstreamRestriction {
 		n := int(s.VUI.MaxNumReorderFrames)
-		if n > limit || n < 0 {
-			return limit
+		if n > maxBufferedFrames || n < 0 {
+			return maxBufferedFrames
 		}
 		return n
 	}
-	return limit
+	return s.MaxDpbFrames()
 }

@@ -77,7 +77,7 @@ func TestFrameCroppingOffsetsCannotWrap(t *testing.T) {
 	}
 }
 
-func TestMaxNumReorderNeverExceedsTheDecodedPictureBuffer(t *testing.T) {
+func TestMaxNumReorderNeverExceedsTheLargestFrameBuffer(t *testing.T) {
 	s := &SPS{
 		LevelIDC:                  10,
 		FrameMbsOnly:              true,
@@ -86,13 +86,35 @@ func TestMaxNumReorderNeverExceedsTheDecodedPictureBuffer(t *testing.T) {
 		VUIPresent:                true,
 	}
 	s.VUI.BitstreamRestriction = true
-	for _, v := range []uint32{0, 1, 4, 5, 17, 1 << 20, math.MaxUint32} {
-		s.VUI.MaxNumReorderFrames = v
-		got := s.MaxNumReorder()
-		if got < 0 || got > s.MaxDpbFrames() {
-			t.Fatalf("max_num_reorder_frames %d gave MaxNumReorder() = %d, buffer holds %d",
-				v, got, s.MaxDpbFrames())
+	cases := []struct {
+		stated uint32
+		want   int
+	}{
+		{0, 0}, {1, 1}, {4, 4}, {5, 5}, {16, 16}, {17, 16}, {1 << 20, 16}, {math.MaxUint32, 16},
+	}
+	for _, c := range cases {
+		s.VUI.MaxNumReorderFrames = c.stated
+		if got := s.MaxNumReorder(); got != c.want {
+			t.Fatalf("max_num_reorder_frames %d gave MaxNumReorder() = %d, want %d", c.stated, got, c.want)
 		}
+	}
+}
+
+func TestMaxNumReorderTrustsTheStreamWhenItsLevelUndersizesTheBuffer(t *testing.T) {
+	s := &SPS{
+		LevelIDC:                  40,
+		FrameMbsOnly:              true,
+		PicWidthInMbsMinus1:       239,
+		PicHeightInMapUnitsMinus1: 134,
+		VUIPresent:                true,
+	}
+	if s.MaxDpbFrames() != 1 {
+		t.Fatalf("a 4K picture at level 4.0 gave MaxDpbFrames() = %d, want 1", s.MaxDpbFrames())
+	}
+	s.VUI.BitstreamRestriction = true
+	s.VUI.MaxNumReorderFrames = 2
+	if got := s.MaxNumReorder(); got != 2 {
+		t.Fatalf("MaxNumReorder() = %d, want the stated 2", got)
 	}
 }
 

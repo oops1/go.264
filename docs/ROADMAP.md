@@ -834,6 +834,34 @@ driver's sequence byte for byte. A driver's type 0 sequence without the
 restriction is left alone: the stream alone cannot prove that it never
 reorders.
 
+## A stated reordering the level could not hold
+
+Issue #1 reported B pictures on a real 3840x2160 High profile stream
+decoding differently from ffmpeg, and its reporter then found the truth
+themselves: every picture was bit-exact, and nine adjacent pairs came out
+in the wrong order. The stream states `max_num_reorder_frames` 2, which its
+pyramid of three B pictures needs, and level 4.0, whose 32768 buffered
+macroblocks hold one 3840x2160 picture of 32400 - the stream is four times
+over the level's largest frame. `MaxNumReorder` clamped the stated 2 down to
+that 1.
+
+It now trusts the stated value up to 16, the largest buffer the standard
+has, and falls back to the level only when the stream states nothing. For a
+stream that keeps to its level nothing changes, because the standard already
+bounds the stated value by the buffer; and the worst case a hostile stream
+can force is the 16 pending pictures it could force before.
+
+Reproduced without the reporter's private file: x264 at 3840x2160, High,
+CABAC, implicit weights, four references, three B pictures in a pyramid and
+the level forced to 4.0 gives the same signature, and before the change 28
+of 52 pictures came out in place and 24 displaced as twelve swapped pairs,
+none of them wrong; after it, all 52 are in place and bit-exact against
+ffmpeg. With the level x264 chooses itself, 5.1, both versions are exact,
+which is why the reporter's own x264 clips never reproduced it. A test
+builds the same shape at CIF, rewrites the level to 1.0, which holds one CIF
+picture, and fails on the old bound with picture 2 coming out in place of
+picture 1.
+
 ## Four measurements that said no
 
 Recorded because a profile is a hypothesis generator and an analogy with

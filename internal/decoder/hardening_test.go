@@ -145,17 +145,14 @@ func TestCallerNALByteCeiling(t *testing.T) {
 	}
 }
 
-func TestReorderQueueIsBoundedByTheDecodedPictureBuffer(t *testing.T) {
+func TestReorderQueueIsBoundedByTheLargestFrameBuffer(t *testing.T) {
 	sps := minimalSPS()
 	sps.LevelIDC = 10
 	sps.VUIPresent = true
 	sps.VUI.BitstreamRestriction = true
 	sps.VUI.MaxNumReorderFrames = 1 << 30
-	if got := sps.MaxNumReorder(); got > 16 {
-		t.Fatalf("MaxNumReorder() = %d, want at most the 16 frame buffer maximum", got)
-	}
-	if got := sps.MaxNumReorder(); got != sps.MaxDpbFrames() {
-		t.Fatalf("MaxNumReorder() = %d, want it clamped to MaxDpbFrames() = %d", got, sps.MaxDpbFrames())
+	if got := sps.MaxNumReorder(); got != 16 {
+		t.Fatalf("MaxNumReorder() = %d, want it clamped to the 16 frame buffer maximum", got)
 	}
 }
 
