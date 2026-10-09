@@ -1,10 +1,15 @@
 package mc
 
-import "github.com/oops1/go.264/internal/simd"
+import (
+	"github.com/oops1/go.264/internal/parallel"
+	"github.com/oops1/go.264/internal/simd"
+)
 
 const planeTapBefore = 2
 
 const planeTapAfter = 3
+
+const planeBlocksPerTask = 128
 
 type Planes struct {
 	B      []byte
@@ -30,21 +35,29 @@ func (p *Planes) Build(src []byte, stride, rows int) {
 	}
 	w := stride - planeTapBefore - planeTapAfter
 	h := rows - planeTapBefore - planeTapAfter
-	for y := 0; y < h; y += 16 {
-		bh := 16
-		if y+bh > h {
-			bh = h - y
+	bands := (h + 15) / 16
+	chunk := max(1, planeBlocksPerTask/max(1, w/16))
+	parallel.For(bands, chunk, func(lo, hi int) {
+		for band := lo; band < hi; band++ {
+			p.buildBand(src, stride, w, h, band*16)
 		}
-		for x := 0; x < w; x += 16 {
-			bw := 16
-			if x+bw > w {
-				bw = w - x
-			}
-			off := (planeTapBefore+y)*stride + planeTapBefore + x
-			simd.SixTapHoriz(p.B, stride, off, src, stride, off, bw, bh)
-			simd.SixTapVert(p.H, stride, off, src, stride, off, bw, bh)
-			simd.SixTapHV(p.J, stride, off, src, stride, off, bw, bh)
+	})
+}
+
+func (p *Planes) buildBand(src []byte, stride, w, h, y int) {
+	bh := 16
+	if y+bh > h {
+		bh = h - y
+	}
+	for x := 0; x < w; x += 16 {
+		bw := 16
+		if x+bw > w {
+			bw = w - x
 		}
+		off := (planeTapBefore+y)*stride + planeTapBefore + x
+		simd.SixTapHoriz(p.B, stride, off, src, stride, off, bw, bh)
+		simd.SixTapVert(p.H, stride, off, src, stride, off, bw, bh)
+		simd.SixTapHV(p.J, stride, off, src, stride, off, bw, bh)
 	}
 }
 

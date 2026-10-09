@@ -2,12 +2,14 @@ package encoder
 
 import (
 	"github.com/oops1/go.264/internal/frame"
+	"github.com/oops1/go.264/internal/parallel"
 	"github.com/oops1/go.264/internal/simd"
 )
 
 const (
-	probeRange   = 32
-	probeSettled = 256
+	probeRange       = 32
+	probeSettled     = 256
+	probeRowsPerTask = 128
 )
 
 type complexityProbe struct {
@@ -19,6 +21,7 @@ type complexityProbe struct {
 	prev    []byte
 	mvx     []int8
 	mvy     []int8
+	rowCost []int
 	primed  bool
 }
 
@@ -29,13 +32,16 @@ func newComplexityProbe(widthMBs, heightMBs int) *complexityProbe {
 	p.prev = make([]byte, p.stride*p.height)
 	p.mvx = make([]int8, widthMBs*heightMBs)
 	p.mvy = make([]int8, widthMBs*heightMBs)
+	p.rowCost = make([]int, heightMBs)
 	return p
 }
 
 func (p *complexityProbe) take(src *frame.Picture) {
-	for y := 0; y < p.height; y++ {
-		copy(p.cur[y*p.stride:(y+1)*p.stride], src.Y[src.LumaOffset(0, y):])
-	}
+	parallel.For(p.height, probeRowsPerTask, func(lo, hi int) {
+		for y := lo; y < hi; y++ {
+			copy(p.cur[y*p.stride:(y+1)*p.stride], src.Y[src.LumaOffset(0, y):])
+		}
+	})
 }
 
 func (p *complexityProbe) match(bx, by, mvx, mvy int) int {
@@ -130,17 +136,21 @@ func (p *complexityProbe) measure(src *frame.Picture) (float64, bool) {
 		p.cur, p.prev = p.prev, p.cur
 		return 0, false
 	}
-	total := 0
-	for by := 0; by < p.blocksY; by++ {
-		for bx := 0; bx < p.blocksX; bx++ {
-			cost := p.search(bx, by)
-			if cost > probeSettled {
-				if c := p.alone(bx, by); c < cost {
-					cost = c
-				}
+	for i := range p.rowCost {
+		p.rowCost[i] = 0
+	}
+	parallel.Wavefront(p.blocksY, p.blocksX, 1, func(bx, by int) {
+		cost := p.search(bx, by)
+		if cost > probeSettled {
+			if c := p.alone(bx, by); c < cost {
+				cost = c
 			}
-			total += cost
 		}
+		p.rowCost[by] += cost
+	})
+	total := 0
+	for _, c := range p.rowCost {
+		total += c
 	}
 	p.cur, p.prev = p.prev, p.cur
 	return float64(total), true

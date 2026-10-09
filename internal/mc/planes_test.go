@@ -45,3 +45,28 @@ func TestPlanePredictionMatchesTheDirectFilter(t *testing.T) {
 	}
 	t.Logf("%d block predictions match the direct filter byte for byte", checked)
 }
+
+func TestPlanesBuiltInBandsMatchOneBandAtATime(t *testing.T) {
+	const stride, rows = 3440 + 64, 1440 + 64
+	r := rand.New(rand.NewSource(5))
+	src := make([]byte, stride*rows)
+	for i := range src {
+		src[i] = byte(r.Intn(256))
+	}
+	var got Planes
+	got.Build(src, stride, rows)
+	want := Planes{B: make([]byte, stride*rows), H: make([]byte, stride*rows), J: make([]byte, stride*rows),
+		Stride: stride, rows: rows}
+	w := stride - planeTapBefore - planeTapAfter
+	h := rows - planeTapBefore - planeTapAfter
+	for y := 0; y < h; y += 16 {
+		want.buildBand(src, stride, w, h, y)
+	}
+	for name, pair := range map[string][2][]byte{"B": {got.B, want.B}, "H": {got.H, want.H}, "J": {got.J, want.J}} {
+		for i := range pair[0] {
+			if pair[0][i] != pair[1][i] {
+				t.Fatalf("plane %s differs at offset %d: %d, one band at a time gives %d", name, i, pair[0][i], pair[1][i])
+			}
+		}
+	}
+}

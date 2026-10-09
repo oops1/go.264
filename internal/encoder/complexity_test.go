@@ -1,6 +1,7 @@
 package encoder
 
 import (
+	"runtime"
 	"testing"
 
 	"github.com/oops1/go.264/internal/frame"
@@ -224,5 +225,28 @@ func BenchmarkComplexityProbe(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		probe.measure(sources[i%len(sources)])
+	}
+}
+
+func TestComplexityProbeGivesTheSameAnswerOnOneProcessor(t *testing.T) {
+	if runtime.GOMAXPROCS(0) < 2 {
+		t.Skip("one processor is the only answer there is")
+	}
+	const w, h = 1920, 1088
+	var frames [][]byte
+	for _, clip := range screencastClips() {
+		frames = append(frames, clip.frames(w, h, 3)...)
+	}
+	cfg := probeConfig(w, h)
+	parallelRun := probeOver(t, cfg, frames)
+	defer runtime.GOMAXPROCS(runtime.GOMAXPROCS(1))
+	serialRun := probeOver(t, cfg, frames)
+	if len(parallelRun) != len(serialRun) {
+		t.Fatalf("%d measurements against %d", len(parallelRun), len(serialRun))
+	}
+	for i := range serialRun {
+		if parallelRun[i] != serialRun[i] {
+			t.Fatalf("picture %d measures %g across rows and %g in raster order", i+1, parallelRun[i], serialRun[i])
+		}
 	}
 }

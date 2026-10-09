@@ -13,6 +13,7 @@ import (
 	"github.com/oops1/go.264/internal/loopfilter"
 	"github.com/oops1/go.264/internal/mc"
 	"github.com/oops1/go.264/internal/nal"
+	"github.com/oops1/go.264/internal/parallel"
 	"github.com/oops1/go.264/internal/syntax"
 	"github.com/oops1/go.264/internal/transform"
 )
@@ -66,6 +67,11 @@ type Config struct {
 	AQMode     AQMode
 	AQStrength float64
 }
+
+const (
+	sourceRowsPerTask = 64
+	motionRowsPerTask = 8
+)
 
 type DeblockMode uint8
 
@@ -741,31 +747,33 @@ func samePictures(a, b []*frame.Picture) bool {
 
 func (e *Encoder) motionField() *frame.Motion {
 	mo := frame.NewMotion(e.widthMBs, e.heightMBs)
-	for mby := 0; mby < e.heightMBs; mby++ {
-		for mbx := 0; mbx < e.widthMBs; mbx++ {
-			m := e.at(mbx, mby)
-			if m == nil || m.Intra {
-				continue
-			}
-			for blk := 0; blk < 16; blk++ {
-				i := mo.Index(mbx*4+blockX[blk]/4, mby*4+blockY[blk]/4)
-				if r := m.refIdx[blk]; r >= 0 {
-					mo.Mv[0][i] = m.MvL0[blk]
-					mo.RefIdx[0][i] = r
-					if p := m.RefPicL0[blk]; p != nil {
-						mo.RefPOC[0][i] = int32(p.POC)
-					}
+	parallel.For(e.heightMBs, motionRowsPerTask, func(lo, hi int) {
+		for mby := lo; mby < hi; mby++ {
+			for mbx := 0; mbx < e.widthMBs; mbx++ {
+				m := e.at(mbx, mby)
+				if m == nil || m.Intra {
+					continue
 				}
-				if r := m.refIdxL1[blk]; r >= 0 {
-					mo.Mv[1][i] = m.MvL1[blk]
-					mo.RefIdx[1][i] = r
-					if p := m.RefPicL1[blk]; p != nil {
-						mo.RefPOC[1][i] = int32(p.POC)
+				for blk := 0; blk < 16; blk++ {
+					i := mo.Index(mbx*4+blockX[blk]/4, mby*4+blockY[blk]/4)
+					if r := m.refIdx[blk]; r >= 0 {
+						mo.Mv[0][i] = m.MvL0[blk]
+						mo.RefIdx[0][i] = r
+						if p := m.RefPicL0[blk]; p != nil {
+							mo.RefPOC[0][i] = int32(p.POC)
+						}
+					}
+					if r := m.refIdxL1[blk]; r >= 0 {
+						mo.Mv[1][i] = m.MvL1[blk]
+						mo.RefIdx[1][i] = r
+						if p := m.RefPicL1[blk]; p != nil {
+							mo.RefPOC[1][i] = int32(p.POC)
+						}
 					}
 				}
 			}
 		}
-	}
+	})
 	return mo
 }
 
@@ -1038,34 +1046,35 @@ func (e *Encoder) encodeSlices(jobs []sliceJob, hints *frameHints) ([][]byte, er
 func (e *Encoder) loadSourceInto(dst *frame.Picture, yuv []byte) {
 	w, h := e.cfg.Width, e.cfg.Height
 	pw, ph := e.widthMBs*16, e.heightMBs*16
-	n := 0
-	for y := 0; y < h; y++ {
-		row := dst.Y[dst.LumaOffset(0, y):]
-		copy(row[:w], yuv[n:n+w])
-		for x := w; x < pw; x++ {
-			row[x] = row[w-1]
+	cw, ch := w/2, h/2
+	pcw, pch := pw/2, ph/2
+	cb, cr := yuv[w*h:w*h+cw*ch], yuv[w*h+cw*ch:]
+	parallel.For(h, sourceRowsPerTask, func(lo, hi int) {
+		for y := lo; y < hi; y++ {
+			loadRow(dst.Y[dst.LumaOffset(0, y):dst.LumaOffset(0, y)+pw], yuv[y*w:(y+1)*w])
+			if y%2 == 0 {
+				c := dst.ChromaOffset(0, y/2)
+				loadRow(dst.Cb[c:c+pcw], cb[y/2*cw:(y/2+1)*cw])
+				loadRow(dst.Cr[c:c+pcw], cr[y/2*cw:(y/2+1)*cw])
+			}
 		}
-		n += w
-	}
+	})
 	for y := h; y < ph; y++ {
 		copy(dst.Y[dst.LumaOffset(0, y):dst.LumaOffset(0, y)+pw],
 			dst.Y[dst.LumaOffset(0, h-1):dst.LumaOffset(0, h-1)+pw])
 	}
-	cw, ch := w/2, h/2
-	pcw, pch := pw/2, ph/2
 	for _, plane := range [][]byte{dst.Cb, dst.Cr} {
-		for y := 0; y < ch; y++ {
-			row := plane[dst.ChromaOffset(0, y):]
-			copy(row[:cw], yuv[n:n+cw])
-			for x := cw; x < pcw; x++ {
-				row[x] = row[cw-1]
-			}
-			n += cw
-		}
 		for y := ch; y < pch; y++ {
 			copy(plane[dst.ChromaOffset(0, y):dst.ChromaOffset(0, y)+pcw],
 				plane[dst.ChromaOffset(0, ch-1):dst.ChromaOffset(0, ch-1)+pcw])
 		}
+	}
+}
+
+func loadRow(dst, src []byte) {
+	copy(dst, src)
+	for x := len(src); x < len(dst); x++ {
+		dst[x] = src[len(src)-1]
 	}
 }
 

@@ -3,6 +3,7 @@ package loopfilter
 import (
 	"github.com/oops1/go.264/internal/deblock"
 	"github.com/oops1/go.264/internal/frame"
+	"github.com/oops1/go.264/internal/parallel"
 	"github.com/oops1/go.264/internal/syntax"
 )
 
@@ -104,11 +105,7 @@ func Apply(pic *frame.Picture, widthMBs, heightMBs int, at func(mbx, mby int) *M
 		return
 	}
 	ctx := edgeContext{at: at, pic: pic}
-	for mby := 0; mby < heightMBs; mby++ {
-		for mbx := 0; mbx < widthMBs; mbx++ {
-			ctx.filterMB(mbx, mby)
-		}
-	}
+	parallel.Wavefront(heightMBs, widthMBs, 2, ctx.filterMB)
 }
 
 func (c *edgeContext) neighbourFor(m *MB, mbx, mby, dx, dy int) *MB {
