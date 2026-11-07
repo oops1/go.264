@@ -986,3 +986,55 @@ func TestFinishPictureWithMMCO5OutputsEarlierPicturesFirst(t *testing.T) {
 		t.Fatalf("pending %v, picture order count %d: want the operation 5 picture alone, at 0", d.pending, cur.POC)
 	}
 }
+
+func TestComputePOCIsTheMinimumOfTopAndBottom(t *testing.T) {
+	sps0 := &syntax.SPS{PicOrderCntType: 0, Log2MaxPicOrderCntLsbMinus4: 4}
+	sps1 := &syntax.SPS{PicOrderCntType: 1, OffsetForTopToBottomField: -4, OffsetForRefFrame: []int32{2}}
+	cases := []struct {
+		name        string
+		sps         *syntax.SPS
+		hdr         *syntax.SliceHeader
+		want        int
+		top, bottom int
+	}{
+		{"type 0, bottom before top", sps0, &syntax.SliceHeader{NalRefIDC: 1, PicOrderCntLsb: 10, DeltaPicOrderCntBottom: -3}, 7, 10, 7},
+		{"type 0, bottom after top", sps0, &syntax.SliceHeader{NalRefIDC: 1, PicOrderCntLsb: 10, DeltaPicOrderCntBottom: 2}, 10, 10, 12},
+		{"type 1, offset_for_top_to_bottom_field", sps1, &syntax.SliceHeader{NalRefIDC: 1, FrameNum: 1, DeltaPicOrderCnt: [2]int32{1, -1}}, -2, 3, -2},
+	}
+	for _, c := range cases {
+		b := &dpb{maxFrameNum: 16}
+		if got := b.computePOC(c.sps, c.hdr); got != c.want || b.curTop != c.top || b.curBottom != c.bottom {
+			t.Errorf("%s: POC %d top %d bottom %d, want %d %d %d", c.name, got, b.curTop, b.curBottom, c.want, c.top, c.bottom)
+		}
+	}
+}
+
+// 8.2.1: after operation 5 both counts are rebased by Min(top, bottom), and
+// 8.2.1.1 starts the next picture from PicOrderCntMsb 0 and the rebased
+// TopFieldOrderCnt, which is not 0 when the bottom field comes first.
+func TestMMCO5RebasesPrevPicOrderCntLsbWithNegativeBottomDelta(t *testing.T) {
+	sps := &syntax.SPS{PicOrderCntType: 0, Log2MaxPicOrderCntLsbMinus4: 4}
+	for _, c := range []struct {
+		delta   int32
+		wantLsb int
+	}{{-3, 3}, {0, 0}, {2, 0}} {
+		b := &dpb{maxNumRefs: 4, maxFrameNum: 16}
+		hdr := &syntax.SliceHeader{
+			NalRefIDC: 1, FrameNum: 5, PicOrderCntLsb: 10, DeltaPicOrderCntBottom: c.delta,
+			AdaptiveRefPicMarking: true, MMCOs: []syntax.MMCO{{Op: 5}},
+		}
+		pic := frame.NewPicture(1, 1)
+		pic.POC = b.computePOC(sps, hdr)
+		if !b.store(pic, hdr) {
+			t.Fatal("operation 5 not reported")
+		}
+		if b.prevPicOrderCntMsb != 0 || b.prevPicOrderCntLsb != c.wantLsb {
+			t.Errorf("delta %d: prevMsb %d prevLsb %d, want 0 and %d", c.delta, b.prevPicOrderCntMsb, b.prevPicOrderCntLsb, c.wantLsb)
+		}
+		// The next picture, lsb 4: measured from the rebased state.
+		next := &syntax.SliceHeader{NalRefIDC: 1, FrameNum: 1, PicOrderCntLsb: 4}
+		if got := b.computePOC(sps, next); got != 4 {
+			t.Errorf("delta %d: next picture POC %d, want 4", c.delta, got)
+		}
+	}
+}

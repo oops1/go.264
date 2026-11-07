@@ -36,6 +36,10 @@ type dpb struct {
 	// a reference picture has been stored.
 	prevRefFrameNum uint32
 	haveRef         bool
+
+	// curTop and curBottom are TopFieldOrderCnt and BottomFieldOrderCnt of the
+	// picture whose order count was derived last.
+	curTop, curBottom int
 }
 
 func newDPB(sps *syntax.SPS) *dpb {
@@ -54,7 +58,25 @@ func (b *dpb) clear() {
 	b.prevFrameNum = 0
 }
 
+// computePOC returns PicOrderCnt of the frame, Min(TopFieldOrderCnt,
+// BottomFieldOrderCnt) (8-1), and keeps both counts for the picture so that
+// operation 5 can rebase them (section 8.2.1, tempPicOrderCnt).
 func (b *dpb) computePOC(sps *syntax.SPS, hdr *syntax.SliceHeader) int {
+	top := b.topPOC(sps, hdr)
+	bottom := top
+	switch sps.PicOrderCntType {
+	case 0: // (8-5) for a frame
+		bottom = top + int(hdr.DeltaPicOrderCntBottom)
+	case 1: // (8-10)
+		bottom = top + int(sps.OffsetForTopToBottomField) + int(hdr.DeltaPicOrderCnt[1])
+	}
+	b.curTop, b.curBottom = top, bottom
+	return min(top, bottom)
+}
+
+// topPOC derives TopFieldOrderCnt (8.2.1.1 to 8.2.1.3) and advances the
+// previous-picture state.
+func (b *dpb) topPOC(sps *syntax.SPS, hdr *syntax.SliceHeader) int {
 	switch sps.PicOrderCntType {
 	case 0:
 		maxLsb := int(sps.MaxPicOrderCntLsb())
@@ -347,8 +369,11 @@ func (b *dpb) store(pic *frame.Picture, hdr *syntax.SliceHeader) (mmco5 bool) {
 			entry.frameNum = 0
 			pic.FrameNum = 0
 			b.prevRefFrameNum = 0
+			// 8.2.1: tempPicOrderCnt = Min(top, bottom) is taken off both
+			// counts, and 8.2.1.1 then starts the next picture from
+			// PicOrderCntMsb 0 and the rebased TopFieldOrderCnt.
 			b.prevPicOrderCntMsb = 0
-			b.prevPicOrderCntLsb = 0
+			b.prevPicOrderCntLsb = b.curTop - min(b.curTop, b.curBottom)
 			b.prevFrameNumOffset = 0
 			b.prevFrameNum = 0
 			mmco5 = true
