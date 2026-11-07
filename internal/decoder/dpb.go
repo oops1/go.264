@@ -14,6 +14,11 @@ type refFrame struct {
 	picNum       int
 	longTerm     bool
 	longTermIdx  int
+	// nonExisting marks a frame inferred for a gap in frame_num (section
+	// 8.2.5.2). It holds a reference slot and a frame number but has no
+	// picture of its own: pic is borrowed from the nearest real reference so
+	// that a stream which wrongly refers to it still decodes.
+	nonExisting bool
 }
 
 type dpb struct {
@@ -25,6 +30,12 @@ type dpb struct {
 	prevPicOrderCntLsb int
 	prevFrameNumOffset int
 	prevFrameNum       uint32
+
+	// prevRefFrameNum is PrevRefFrameNum of section 7.4.3: the frame_num of the
+	// previous reference picture, 0 after one with operation 5. It exists once
+	// a reference picture has been stored.
+	prevRefFrameNum uint32
+	haveRef         bool
 }
 
 func newDPB(sps *syntax.SPS) *dpb {
@@ -308,30 +319,98 @@ func moveToIndex(list []*refFrame, target *refFrame, idx int) []*refFrame {
 	return out
 }
 
-func (b *dpb) store(pic *frame.Picture, hdr *syntax.SliceHeader) {
+// store marks the decoded picture as a reference. It reports whether the
+// picture carried memory_management_control_operation 5, after which the
+// caller must treat everything decoded before it as outputtable and give the
+// picture the picture order count 0 (H.264 section 8.2.1, "tempPicOrderCnt").
+func (b *dpb) store(pic *frame.Picture, hdr *syntax.SliceHeader) (mmco5 bool) {
 	if hdr.NalRefIDC == 0 {
-		return
+		return false
 	}
+	b.prevRefFrameNum, b.haveRef = hdr.FrameNum, true
 	if hdr.IDR {
 		b.refs = b.refs[:0]
 		entry := &refFrame{pic: pic, frameNum: hdr.FrameNum, longTerm: hdr.LongTermReference}
 		pic.LongTerm = hdr.LongTermReference
 		b.refs = append(b.refs, entry)
 		b.updatePicNums(hdr.FrameNum)
-		return
+		return false
 	}
 	if hdr.AdaptiveRefPicMarking {
 		entry := &refFrame{pic: pic, frameNum: hdr.FrameNum}
 		b.applyMMCO(hdr, entry)
+		if hasMMCO5(hdr) {
+			// Section 7.4.3: after operation 5 the picture is inferred to have
+			// had frame_num 0, and section 8.2.1 restarts the order count
+			// from it, so the next picture's FrameNumWrap, FrameNumOffset and
+			// PicOrderCntMsb are all taken against 0.
+			entry.frameNum = 0
+			pic.FrameNum = 0
+			b.prevRefFrameNum = 0
+			b.prevPicOrderCntMsb = 0
+			b.prevPicOrderCntLsb = 0
+			b.prevFrameNumOffset = 0
+			b.prevFrameNum = 0
+			mmco5 = true
+		}
 		b.refs = append(b.refs, entry)
-		b.updatePicNums(hdr.FrameNum)
+		b.updatePicNums(entry.frameNum)
 		b.enforceCapacity()
-		return
+		return mmco5
 	}
 	b.refs = append(b.refs, &refFrame{pic: pic, frameNum: hdr.FrameNum})
 	b.updatePicNums(hdr.FrameNum)
 	b.slidingWindow()
 	b.enforceCapacity()
+	return false
+}
+
+// fillGap runs the decoding process for gaps in frame_num (section 8.2.5.2).
+// When the slice's frame_num is neither PrevRefFrameNum nor the value after it,
+// frames were lost or, with gaps_in_frame_num_value_allowed_flag set, left out
+// on purpose (temporal scalability, sub-sequences). Each missing frame number
+// becomes a "non-existing" short-term reference frame, so that the sliding
+// window moves as the encoder's did and the frame numbers the slice refers to
+// still resolve to the right pictures.
+//
+// Only the last max_num_ref_frames of them can survive the sliding window, so
+// a stream cannot make this allocate more than that however wide the gap.
+func (b *dpb) fillGap(sps *syntax.SPS, hdr *syntax.SliceHeader) {
+	if hdr.IDR || !b.haveRef || !sps.GapsInFrameNumValueAllowed || len(b.refs) == 0 {
+		return
+	}
+	max := b.maxFrameNum
+	next := (b.prevRefFrameNum + 1) % max
+	if hdr.FrameNum == b.prevRefFrameNum || hdr.FrameNum == next {
+		return
+	}
+	gap := int((hdr.FrameNum + max - next) % max)
+	donor := b.refs[len(b.refs)-1].pic
+	for i, fn := 0, next; i < gap; i, fn = i+1, (fn+1)%max {
+		if sps.PicOrderCntType != 0 {
+			// The order count of the following picture is measured from the
+			// last frame number seen, including these.
+			if fn < b.prevFrameNum {
+				b.prevFrameNumOffset += int(max)
+			}
+			b.prevFrameNum = fn
+		}
+		if i >= gap-b.maxNumRefs {
+			b.refs = append(b.refs, &refFrame{pic: donor, frameNum: fn, nonExisting: true})
+			b.updatePicNums(fn)
+			b.slidingWindow()
+		}
+	}
+	b.prevRefFrameNum = (hdr.FrameNum + max - 1) % max
+}
+
+func hasMMCO5(hdr *syntax.SliceHeader) bool {
+	for _, m := range hdr.MMCOs {
+		if m.Op == 5 {
+			return true
+		}
+	}
+	return false
 }
 
 func (b *dpb) enforceCapacity() {
@@ -362,7 +441,9 @@ func (b *dpb) applyMMCO(hdr *syntax.SliceHeader, current *refFrame) {
 			if r := b.shortTermByPicNum(pn); r != nil {
 				r.longTerm = true
 				r.longTermIdx = int(m.LongTermFrameIdx)
-				r.pic.LongTerm = true
+				if !r.nonExisting {
+					r.pic.LongTerm = true
+				}
 			}
 		case 4:
 			max := int(m.MaxLongTermFrameIdxPlus1) - 1

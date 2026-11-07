@@ -130,11 +130,17 @@ func (d *Decoder) finishPicture() []*frame.Picture {
 	if d.grid != nil {
 		pic.Motion = d.grid.motion()
 	}
-	if d.buffer != nil && d.lastHdr != nil {
-		d.buffer.store(pic, d.lastHdr)
+	var out []*frame.Picture
+	if d.buffer != nil && d.lastHdr != nil && d.buffer.store(pic, d.lastHdr) {
+		// Memory management control operation 5 ends the coded video sequence
+		// as far as output is concerned, as an IDR picture does (Annex C.4.4):
+		// the pictures before it all come out first, and its own order count
+		// restarts at 0, below the ones they carried.
+		out = d.bump(true)
+		pic.POC = 0
 	}
 	d.pending = append(d.pending, pic)
-	return d.bump(false)
+	return append(out, d.bump(false)...)
 }
 
 func (d *Decoder) handleUnit(ebsp []byte) ([]*frame.Picture, error) {
@@ -234,6 +240,7 @@ func (d *Decoder) decodeSlice(u nal.Unit) ([]*frame.Picture, error) {
 		if hdr.IDR {
 			d.buffer.refs = d.buffer.refs[:0]
 		}
+		d.buffer.fillGap(sps, hdr)
 		d.sps = sps
 		d.cur = frame.NewPicture(sps.PicWidthInMbs(), sps.FrameHeightInMbs())
 		d.cur.FrameNum = hdr.FrameNum

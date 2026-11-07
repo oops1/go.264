@@ -829,3 +829,160 @@ func TestSlidingWindowStillAppliesWithoutAdaptiveMarking(t *testing.T) {
 		}
 	}
 }
+
+func TestStoreMMCO5RestartsFrameNumAndOrderCount(t *testing.T) {
+	old := newRef(7, false, 0)
+	b := &dpb{
+		maxNumRefs: 4, maxFrameNum: 16, refs: []*refFrame{old},
+		prevPicOrderCntMsb: 32, prevPicOrderCntLsb: 5, prevFrameNumOffset: 16, prevFrameNum: 9,
+	}
+	pic := frame.NewPicture(1, 1)
+	hdr := &syntax.SliceHeader{
+		NalRefIDC: 1, FrameNum: 9, AdaptiveRefPicMarking: true,
+		MMCOs: []syntax.MMCO{{Op: 5}},
+	}
+
+	if !b.store(pic, hdr) {
+		t.Fatal("store did not report operation 5")
+	}
+
+	// Section 7.4.3: the picture is inferred to have had frame_num 0; the
+	// operation also emptied the buffer, so it is alone in it.
+	if len(b.refs) != 1 || b.refs[0].pic != pic || b.refs[0].frameNum != 0 || pic.FrameNum != 0 {
+		t.Fatalf("refs = %+v, want only the new picture with frame number 0", b.refs)
+	}
+	// Section 8.2.1: the next picture's order count and FrameNumOffset are
+	// measured from it.
+	if b.prevPicOrderCntMsb != 0 || b.prevPicOrderCntLsb != 0 || b.prevFrameNumOffset != 0 || b.prevFrameNum != 0 || b.prevRefFrameNum != 0 {
+		t.Fatalf("state after operation 5: %+v", b)
+	}
+}
+
+func TestStoreWithoutMMCO5ReportsNothing(t *testing.T) {
+	b := &dpb{maxNumRefs: 4, maxFrameNum: 16}
+	for name, hdr := range map[string]*syntax.SliceHeader{
+		"non-reference": {NalRefIDC: 0, FrameNum: 3},
+		"idr":           {NalRefIDC: 1, IDR: true},
+		"sliding":       {NalRefIDC: 1, FrameNum: 1},
+		"adaptive":      {NalRefIDC: 1, FrameNum: 2, AdaptiveRefPicMarking: true, MMCOs: []syntax.MMCO{{Op: 4, MaxLongTermFrameIdxPlus1: 1}}},
+	} {
+		if b.store(frame.NewPicture(1, 1), hdr) {
+			t.Errorf("%s: reported operation 5", name)
+		}
+	}
+	if b.prevRefFrameNum != 2 || !b.haveRef {
+		t.Errorf("PrevRefFrameNum = %d (have %v), want 2: the non-reference picture must not move it", b.prevRefFrameNum, b.haveRef)
+	}
+}
+
+func gapState(maxNumRefs int, maxFrameNum uint32, prevRef uint32, frameNums ...uint32) *dpb {
+	b := &dpb{maxNumRefs: maxNumRefs, maxFrameNum: maxFrameNum, prevRefFrameNum: prevRef, haveRef: true}
+	for _, fn := range frameNums {
+		b.refs = append(b.refs, newRef(fn, false, 0))
+	}
+	return b
+}
+
+func frameNums(b *dpb) []uint32 {
+	var out []uint32
+	for _, r := range b.refs {
+		out = append(out, r.frameNum)
+	}
+	return out
+}
+
+func equalFrameNums(a, b []uint32) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
+func TestFillGapInsertsNonExistingFrames(t *testing.T) {
+	sps := &syntax.SPS{GapsInFrameNumValueAllowed: true}
+	cases := []struct {
+		name     string
+		b        *dpb
+		sps      *syntax.SPS
+		hdr      *syntax.SliceHeader
+		want     []uint32
+		wantPrev uint32
+	}{
+		{"next frame number is no gap", gapState(3, 16, 5, 5), sps, &syntax.SliceHeader{FrameNum: 6}, []uint32{5}, 5},
+		{"same frame number is no gap", gapState(3, 16, 5, 5), sps, &syntax.SliceHeader{FrameNum: 5}, []uint32{5}, 5},
+		{"gap of three, window keeps the last three", gapState(3, 16, 5, 4, 5), sps, &syntax.SliceHeader{FrameNum: 9}, []uint32{6, 7, 8}, 8},
+		{"gap of one", gapState(4, 16, 5, 5), sps, &syntax.SliceHeader{FrameNum: 7}, []uint32{5, 6}, 6},
+		{"gap across the wrap", gapState(4, 16, 14, 14), sps, &syntax.SliceHeader{FrameNum: 2}, []uint32{14, 15, 0, 1}, 1},
+		{"gaps not allowed", gapState(3, 16, 5, 5), &syntax.SPS{}, &syntax.SliceHeader{FrameNum: 9}, []uint32{5}, 5},
+		{"idr", gapState(3, 16, 5, 5), sps, &syntax.SliceHeader{FrameNum: 9, IDR: true}, []uint32{5}, 5},
+		{"no reference seen yet", &dpb{maxNumRefs: 3, maxFrameNum: 16}, sps, &syntax.SliceHeader{FrameNum: 9}, nil, 0},
+		{"empty buffer", &dpb{maxNumRefs: 3, maxFrameNum: 16, haveRef: true}, sps, &syntax.SliceHeader{FrameNum: 9}, nil, 0},
+	}
+	for _, c := range cases {
+		c.b.fillGap(c.sps, c.hdr)
+		if got := frameNums(c.b); !equalFrameNums(got, c.want) {
+			t.Errorf("%s: frame numbers %v, want %v", c.name, got, c.want)
+		}
+		if c.b.prevRefFrameNum != c.wantPrev {
+			t.Errorf("%s: PrevRefFrameNum %d, want %d", c.name, c.b.prevRefFrameNum, c.wantPrev)
+		}
+	}
+}
+
+func TestFillGapMarksFramesNonExistingAndBoundsThem(t *testing.T) {
+	b := gapState(4, 65536, 10, 10)
+	b.fillGap(&syntax.SPS{GapsInFrameNumValueAllowed: true}, &syntax.SliceHeader{FrameNum: 60000})
+	if len(b.refs) != 4 {
+		t.Fatalf("%d reference frames after a gap of 59989, want max_num_ref_frames (4)", len(b.refs))
+	}
+	for _, r := range b.refs {
+		if !r.nonExisting {
+			t.Errorf("frame %d is not marked non-existing", r.frameNum)
+		}
+	}
+	// A non-existing frame converted to long term must not mark the real
+	// picture it borrows.
+	donor := b.refs[0].pic
+	b.applyMMCO(&syntax.SliceHeader{FrameNum: 60000, MMCOs: []syntax.MMCO{{Op: 3, DifferenceOfPicNumsMinus1: 0, LongTermFrameIdx: 1}}}, newCurrent())
+	if donor.LongTerm {
+		t.Error("operation 3 on a non-existing frame marked the borrowed picture long term")
+	}
+}
+
+func TestFillGapKeepsTheOrderCountCounters(t *testing.T) {
+	// Order count type 2 detects a wrap by frame_num going down; the gap's
+	// frame numbers have to count, or the wrap inside the gap is lost.
+	b := gapState(2, 16, 14, 14)
+	b.prevFrameNum = 14
+	b.fillGap(&syntax.SPS{GapsInFrameNumValueAllowed: true, PicOrderCntType: 2}, &syntax.SliceHeader{FrameNum: 3})
+	if b.prevFrameNumOffset != 16 || b.prevFrameNum != 2 {
+		t.Fatalf("offset %d prevFrameNum %d, want 16 and 2", b.prevFrameNumOffset, b.prevFrameNum)
+	}
+}
+
+func TestFinishPictureWithMMCO5OutputsEarlierPicturesFirst(t *testing.T) {
+	d := New()
+	d.maxReorder = 8
+	d.buffer = &dpb{maxNumRefs: 4, maxFrameNum: 16}
+	earlier := []*frame.Picture{frame.NewPicture(1, 1), frame.NewPicture(1, 1)}
+	earlier[0].POC, earlier[1].POC = 40, 38
+	d.pending = append(d.pending, earlier...)
+	cur := frame.NewPicture(1, 1)
+	cur.POC = 44
+	d.cur = cur
+	d.lastHdr = &syntax.SliceHeader{NalRefIDC: 1, FrameNum: 5, AdaptiveRefPicMarking: true, MMCOs: []syntax.MMCO{{Op: 5}}}
+
+	out := d.finishPicture()
+
+	if len(out) != 2 || out[0] != earlier[1] || out[1] != earlier[0] {
+		t.Fatalf("output %v, want the two earlier pictures in order count order", out)
+	}
+	if len(d.pending) != 1 || d.pending[0] != cur || cur.POC != 0 {
+		t.Fatalf("pending %v, picture order count %d: want the operation 5 picture alone, at 0", d.pending, cur.POC)
+	}
+}
