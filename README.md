@@ -300,6 +300,15 @@ compares every sample against frames produced by ffmpeg. `testdata/regen.sh`
 regenerates that corpus. Tests that shell out to ffmpeg skip themselves when
 it is not installed.
 
+Three tests measure quality rather than correctness: they code whole
+1920x1080 sessions several times over to compare constant quality and
+adaptive quantisation with a fixed quantiser at equal rate, and take minutes.
+They run only when asked for, and CI asks for them in one of its jobs:
+
+```bash
+GO264_MEASURE=1 go test ./internal/encoder
+```
+
 ## License
 
 BSD 2-Clause. See [LICENSE](LICENSE).

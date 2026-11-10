@@ -340,6 +340,7 @@ var convergenceVariants = []struct {
 }
 
 func TestIntraRefreshConvergesWithoutAKeyFrame(t *testing.T) {
+	t.Parallel()
 	for _, src := range trim(convergenceSources, 1) {
 		for _, variant := range trim(convergenceVariants, 1) {
 			t.Run(src.name+" "+variant.name, func(t *testing.T) {
@@ -444,6 +445,7 @@ func streamCost(units [][]byte) (total, peak int) {
 }
 
 func TestIntraRefreshCostAgainstPeriodicKeyFrames(t *testing.T) {
+	t.Parallel()
 	if raceDetector {
 		t.Skip("the cost measurement is too slow under the race detector")
 	}

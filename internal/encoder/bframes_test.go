@@ -184,6 +184,7 @@ func TestBFramesEmitNothingUntilTheAnchorArrives(t *testing.T) {
 }
 
 func TestBFramesRoundTrip(t *testing.T) {
+	t.Parallel()
 	for _, cabac := range []bool{false, true} {
 		for _, bframes := range []int{1, 2, 3} {
 			for _, qp := range []int{0, 26, 45} {

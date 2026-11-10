@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"math"
+	"os"
 	"testing"
 
 	"github.com/oops1/go.264/internal/frame"
@@ -390,13 +391,15 @@ func screencastSession(w, h, perScene int) [][]byte {
 	return out
 }
 
+const measureEnv = "GO264_MEASURE"
+
 func skipUnlessMeasuring(t *testing.T) {
 	t.Helper()
 	if raceDetector {
 		t.Skip("a whole 1920x1080 session is far too slow under the race detector, which has no concurrency to find here")
 	}
-	if testing.Short() {
-		t.Skip("the comparison only means something over a whole 1920x1080 session, which is not a short test")
+	if os.Getenv(measureEnv) == "" {
+		t.Skipf("this measures quality over a whole 1920x1080 session and takes minutes; set %s=1 to run it", measureEnv)
 	}
 }
 

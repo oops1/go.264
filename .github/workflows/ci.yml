@@ -30,6 +30,8 @@ jobs:
       - name: Vet
         run: go vet ./...
       - name: Test
+        env:
+          GO264_MEASURE: ${{ matrix.os == 'ubuntu-latest' && '1' || '' }}
         run: go test -count=1 -timeout 90m -coverprofile=coverage.txt -covermode=atomic ./...
       - name: Coverage summary
         run: go tool cover -func=coverage.txt | tail -n 1

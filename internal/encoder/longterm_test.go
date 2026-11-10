@@ -195,6 +195,7 @@ func TestLongTermConfigurationIsChecked(t *testing.T) {
 }
 
 func TestLongTermMarkingRoundTrips(t *testing.T) {
+	t.Parallel()
 	frames := screenContent(320, 240, 24)
 	cases := []struct {
 		name string
@@ -220,6 +221,7 @@ func TestLongTermMarkingRoundTrips(t *testing.T) {
 }
 
 func TestLongTermMarkingRoundTripsWithBPictures(t *testing.T) {
+	t.Parallel()
 	for _, cabac := range []bool{false, true} {
 		for _, bframes := range []int{1, 3} {
 			cfg := longTermConfig(1)
@@ -436,6 +438,7 @@ func screenContentWithDither(w, h, frames int) [][]byte {
 }
 
 func TestLongTermReferenceOnScreenContent(t *testing.T) {
+	t.Parallel()
 	for _, content := range []struct {
 		name   string
 		frames [][]byte
@@ -537,6 +540,7 @@ func countLongTermBiPredUsage(enc *Encoder) (l0, l1, total int) {
 }
 
 func TestLongTermReferencesInBiPredictedPictures(t *testing.T) {
+	t.Parallel()
 	for _, content := range []struct {
 		name   string
 		frames [][]byte

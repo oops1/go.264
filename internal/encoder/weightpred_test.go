@@ -123,6 +123,7 @@ func encodeWeighted(t *testing.T, cfg Config, frames [][]byte) ([]byte, []*frame
 }
 
 func TestWeightedPredictionMatchesTheEncoderReconstruction(t *testing.T) {
+	t.Parallel()
 	frames := fadeFrames(t)
 	for _, mode := range []WeightedPrediction{WeightedPredictionExplicit, WeightedPredictionImplicit} {
 		for _, bframes := range []int{0, 2} {
@@ -177,6 +178,7 @@ func TestWeightedPredictionWithTheBufferModelMatches(t *testing.T) {
 }
 
 func TestFFmpegDecodesWeightedStreams(t *testing.T) {
+	t.Parallel()
 	frames := fadeFrames(t)
 	frameSize := 176 * 144 * 3 / 2
 	for _, mode := range []WeightedPrediction{WeightedPredictionExplicit, WeightedPredictionImplicit} {
@@ -225,6 +227,7 @@ func TestWeightedPredictionSavesBitsOnAFade(t *testing.T) {
 }
 
 func TestWeightedPredictionOnAFadeWithBPictures(t *testing.T) {
+	t.Parallel()
 	frames := fadeFrames(t)
 	for _, cabac := range []bool{false, true} {
 		for _, qp := range []int{22, 30, 38} {
@@ -284,6 +287,7 @@ func assertFFmpegMatchesRecons(t *testing.T, label string, stream []byte, recons
 }
 
 func TestFFmpegAgreesAcrossTheNewOptionMatrix(t *testing.T) {
+	t.Parallel()
 	frames := fadeFrames(t)
 	for _, mode := range []WeightedPrediction{WeightedPredictionExplicit, WeightedPredictionImplicit} {
 		for _, direct := range []DirectMode{DirectSpatial, DirectTemporal} {

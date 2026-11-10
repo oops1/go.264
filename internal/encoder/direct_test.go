@@ -93,6 +93,7 @@ func TestDirectModeRejectsAnUnknownValue(t *testing.T) {
 }
 
 func TestTemporalDirectMatchesTheEncoderReconstruction(t *testing.T) {
+	t.Parallel()
 	sources := []struct {
 		name  string
 		build func(t *testing.T) [][]byte
@@ -140,6 +141,7 @@ func TestTemporalDirectMatchesAcrossTheOptionMatrix(t *testing.T) {
 }
 
 func TestFFmpegDecodesTemporalDirectStreams(t *testing.T) {
+	t.Parallel()
 	frameSize := 176 * 144 * 3 / 2
 	sources := []struct {
 		name  string
@@ -184,6 +186,7 @@ func TestFFmpegDecodesTemporalDirectStreams(t *testing.T) {
 }
 
 func TestDirectModesAreMeasuredAgainstEachOther(t *testing.T) {
+	t.Parallel()
 	sources := []struct {
 		name  string
 		build func(t *testing.T) [][]byte

@@ -271,6 +271,7 @@ func trellisCases(w, h int) []struct {
 }
 
 func TestTrellisKeepsQualityAtEqualRate(t *testing.T) {
+	t.Parallel()
 	const w, h = 128, 96
 	qps := trim([]int{20, 26, 32, 38}, 3)
 	for _, c := range trim(trellisCases(w, h), 2) {
@@ -294,6 +295,7 @@ func TestTrellisKeepsQualityAtEqualRate(t *testing.T) {
 }
 
 func TestTrellisNeverCollapsesTheStream(t *testing.T) {
+	t.Parallel()
 	const w, h = 128, 96
 	for _, c := range trim(trellisCases(w, h), 2) {
 		for _, qp := range trim([]int{16, 22, 28, 34, 40}, 2) {

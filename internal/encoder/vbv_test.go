@@ -234,34 +234,37 @@ func TestVBVKeepsTheBufferInsideItsBounds(t *testing.T) {
 	}
 	count := workload(150)
 	for _, tc := range trim(cases, 2) {
-		cfg := vbvConfig(320, 240, tc.buffer, tc.rate)
-		tc.edit(&cfg)
-		frames := make([][]byte, count)
-		for i := range frames {
-			if i%37 < 18 {
-				frames[i] = screenFrame(cfg.Width, cfg.Height, i)
-			} else {
-				frames[i] = panningFrame(cfg.Width, cfg.Height, i)
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			cfg := vbvConfig(320, 240, tc.buffer, tc.rate)
+			tc.edit(&cfg)
+			frames := make([][]byte, count)
+			for i := range frames {
+				if i%37 < 18 {
+					frames[i] = screenFrame(cfg.Width, cfg.Height, i)
+				} else {
+					frames[i] = panningFrame(cfg.Width, cfg.Height, i)
+				}
 			}
-		}
-		var stream []byte
-		if cfg.BFrames > 0 {
-			stream, _ = encodeBStream(t, cfg, frames, nil)
-		} else {
-			units, _ := encodeUnits(t, cfg, frames)
-			stream = flattenUnits(units)
-		}
-		h := readHRD(t, stream)
-		sizes := accessUnitSizes(t, stream)
-		if len(sizes) != count {
-			t.Fatalf("%s: the stream holds %d access units for %d frames", tc.name, len(sizes), count)
-		}
-		r := walkCPB(t, h, sizes)
-		t.Logf("%s: asked %d kbit/s with a %d kbit buffer, coded %.0f kbit/s, drew %.0f kbit/s from the channel, buffer between %.0f%% and %.0f%% full",
-			tc.name, tc.rate, tc.buffer, r.average, r.consumed, 100*r.minFill/h.cpbSize, 100*r.maxFill/h.cpbSize)
-		if r.consumed > float64(tc.rate)*1.005 {
-			t.Fatalf("%s: drew %.0f kbit/s from a %d kbit/s channel", tc.name, r.consumed, tc.rate)
-		}
+			var stream []byte
+			if cfg.BFrames > 0 {
+				stream, _ = encodeBStream(t, cfg, frames, nil)
+			} else {
+				units, _ := encodeUnits(t, cfg, frames)
+				stream = flattenUnits(units)
+			}
+			h := readHRD(t, stream)
+			sizes := accessUnitSizes(t, stream)
+			if len(sizes) != count {
+				t.Fatalf("%s: the stream holds %d access units for %d frames", tc.name, len(sizes), count)
+			}
+			r := walkCPB(t, h, sizes)
+			t.Logf("%s: asked %d kbit/s with a %d kbit buffer, coded %.0f kbit/s, drew %.0f kbit/s from the channel, buffer between %.0f%% and %.0f%% full",
+				tc.name, tc.rate, tc.buffer, r.average, r.consumed, 100*r.minFill/h.cpbSize, 100*r.maxFill/h.cpbSize)
+			if r.consumed > float64(tc.rate)*1.005 {
+				t.Fatalf("%s: drew %.0f kbit/s from a %d kbit/s channel", tc.name, r.consumed, tc.rate)
+			}
+		})
 	}
 }
 
@@ -318,6 +321,7 @@ func TestVBVEmitsFillerWhenTheStreamIsTooSmall(t *testing.T) {
 }
 
 func TestVBVReconstructionSurvivesTheDecoder(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name string
 		edit func(c *Config)
