@@ -41,17 +41,13 @@ func TestTheAdapterHoldsAConstantQuantiser(t *testing.T) {
 		for i := 0; i < probeFrames; i++ {
 			out, err := enc.Encode(movingPattern(i))
 			if err != nil {
-				enc.Close()
+				closeWithin(t, enc)
 				t.Fatalf("QP %d frame %d: %v", qp, i, err)
 			}
 			stream = append(stream, out...)
 		}
-		tail, err := enc.Drain()
-		enc.Close()
-		if err != nil {
-			t.Fatalf("QP %d: Drain: %v", qp, err)
-		}
-		stream = append(stream, tail...)
+		stream = append(stream, drainWithin(t, enc)...)
+		closeWithin(t, enc)
 		slices, err := sliceqp.Read(stream)
 		if err != nil {
 			t.Fatalf("QP %d: %v", qp, err)

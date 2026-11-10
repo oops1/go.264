@@ -152,6 +152,7 @@ type Encoder struct {
 	timestamp uint64
 	duration  uint64
 
+	pending bool
 	drained bool
 	closed  bool
 }
@@ -385,35 +386,44 @@ func (e *Encoder) readBitstream() ([]byte, error) {
 	return out, e.call(e.fns.NvEncUnlockBitstream, "bitstream unlock entry point", e.session, e.output)
 }
 
-func (e *Encoder) submit(flags uint32, withInput bool) error {
-	pic := NvEncPicParams{
+func (e *Encoder) encodePicture(pic *NvEncPicParams) error {
+	return e.call(e.fns.NvEncEncodePicture, "encode entry point", e.session, uintptr(unsafe.Pointer(pic)))
+}
+
+func (e *Encoder) submitFrame() error {
+	return e.encodePicture(&NvEncPicParams{
 		Version:         NvEncPicParamsVersion,
-		EncodePicFlags:  flags,
+		InputWidth:      uint32(e.width),
+		InputHeight:     uint32(e.height),
+		InputBuffer:     e.input,
 		OutputBitstream: e.output,
+		BufferFmt:       NvEncBufferFormatNV12,
+		PictureStruct:   NvEncPicStructFrame,
 		InputTimeStamp:  e.timestamp,
 		InputDuration:   e.duration,
-	}
-	if withInput {
-		pic.InputWidth = uint32(e.width)
-		pic.InputHeight = uint32(e.height)
-		pic.InputBuffer = e.input
-		pic.BufferFmt = NvEncBufferFormatNV12
-		pic.PictureStruct = NvEncPicStructFrame
-	}
-	return e.call(e.fns.NvEncEncodePicture, "encode entry point", e.session, uintptr(unsafe.Pointer(&pic)))
+	})
+}
+
+func (e *Encoder) submitEndOfStream() error {
+	return e.encodePicture(&NvEncPicParams{
+		Version:        NvEncPicParamsVersion,
+		EncodePicFlags: uint32(NvEncPicFlagEOS),
+	})
 }
 
 func (e *Encoder) encodeHere(i420 []byte) ([]byte, error) {
 	if err := e.writeFrame(i420); err != nil {
 		return nil, err
 	}
-	err := e.submit(0, true)
+	err := e.submitFrame()
 	e.timestamp += e.duration
 	if err == nil {
+		e.pending = false
 		return e.readBitstream()
 	}
 	var failure *callFailure
 	if errors.As(err, &failure) && failure.Status == NvEncErrNeedMoreInput {
+		e.pending = true
 		return nil, nil
 	}
 	return nil, err
@@ -435,9 +445,13 @@ func (e *Encoder) drainHere() ([]byte, error) {
 		return nil, nil
 	}
 	e.drained = true
-	if err := e.submit(uint32(NvEncPicFlagEOS), false); err != nil {
+	if err := e.submitEndOfStream(); err != nil {
 		return nil, err
 	}
+	if !e.pending {
+		return nil, nil
+	}
+	e.pending = false
 	return e.readBitstream()
 }
 

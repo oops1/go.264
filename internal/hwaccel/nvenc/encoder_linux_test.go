@@ -58,7 +58,7 @@ func encodeProbeStream(t *testing.T) ([]byte, string) {
 	if err != nil {
 		t.Skipf("the encoder could not be opened: %v", err)
 	}
-	defer enc.Close()
+	defer closeWithin(t, enc)
 
 	var stream []byte
 	for i := 0; i < probeFrames; i++ {
@@ -68,11 +68,7 @@ func encodeProbeStream(t *testing.T) ([]byte, string) {
 		}
 		stream = append(stream, out...)
 	}
-	tail, err := enc.Drain()
-	if err != nil {
-		t.Fatalf("%s: Drain: %v", enc.Name(), err)
-	}
-	return append(stream, tail...), enc.Name()
+	return append(stream, drainWithin(t, enc)...), enc.Name()
 }
 
 func decodeWithFFmpeg(t *testing.T, stream []byte) []byte {
@@ -157,7 +153,7 @@ func TestEncoderRefusesShortFrames(t *testing.T) {
 	if err != nil {
 		t.Skipf("the encoder could not be opened: %v", err)
 	}
-	defer enc.Close()
+	defer closeWithin(t, enc)
 	if _, err := enc.Encode(make([]byte, 16)); err == nil {
 		t.Fatal("a frame far shorter than the configured picture was accepted")
 	}
@@ -169,12 +165,8 @@ func TestCloseIsSafeTwiceAndStopsFurtherWork(t *testing.T) {
 	if err != nil {
 		t.Skipf("the encoder could not be opened: %v", err)
 	}
-	if err := enc.Close(); err != nil {
-		t.Fatalf("first Close: %v", err)
-	}
-	if err := enc.Close(); err != nil {
-		t.Fatalf("second Close: %v", err)
-	}
+	closeWithin(t, enc)
+	closeWithin(t, enc)
 	if _, err := enc.Encode(movingPattern(0)); err == nil {
 		t.Fatal("a closed encoder accepted a frame")
 	}
@@ -186,17 +178,12 @@ func TestDrainingTwiceIsHarmless(t *testing.T) {
 	if err != nil {
 		t.Skipf("the encoder could not be opened: %v", err)
 	}
-	defer enc.Close()
+	defer closeWithin(t, enc)
 	if _, err := enc.Encode(movingPattern(0)); err != nil {
 		t.Fatalf("Encode: %v", err)
 	}
-	if _, err := enc.Drain(); err != nil {
-		t.Fatalf("first Drain: %v", err)
-	}
-	second, err := enc.Drain()
-	if err != nil {
-		t.Fatalf("second Drain: %v", err)
-	}
+	drainWithin(t, enc)
+	second := drainWithin(t, enc)
 	if len(second) != 0 {
 		t.Fatalf("the second drain produced %d bytes", len(second))
 	}
@@ -211,13 +198,11 @@ func TestEncodersSurviveBeingCycledWithCollectionBetween(t *testing.T) {
 		}
 		for i := 0; i < 4; i++ {
 			if _, err := enc.Encode(movingPattern(i)); err != nil {
-				enc.Close()
+				closeWithin(t, enc)
 				t.Fatalf("round %d frame %d: %v", round, i, err)
 			}
 		}
-		if err := enc.Close(); err != nil {
-			t.Fatalf("round %d: Close: %v", round, err)
-		}
+		closeWithin(t, enc)
 		runtime.GC()
 	}
 }
@@ -228,7 +213,7 @@ func TestEncodingSurvivesCollectionBetweenFrames(t *testing.T) {
 	if err != nil {
 		t.Skipf("the encoder could not be opened: %v", err)
 	}
-	defer enc.Close()
+	defer closeWithin(t, enc)
 	produced := 0
 	for i := 0; i < 24; i++ {
 		out, err := enc.Encode(movingPattern(i))

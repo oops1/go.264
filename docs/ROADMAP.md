@@ -500,13 +500,21 @@ macroblock adaptive coding, slice groups, and data partitioning. Each
 has a test that feeds a real stream of that kind and requires the
 refusal.
 
-**NVENC no longer finishes a stream under the current WSL2 driver.** With
-driver 610.88 `NvEncLockBitstream` never returns once the end of the stream
-has been sent, so `Drain` hangs, and `Close` with it, since it drains first.
-The same tests passed on 580.97 in August and fail the same way on the
-commit before this work, so it is the driver or the way the backend ends a
-stream, not the quantiser change; encoding itself still works, and the
-constant quantiser was measured without draining. Not yet investigated.
+**NVENC finishes a stream again under the current WSL2 driver.** `Drain`
+and `Close` hung with driver 610.88 because the backend, after sending the
+end of the stream, locked its bitstream buffer although no picture was
+waiting in it: every frame that encodes is read back at once, so the buffer
+is always empty by then. NVIDIA's sample encoder locks after the
+end-of-stream picture only the buffers whose pictures were submitted and not
+yet read. 580.97 evidently let the stray lock return, 610.88 waits on it
+for ever, and the lock still hangs when the end-of-stream picture names no
+buffer at all, so the lock was the fault, not the picture. The backend now sends the
+end of the stream with every field but the flag left zero, as the sample
+does, and locks the buffer only when the encoder answered the last frame
+with `NV_ENC_ERR_NEED_MORE_INPUT`, so `Drain` returns any output still held
+and `Close` releases everything. The tests put a ten second deadline on
+every `Drain` and `Close`, so a drain that blocks fails the test instead of
+hanging the suite.
 
 **Unproven rather than missing**: NVENC has encoded under WSL2 and
 VA-API on an Intel Gen9, and winline now codes through VA-API in
