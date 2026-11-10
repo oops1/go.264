@@ -81,16 +81,15 @@ func (d *Decoder) Decode(data []byte) ([]*frame.Picture, error) {
 
 func (d *Decoder) Flush() ([]*frame.Picture, error) {
 	var out []*frame.Picture
+	var err error
 	if unit, ok := d.scanner.Flush(); ok {
-		pics, err := d.handleUnit(unit)
+		var pics []*frame.Picture
+		pics, err = d.handleUnit(unit)
 		out = append(out, pics...)
-		if err != nil {
-			return out, err
-		}
 	}
 	out = append(out, d.finishPicture()...)
 	out = append(out, d.bump(true)...)
-	return out, nil
+	return out, err
 }
 
 func minPOCIndex(pics []*frame.Picture) int {
@@ -120,6 +119,7 @@ func (d *Decoder) finishPicture() []*frame.Picture {
 	pic := d.cur
 	d.cur = nil
 	if d.grid != nil {
+		d.conceal(pic)
 		loopfilter.Apply(pic, d.grid.widthMBs, d.grid.heightMBs, func(mbx, mby int) *loopfilter.MB {
 			m := d.grid.at(mbx, mby)
 			if m == nil {
@@ -222,15 +222,104 @@ func (d *Decoder) scalingFor(sps *syntax.SPS, pps *syntax.PPS) *scalingTables {
 	return d.scal
 }
 
+func (d *Decoder) startsPicture(hdr *syntax.SliceHeader, sps *syntax.SPS) bool {
+	prev := d.lastHdr
+	if d.cur == nil || prev == nil || d.sps != sps {
+		return true
+	}
+	if hdr.FirstMBInSlice == 0 {
+		if m := d.grid.at(0, 0); m != nil && m.Decoded {
+			return true
+		}
+	}
+	switch {
+	case hdr.FrameNum != prev.FrameNum,
+		hdr.PPSID != prev.PPSID,
+		(hdr.NalRefIDC == 0) != (prev.NalRefIDC == 0),
+		hdr.IDR != prev.IDR,
+		hdr.IDR && hdr.IDRPicID != prev.IDRPicID:
+		return true
+	}
+	switch sps.PicOrderCntType {
+	case 0:
+		return hdr.PicOrderCntLsb != prev.PicOrderCntLsb ||
+			hdr.DeltaPicOrderCntBottom != prev.DeltaPicOrderCntBottom
+	case 1:
+		return hdr.DeltaPicOrderCnt != prev.DeltaPicOrderCnt
+	}
+	return false
+}
+
+func (d *Decoder) conceal(pic *frame.Picture) {
+	var src *frame.Picture
+	if d.buffer != nil {
+		for i := len(d.buffer.refs) - 1; i >= 0; i-- {
+			if r := d.buffer.refs[i]; !r.nonExisting && r.pic != pic &&
+				r.pic.Width == pic.Width && r.pic.Height == pic.Height {
+				src = r.pic
+				break
+			}
+		}
+	}
+	for mby := 0; mby < d.grid.heightMBs; mby++ {
+		for mbx := 0; mbx < d.grid.widthMBs; mbx++ {
+			if d.grid.at(mbx, mby).Decoded {
+				continue
+			}
+			concealMB(pic, src, mbx, mby)
+		}
+	}
+}
+
+func concealMB(dst, src *frame.Picture, mbx, mby int) {
+	for y := 0; y < 16; y++ {
+		at := dst.LumaOffset(mbx*16, mby*16+y)
+		row := dst.Y[at : at+16]
+		if src != nil {
+			copy(row, src.Y[at:at+16])
+		} else {
+			for i := range row {
+				row[i] = 128
+			}
+		}
+	}
+	for y := 0; y < 8; y++ {
+		at := dst.ChromaOffset(mbx*8, mby*8+y)
+		for _, planes := range [2][2][]byte{{dst.Cb, srcPlane(src, true)}, {dst.Cr, srcPlane(src, false)}} {
+			row := planes[0][at : at+8]
+			if planes[1] != nil {
+				copy(row, planes[1][at:at+8])
+			} else {
+				for i := range row {
+					row[i] = 128
+				}
+			}
+		}
+	}
+}
+
+func srcPlane(p *frame.Picture, cb bool) []byte {
+	switch {
+	case p == nil:
+		return nil
+	case cb:
+		return p.Cb
+	}
+	return p.Cr
+}
+
 func (d *Decoder) decodeSlice(u nal.Unit) ([]*frame.Picture, error) {
 	r := bits.NewReader(u.RBSP)
 	hdr, sps, pps, err := syntax.ParseSliceHeader(r, u.Header, d)
 	if err != nil {
 		return nil, err
 	}
+	if hdr.RedundantPicCnt > 0 {
+		return nil, nil
+	}
 	weighted := pps.WeightedPred && (hdr.SliceType.IsP() || hdr.SliceType.IsSP())
 	var out []*frame.Picture
-	if hdr.FirstMBInSlice == 0 {
+	if d.startsPicture(hdr, sps) {
 		out = append(out, d.finishPicture()...)
 		if hdr.IDR {
 			out = append(out, d.bump(true)...)

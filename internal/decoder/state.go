@@ -127,7 +127,7 @@ func (g *mbGrid) motion() *frame.Motion {
 	for mby := 0; mby < g.heightMBs; mby++ {
 		for mbx := 0; mbx < g.widthMBs; mbx++ {
 			m := g.at(mbx, mby)
-			if m == nil || m.Intra {
+			if m == nil || m.Intra || !m.Decoded {
 				continue
 			}
 			for blk := 0; blk < 16; blk++ {

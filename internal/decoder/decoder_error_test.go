@@ -280,7 +280,7 @@ func TestDecodeWeightedPredIsAccepted(t *testing.T) {
 	}
 }
 
-func TestDecodeContinuationSliceWithNoCurrentPictureErrors(t *testing.T) {
+func TestDecodeSliceStartingBeyondThePictureErrors(t *testing.T) {
 	sps := minimalSPS()
 	pps := minimalPPS(sps.ID, false)
 	spsBytes := mustWriteSPSBytes(t, sps)
@@ -296,8 +296,8 @@ func TestDecodeContinuationSliceWithNoCurrentPictureErrors(t *testing.T) {
 
 	d := New()
 	_, err := decodeWithFlush(d, data)
-	if !errors.Is(err, ErrNoParameters) {
-		t.Fatalf("Decode() = %v, want ErrNoParameters", err)
+	if !errors.Is(err, ErrCorrupt) {
+		t.Fatalf("Decode() = %v, want ErrCorrupt", err)
 	}
 }
 
