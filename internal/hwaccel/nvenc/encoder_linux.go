@@ -277,6 +277,7 @@ func (e *Encoder) configure(cfg Config) error {
 		e.session, uintptr(unsafe.Pointer(&initialize))); err != nil {
 		return err
 	}
+	runtime.KeepAlive(preset)
 
 	if err := e.createBuffers(); err != nil {
 		return err
