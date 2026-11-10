@@ -389,6 +389,9 @@ func (e *Encoder) closeHere() error {
 	e.transform.ProcessMessage(MFTMessageNotifyEndOfStream, 0)
 	e.transform.ProcessMessage(MFTMessageNotifyEndStreaming, 0)
 	abandoned := e.gen != nil && e.gen.abandoned
+	if e.gen != nil && !abandoned {
+		e.gen.shutdownTransform()
+	}
 	e.gen.release()
 	e.gen = nil
 	e.ready = nil

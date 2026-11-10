@@ -1039,9 +1039,15 @@ test that fails without its fix.
   time with none.
 
 Two findings stand. A Media Foundation test run occasionally ends in an
-access violation with no Go trace - once in eight runs of the package under
-full load; an encoding loop also failed once in some fifty runs, with its
-output not kept - and the cause is not known. And a macroblock of noise at a quantiser of 12 or below costs
+access violation with no Go trace, always in
+`TestEncodersClosedWithoutDrainingSurviveBeingCycled`, which opens and
+closes the NVIDIA encoder twelve times without draining it, and only under
+load; the code from before this work fails the same way. Shutting the
+transform down through `IMFShutdown` before releasing it made it rarer -
+4 of 40 runs of the test against 17 of 40 without, alternated under the
+same load - but did not end it. Keeping the platform started between
+encoders did not help (5 of 60). Where it happens is not known; the crash
+leaves no trace to read. And a macroblock of noise at a quantiser of 12 or below costs
 more than 3200 bits, more than its samples sent as I_PCM would. Whether that
 breaks a level limit has not been checked against the standard, x264 does
 not guard against it either, and the encoder writes no I_PCM, so it is left

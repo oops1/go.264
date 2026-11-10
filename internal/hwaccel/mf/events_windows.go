@@ -54,6 +54,12 @@ func (g *eventGenerator) release() {
 	}
 }
 
+func (g *eventGenerator) shutdownTransform() {
+	if g.shutdown.p != nil {
+		hr(g.shutdown.p, shutdownShutdown)
+	}
+}
+
 type transformEvent struct {
 	kind   uint32
 	status HRESULT
