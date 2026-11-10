@@ -1009,6 +1009,46 @@ changed.**
   takes neither. B pictures and the JVT matrices, which no adapter here
   writes, now keep the encoder on the processor.
 
+**Six things the code got wrong that no test had shown**, each now with a
+test that fails without its fix.
+
+- The decoder opened a picture only at `first_mb_in_slice` equal to 0, so
+  when the first slice of a picture was lost the rest of it was decoded into
+  the picture before, and `base_ip_slices` came out with 9 pictures instead
+  of 10. It now starts a picture by the conditions of 7.4.1.2.4, ignores
+  redundant slices, and fills macroblocks no slice reached from the last
+  reference picture. Memory management operation 3 also left a second
+  long-term frame holding the index it assigned, and `Flush` gave up its
+  pictures when the last unit it read was broken.
+- An encoder given change rectangles copied stale areas after a picture the
+  buffer dropped, and after B pictures: a P picture refers to the anchor
+  before them but was told only what changed since the last B. Changes now
+  accumulate until a reference picture codes them. With two B pictures the
+  area that changed in the first was 127 levels from its source in the next
+  P; now it is not.
+- `EncodeFrame` read planes without checking them against their strides,
+  and a hardware backend coded a buffer longer than the configured picture.
+  Both now return `ErrFrameSize`.
+- Media Foundation waited for an event for ever, and an event carrying a
+  failure was taken as success. The wait stays blocking, so it costs
+  nothing on the RTX 5060 Ti (p50 3.0 ms, p95 3.6 ms at 1080p either way),
+  but a watchdog shuts the transform down after ten seconds through
+  `IMFShutdown`, which ends the wait with an error. NVIDIA's transform was
+  checked to end a blocked wait that way. Polling instead cost twelve per
+  cent of throughput with 20 microsecond pauses and twice the processor
+  time with none.
+
+Two findings stand. A Media Foundation test run occasionally ends in an
+access violation with no Go trace - once in eight runs of the package under
+full load; an encoding loop also failed once in some fifty runs, with its
+output not kept - and the cause is not known. And a macroblock of noise at a quantiser of 12 or below costs
+more than 3200 bits, more than its samples sent as I_PCM would. Whether that
+breaks a level limit has not been checked against the standard, x264 does
+not guard against it either, and the encoder writes no I_PCM, so it is left
+as it is. The other worry there, CAVLC levels needing a `level_prefix` above
+15 that profiles below High forbid, was measured and does not happen: none
+in noise or a checkerboard at quantisers 0 to 12.
+
 ## Four measurements that said no
 
 Recorded because a profile is a hypothesis generator and an analogy with

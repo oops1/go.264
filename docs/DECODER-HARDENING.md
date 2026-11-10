@@ -199,32 +199,40 @@ useless on real streams, which are routinely sloppy.
   encoder's did and borrow the most recent reference's picture; however wide
   the gap, no more than `max_num_ref_frames` of them are kept. With the flag
   clear a gap is loss, and nothing is synthesised for it.
-- **A picture starts only at a slice with `first_mb_in_slice` equal to 0.**
-  The other conditions of 7.4.1.2.4 are not consulted, so when the first
-  slice of a picture is lost the rest of its slices are decoded into the
-  picture before it, which is then stored under the later slice's header.
-  Redundant slices (`redundant_pic_cnt` above 0) are decoded as if they
-  were primary, so one with `first_mb_in_slice` equal to 0 opens a picture
-  of its own.
+- **A picture starts where 7.4.1.2.4 says one does**, not only at a slice
+  with `first_mb_in_slice` equal to 0. A slice whose `frame_num`, picture
+  parameter set, IDR flag, `idr_pic_id`, whether `nal_ref_idc` is zero, or
+  order count fields (`pic_order_cnt_lsb` and `delta_pic_order_cnt_bottom`
+  for type 0, `delta_pic_order_cnt` for type 1) differ from the slice before
+  starts a new one, as does a slice using another sequence parameter set,
+  and a slice for macroblock 0 once macroblock 0 has been decoded. The list
+  is the one Chromium's `IsNewPrimaryCodedPicture` checks. When the first
+  slice of a picture is lost the rest of its slices therefore make a
+  picture of their own instead of being decoded into the one before it.
+- **Redundant slices are ignored.** A slice with `redundant_pic_cnt` above 0
+  is dropped before anything else reads it, which the standard allows a
+  decoder to do when the primary picture arrived; this decoder assumes it
+  did.
 - **Parameter sets may be replaced mid-stream, including with different
-  dimensions.** A new sequence parameter set takes effect at the next slice
-  with `first_mb_in_slice` equal to 0, which drops the decoded picture
-  buffer and reallocates the picture and the macroblock grid. Slices that
-  arrive with a non-zero `first_mb_in_slice` after such a change continue
-  into the picture and grid that are already open, whose geometry governs
-  every bound, so nothing is indexed out of range.
-- **A slice arriving with no picture open** (non-zero `first_mb_in_slice`
-  and nothing to continue) returns `decoder.ErrNoParameters`. A slice
-  naming an absent parameter set returns `syntax.ErrMissingSPS` or
-  `syntax.ErrMissingPPS`. In both cases the decoder stays usable; the
-  caller may keep feeding it.
-- **An error inside a slice leaves the picture half decoded, and it is
-  still emitted.** `Decode` returns at the first error with whatever it has
-  produced so far; the next slice with `first_mb_in_slice` equal to 0
-  finishes the open picture and hands it over. Macroblocks that were never
-  decoded stay at whatever the freshly allocated picture held, which is
-  zero. This is error concealment, not a correctness claim: a caller that
-  needs to know a picture is incomplete must watch the error from `Decode`.
+  dimensions.** A new sequence parameter set takes effect at the first
+  slice that uses it, which starts a new picture, drops the decoded picture
+  buffer and reallocates the picture and the macroblock grid, whatever its
+  `first_mb_in_slice`.
+- **A slice arriving with no picture open** starts one, whatever its
+  `first_mb_in_slice`. A slice naming an absent parameter set returns
+  `syntax.ErrMissingSPS` or `syntax.ErrMissingPPS`, and the decoder stays
+  usable; the caller may keep feeding it.
+- **Macroblocks that no slice reached are concealed.** A lost slice, or an
+  error inside one, leaves the picture partly decoded, and it is still
+  emitted: `Decode` returns at the first error with whatever it has
+  produced so far, and the next picture or `Flush` finishes it. Each
+  macroblock never decoded is copied from the most recent reference picture
+  of the same size, or set to mid grey when there is none; the deblocking
+  filter leaves the edges between decoded and concealed macroblocks alone.
+  This is concealment, not a correctness claim: a caller that needs to know
+  a picture is incomplete must watch the error from `Decode`. `Flush` hands
+  over every picture it holds even when the last unit it reads is broken,
+  and reports that unit's error alongside them.
 - **Weighted bi-prediction with a missing weight table entry falls back to
   an unweighted average** rather than failing. This needs a `ref_idx` that
   is inside `num_ref_idx_lX_active_minus1` but outside the prediction weight
