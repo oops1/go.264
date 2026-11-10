@@ -44,6 +44,40 @@ func (k RegionKind) qpOffset() int {
 	return regionQPOffset[k]
 }
 
+type changeCarry struct {
+	pending bool
+	whole   bool
+	rects   []image.Rectangle
+}
+
+func (c *changeCarry) add(h Hints) {
+	c.pending = true
+	if h.Changed == nil {
+		c.whole = true
+		c.rects = c.rects[:0]
+		return
+	}
+	if !c.whole {
+		c.rects = append(c.rects, h.Changed...)
+	}
+}
+
+func (c *changeCarry) apply(h Hints) Hints {
+	if !c.pending {
+		return h
+	}
+	if c.whole || h.Changed == nil {
+		h.Changed = nil
+		return h
+	}
+	h.Changed = append(append(make([]image.Rectangle, 0, len(c.rects)+len(h.Changed)), c.rects...), h.Changed...)
+	return h
+}
+
+func (c *changeCarry) reset() {
+	c.pending, c.whole, c.rects = false, false, c.rects[:0]
+}
+
 type frameHints struct {
 	changedMB []bool
 	qpOffset  []int8

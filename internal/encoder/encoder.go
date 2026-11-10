@@ -272,6 +272,7 @@ type Encoder struct {
 	frameIndex int
 	headers    []byte
 	forceKey   bool
+	carry      changeCarry
 
 	refresh        refreshPlan
 	refreshPos     int
@@ -631,6 +632,9 @@ func (e *Encoder) encodeReordered(yuv []byte, h Hints) ([]byte, error) {
 		return nil, nil
 	}
 	last := len(e.queue) - 1
+	for _, b := range e.queue[:last] {
+		e.carry.add(b.hints)
+	}
 	out, err := e.encodeQueued(e.queue[last], syntax.SliceP, false)
 	if err != nil {
 		return nil, err
@@ -805,6 +809,9 @@ func (e *Encoder) encodePicture(p picture) ([]byte, error) {
 		return nil, err
 	}
 	prefix = append(prefix, sei...)
+	if !p.sliceType.IsB() {
+		p.hints = e.carry.apply(p.hints)
+	}
 	hints := e.prepareHints(p.hints)
 	if p.idr {
 		hints = nil
@@ -890,6 +897,14 @@ func (e *Encoder) encodePicture(p picture) ([]byte, error) {
 	e.lastRec = e.rec
 	if e.onPicture != nil {
 		e.onPicture(p.display, e.rec)
+	}
+	switch {
+	case p.sliceType.IsB():
+	case reference:
+		e.carry.reset()
+	default:
+		e.carry.reset()
+		e.carry.add(p.hints)
 	}
 	if reference {
 		e.rec.Motion = e.motionField()
