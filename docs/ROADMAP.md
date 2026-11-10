@@ -500,6 +500,14 @@ macroblock adaptive coding, slice groups, and data partitioning. Each
 has a test that feeds a real stream of that kind and requires the
 refusal.
 
+**NVENC no longer finishes a stream under the current WSL2 driver.** With
+driver 610.88 `NvEncLockBitstream` never returns once the end of the stream
+has been sent, so `Drain` hangs, and `Close` with it, since it drains first.
+The same tests passed on 580.97 in August and fail the same way on the
+commit before this work, so it is the driver or the way the backend ends a
+stream, not the quantiser change; encoding itself still works, and the
+constant quantiser was measured without draining. Not yet investigated.
+
 **Unproven rather than missing**: NVENC has encoded under WSL2 and
 VA-API on an Intel Gen9, and winline now codes through VA-API in
 production, but neither has met the NVIDIA Linux driver on bare metal or an
@@ -953,6 +961,45 @@ from synthetic content, not a measurement on theirs.
 
 The decoder gained too, since it shares the deblocking: a 3440x1440 picture
 decodes in 12.7 ms instead of 14.8.
+
+## What an outside reader and an audit found
+
+**The reference marking that only a conformance suite exercises.** The
+first contribution from outside, pull request 2, came from decoding the
+ITU-T AVCv1 bitstreams rather than anything x264 writes: memory management
+operation 5 emptied the buffer but left the picture its frame number and the
+order count its history, and gaps in `frame_num` were not filled at all.
+MR2_TANDBERG_E went wrong from its thirtieth picture, MR4_TANDBERG_C from its
+second; after the change all four of the streams named in it match both the
+suite's own yuv and ffmpeg, 300 of 300 each, which was checked here against
+the archives before merging. None of the 29 clips in the corpus carries
+either feature, which is why nothing here had noticed.
+
+**Four things the public boundary got wrong, all measured before they were
+changed.**
+
+- A stream that states no reordering was held back by everything its level's
+  buffer could hold, ten pictures at 176x144. Picture order count type 2 is
+  output order by definition and the intra profiles infer no reordering, so
+  both now hold nothing; MR2_TANDBERG_E releases 298 of 300 pictures before
+  Flush instead of 282. Types 0 and 1 still fall back to the level, because
+  the standard says so and a stream of type 0 may reorder.
+- A picture cropped on the left or the top came out at its cropped size but
+  from the top left corner, showing the area it meant to cut. A stream from
+  x264 with `crop_left=32` and `crop_top=16` now decodes to ffmpeg's bytes.
+- The decoder moves to Direct3D at the first sequence parameter set it sees,
+  and when that set arrived split across two calls the move came at the next
+  key frame and threw away what the processor still held: 10 of 12 pictures
+  at 1280x720. It now flushes the processor first, and once a picture has been
+  decoded it moves only at a set followed by an IDR picture; 12 of 12.
+- A fixed quantiser reached NVENC and Media Foundation as a bitrate nobody had
+  chosen, so QP 20 came out at 16. Both now code at the quantiser asked for,
+  every slice at QP 16, 22, 38 and 46 on an RTX 5060 Ti through either one.
+  NVIDIA's Media Foundation transform accepts `AVEncVideoEncodeQP`, reports it
+  back and ignores it, so the backend pins the quantiser with the frame type
+  values or the minimum and maximum as well, and refuses a transform that
+  takes neither. B pictures and the JVT matrices, which no adapter here
+  writes, now keep the encoder on the processor.
 
 ## Four measurements that said no
 

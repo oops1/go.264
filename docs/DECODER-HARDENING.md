@@ -193,9 +193,19 @@ useless on real streams, which are routinely sloppy.
   to index 0.** The index is checked against `num_ref_idx_lX_active_minus1`,
   but that value may exceed the number of pictures the buffer really holds,
   for instance after a stream skips its own IDR.
-- **Gaps in `frame_num` are not detected** and no frames are synthesised
-  for them (8.2.5.2 is not implemented). `gaps_in_frame_num_value_allowed_flag`
-  is parsed and ignored.
+- **Gaps in `frame_num` are filled only where the stream allows them.**
+  With `gaps_in_frame_num_value_allowed_flag` set, the missing numbers become
+  the "non-existing" frames of 8.2.5.2, which move the sliding window as the
+  encoder's did and borrow the most recent reference's picture; however wide
+  the gap, no more than `max_num_ref_frames` of them are kept. With the flag
+  clear a gap is loss, and nothing is synthesised for it.
+- **A picture starts only at a slice with `first_mb_in_slice` equal to 0.**
+  The other conditions of 7.4.1.2.4 are not consulted, so when the first
+  slice of a picture is lost the rest of its slices are decoded into the
+  picture before it, which is then stored under the later slice's header.
+  Redundant slices (`redundant_pic_cnt` above 0) are decoded as if they
+  were primary, so one with `first_mb_in_slice` equal to 0 opens a picture
+  of its own.
 - **Parameter sets may be replaced mid-stream, including with different
   dimensions.** A new sequence parameter set takes effect at the next slice
   with `first_mb_in_slice` equal to 0, which drops the decoded picture
@@ -362,14 +372,14 @@ rather than whole files, and release the pictures it returns.
 
 Two things to know about reaching this from outside the module:
 
-- `decoder.Limits` sits on the package-internal decoder. The public
-  `go264.DecoderConfig` does not carry it yet, so an external caller gets
-  the level-derived default and nothing else. Plumbing the two fields
-  through `DecoderConfig` is a small change and the obvious next step;
-  `go264.go` was outside the scope of this work.
+- `go264.DecoderConfig` carries `decoder.Limits` as `Limits`, and a
+  sequence those limits refuse is never offered to a hardware decoder.
 - `go264.NewDecoderWithConfig` prefers a hardware decoder when one is
-  available and only falls back to this code. Nothing in this document
-  describes what a platform decoder does with hostile input.
+  available. It starts on this code and moves at the first sequence
+  parameter set, or, once a picture has been decoded here, at the first
+  set followed by an IDR picture in the same call, after flushing what this
+  code still holds. Nothing in this document describes what a platform
+  decoder does with hostile input.
 
 ## Fuzzing
 

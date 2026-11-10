@@ -110,15 +110,20 @@ enc, err := go264.NewEncoder(cfg)
 // enc.Backend() is "vaapi", "nvenc", "mediafoundation" or "cpu"
 ```
 
-A hardware encoder carries the picture size, frame rate, GOP length,
-quantiser and, where the backend has rate control, the bitrate - and
-nothing else. VA-API encodes at a constant quantiser. Any setting only the
-processor path implements - IntraRefresh, Trellis, long-term references,
-weighted prediction, temporal direct, deblocking control, the buffer model -
-keeps the encoder on the processor. ForceKeyFrame reaches the VA-API
-encoder, which starts a new GOP at the next picture; NVENC and Media
-Foundation do not honour it yet, so there a key frame comes only at the
-end of the GOP.
+A hardware encoder carries the picture size, frame rate, GOP length and
+either a bitrate or a quantiser - and nothing else. With `BitrateKbps` set,
+NVENC and Media Foundation aim at that rate; without it they code every
+picture at `QP`. VA-API always codes at `QP` and ignores the bitrate. A
+`QP` of zero means 26 on all three. A Media Foundation transform that will
+not hold a constant quantiser is refused rather than left to choose a rate
+of its own. Entropy coding, the 8x8 transform, slices, the reference count
+and the search settings are the adapter's to choose. Any setting only the
+processor path implements - B pictures, the JVT scaling matrices,
+IntraRefresh, Trellis, long-term references, weighted prediction, temporal
+direct, deblocking control, the buffer model - keeps the encoder on the
+processor. ForceKeyFrame reaches the VA-API encoder, which starts a new GOP
+at the next picture; NVENC and Media Foundation do not honour it yet, so
+there a key frame comes only at the end of the GOP.
 
 Every IDR carries the sequence and picture parameter sets whichever path
 produced it: the processor encoder always writes them, and if a hardware
@@ -166,6 +171,10 @@ for _, f := range frames {
 
 `Encoder.Backend()` and `Decoder.Backend()` report which implementation is
 actually in use, and `ForceSoftware` pins the CPU path for reproducibility.
+A decoder starts on the processor and moves to a hardware decoder at the
+first sequence parameter set it can size; once it has decoded a picture of
+its own it waits for a set followed by an IDR picture in the same call, and
+hands back everything it held before the move.
 
 ## Command line
 
