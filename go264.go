@@ -3,6 +3,7 @@ package go264
 import (
 	"bytes"
 	"errors"
+	"fmt"
 	"image"
 
 	"github.com/oops1/go.264/internal/decoder"
@@ -17,6 +18,8 @@ import (
 var ErrClosed = errors.New("go264: use of a closed codec")
 
 var ErrOverLimit = decoder.ErrOverLimit
+
+var ErrFrameSize = encoder.ErrFrameSize
 
 type Frame struct {
 	Y       []byte
@@ -197,13 +200,40 @@ type Encoder struct {
 	hw      hwaccel.Encoder
 	backend string
 	closed  bool
+	width   int
+	height  int
 
 	sps []byte
 	pps []byte
 }
 
+func (e *Encoder) checkI420(i420 []byte) error {
+	if want := e.width * e.height * 3 / 2; len(i420) != want {
+		return fmt.Errorf("%w: got %d bytes, want %d", ErrFrameSize, len(i420), want)
+	}
+	return nil
+}
+
+func (e *Encoder) checkFrame(f *Frame) error {
+	if f == nil {
+		return errors.New("go264: EncodeFrame was given no frame")
+	}
+	if f.Width != e.width || f.Height != e.height {
+		return fmt.Errorf("%w: got %dx%d, want %dx%d", ErrFrameSize, f.Width, f.Height, e.width, e.height)
+	}
+	cw, ch := f.Width/2, f.Height/2
+	if f.StrideY < f.Width || f.StrideC < cw {
+		return fmt.Errorf("%w: strides %d and %d are narrower than the picture", ErrFrameSize, f.StrideY, f.StrideC)
+	}
+	if len(f.Y) < (f.Height-1)*f.StrideY+f.Width ||
+		len(f.Cb) < (ch-1)*f.StrideC+cw || len(f.Cr) < (ch-1)*f.StrideC+cw {
+		return fmt.Errorf("%w: a plane is shorter than its stride and height need", ErrFrameSize)
+	}
+	return nil
+}
+
 func NewEncoder(cfg EncoderConfig) (*Encoder, error) {
-	e := &Encoder{backend: "cpu"}
+	e := &Encoder{backend: "cpu", width: cfg.Width, height: cfg.Height}
 	if !cfg.ForceSoftware && !cfg.needsSoftware() {
 		if hw, name, ok := hwaccel.OpenEncoder(hwaccel.EncoderParams{
 			Width:   cfg.Width,
@@ -276,6 +306,9 @@ func (e *Encoder) Encode(i420 []byte) ([]byte, error) {
 		return nil, ErrClosed
 	}
 	if e.hw != nil {
+		if err := e.checkI420(i420); err != nil {
+			return nil, err
+		}
 		return e.fromHardware(e.hw.Encode(i420))
 	}
 	return e.cpu.Encode(i420)
@@ -286,6 +319,9 @@ func (e *Encoder) EncodeWithHints(i420 []byte, changed []image.Rectangle, region
 		return nil, ErrClosed
 	}
 	if e.hw != nil {
+		if err := e.checkI420(i420); err != nil {
+			return nil, err
+		}
 		return e.fromHardware(e.hw.Encode(i420))
 	}
 	return e.cpu.EncodeWithHints(i420, encoder.Hints{Changed: changed, Regions: regions})
@@ -295,8 +331,8 @@ func (e *Encoder) EncodeFrame(f *Frame, changed []image.Rectangle, regions []Reg
 	if e.closed {
 		return nil, ErrClosed
 	}
-	if f == nil {
-		return nil, errors.New("go264: EncodeFrame was given no frame")
+	if err := e.checkFrame(f); err != nil {
+		return nil, err
 	}
 	yuv := f.AppendI420(make([]byte, 0, f.I420Size()))
 	if e.hw != nil {
