@@ -860,14 +860,17 @@ func TestStoreMMCO5RestartsFrameNumAndOrderCount(t *testing.T) {
 
 func TestStoreWithoutMMCO5ReportsNothing(t *testing.T) {
 	b := &dpb{maxNumRefs: 4, maxFrameNum: 16}
-	for name, hdr := range map[string]*syntax.SliceHeader{
-		"non-reference": {NalRefIDC: 0, FrameNum: 3},
-		"idr":           {NalRefIDC: 1, IDR: true},
-		"sliding":       {NalRefIDC: 1, FrameNum: 1},
-		"adaptive":      {NalRefIDC: 1, FrameNum: 2, AdaptiveRefPicMarking: true, MMCOs: []syntax.MMCO{{Op: 4, MaxLongTermFrameIdxPlus1: 1}}},
+	for _, c := range []struct {
+		name string
+		hdr  *syntax.SliceHeader
+	}{
+		{"idr", &syntax.SliceHeader{NalRefIDC: 1, IDR: true}},
+		{"sliding", &syntax.SliceHeader{NalRefIDC: 1, FrameNum: 1}},
+		{"adaptive", &syntax.SliceHeader{NalRefIDC: 1, FrameNum: 2, AdaptiveRefPicMarking: true, MMCOs: []syntax.MMCO{{Op: 4, MaxLongTermFrameIdxPlus1: 1}}}},
+		{"non-reference", &syntax.SliceHeader{NalRefIDC: 0, FrameNum: 3}},
 	} {
-		if b.store(frame.NewPicture(1, 1), hdr) {
-			t.Errorf("%s: reported operation 5", name)
+		if b.store(frame.NewPicture(1, 1), c.hdr) {
+			t.Errorf("%s: reported operation 5", c.name)
 		}
 	}
 	if b.prevRefFrameNum != 2 || !b.haveRef {
