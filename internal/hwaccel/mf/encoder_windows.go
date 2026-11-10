@@ -388,10 +388,13 @@ func (e *Encoder) closeHere() error {
 	e.discardPendingEvents()
 	e.transform.ProcessMessage(MFTMessageNotifyEndOfStream, 0)
 	e.transform.ProcessMessage(MFTMessageNotifyEndStreaming, 0)
+	abandoned := e.gen != nil && e.gen.abandoned
 	e.gen.release()
 	e.gen = nil
 	e.ready = nil
-	e.transform.Release()
+	if !abandoned {
+		e.transform.Release()
+	}
 	e.transform = nil
 	if err := Shutdown(); err != nil {
 		return err

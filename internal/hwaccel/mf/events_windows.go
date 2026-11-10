@@ -1,6 +1,11 @@
 package mf
 
-import "unsafe"
+import (
+	"strconv"
+	"sync/atomic"
+	"time"
+	"unsafe"
+)
 
 const (
 	transformEventUnknown = 600 + iota
@@ -15,11 +20,14 @@ const eventFlagNoWait = 1
 
 const (
 	mfENoEventsAvailable   HRESULT = 0xc00d3e80
+	mfEShutdown            HRESULT = 0xc00d3e85
 	mfETransformTypeNotSet HRESULT = 0xc00d6d60
 )
 
 type eventGenerator struct {
-	obj unknown
+	obj       unknown
+	shutdown  unknown
+	abandoned bool
 }
 
 func (t *Transform) eventGenerator() (*eventGenerator, error) {
@@ -27,15 +35,23 @@ func (t *Transform) eventGenerator() (*eventGenerator, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &eventGenerator{obj: obj}, nil
+	g := &eventGenerator{obj: obj}
+	if s, err := t.obj.queryInterface(&IIDIMFShutdown); err == nil {
+		g.shutdown = s
+	}
+	return g, nil
 }
 
 func (g *eventGenerator) release() {
-	if g == nil {
+	if g == nil || g.abandoned {
 		return
 	}
 	g.obj.release()
 	g.obj = unknown{}
+	if g.shutdown.p != nil {
+		g.shutdown.release()
+		g.shutdown = unknown{}
+	}
 }
 
 type transformEvent struct {
@@ -43,11 +59,65 @@ type transformEvent struct {
 	status HRESULT
 }
 
+var eventTimeout = 10 * time.Second
+
+const eventPause = 20 * time.Microsecond
+
 func (g *eventGenerator) next(wait bool) (transformEvent, bool, error) {
-	flags := uintptr(eventFlagNoWait)
-	if wait {
-		flags = 0
+	if !wait {
+		return g.get(eventFlagNoWait)
 	}
+	if g.shutdown.p == nil {
+		return pollForEvent(func() (transformEvent, bool, error) { return g.get(eventFlagNoWait) }, eventTimeout)
+	}
+	ev, ok, err, settled := waitWithWatchdog(func() (transformEvent, bool, error) { return g.get(0) }, func() {
+		hr(g.shutdown.p, shutdownShutdown)
+	}, eventTimeout)
+	if !settled {
+		g.abandoned = true
+	}
+	return ev, ok, err
+}
+
+func timedOut(timeout time.Duration) error {
+	return &Error{Op: "the transform sent no event within " + timeout.String(), Code: mfENoEventsAvailable}
+}
+
+func waitWithWatchdog(wait func() (transformEvent, bool, error), stop func(), timeout time.Duration) (transformEvent, bool, error, bool) {
+	var fired atomic.Bool
+	stopped := make(chan struct{})
+	timer := time.AfterFunc(timeout, func() {
+		fired.Store(true)
+		stop()
+		close(stopped)
+	})
+	ev, ok, err := wait()
+	if timer.Stop() || !fired.Load() {
+		return ev, ok, err, true
+	}
+	select {
+	case <-stopped:
+		return transformEvent{}, false, timedOut(timeout), true
+	case <-time.After(timeout):
+		return transformEvent{}, false, timedOut(timeout), false
+	}
+}
+
+func pollForEvent(poll func() (transformEvent, bool, error), timeout time.Duration) (transformEvent, bool, error) {
+	start := time.Now()
+	for {
+		ev, ok, err := poll()
+		if err != nil || ok {
+			return ev, ok, err
+		}
+		if time.Since(start) >= timeout {
+			return transformEvent{}, false, timedOut(timeout)
+		}
+		time.Sleep(eventPause)
+	}
+}
+
+func (g *eventGenerator) get(flags uintptr) (transformEvent, bool, error) {
 	var raw unsafe.Pointer
 	code := hr(g.obj.p, eventGeneratorGetEvent, flags, uintptr(unsafe.Pointer(&raw)))
 	if code == mfENoEventsAvailable {
@@ -65,6 +135,9 @@ func (g *eventGenerator) next(wait bool) (transformEvent, bool, error) {
 	}
 	if code := hr(ev.p, mediaEventGetStatus, uintptr(unsafe.Pointer(&e.status))); code.Failed() {
 		return transformEvent{}, false, check("IMFMediaEvent::GetStatus", code)
+	}
+	if e.status.Failed() {
+		return transformEvent{}, false, &Error{Op: "the transform's event " + strconv.Itoa(int(e.kind)), Code: e.status}
 	}
 	return e, true, nil
 }

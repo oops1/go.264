@@ -201,6 +201,7 @@ func TestInterfaceIdentifiersAreDistinct(t *testing.T) {
 		"IMFActivate":            IIDIMFActivate,
 		"IMFMediaEventGenerator": IIDIMFMediaEventGenerator,
 		"IMFMediaEvent":          IIDIMFMediaEvent,
+		"IMFShutdown":            IIDIMFShutdown,
 		"ICodecAPI":              IIDICodecAPI,
 	} {
 		if other, ok := all[g]; ok {
