@@ -70,7 +70,7 @@ func parseUnits(t *testing.T, stream []byte) ([]parsedUnit, setMaps) {
 				t.Fatal(err)
 			}
 			start := len(u.RBSP)*8 - r.BitsLeft()
-			p.hdr, p.data, p.bits = hdr, u.RBSP, sliceDataBits(u.RBSP)-start
+			p.hdr, p.bits = hdr, sliceDataBits(u.RBSP)-start
 			w := bits.NewWriter()
 			for left, at := p.bits, start; left > 0; {
 				n := min(left, 16)

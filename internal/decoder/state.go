@@ -9,10 +9,9 @@ import (
 )
 
 var (
-	ErrUnsupported  = errors.New("go264/decoder: unsupported bitstream feature")
-	ErrCorrupt      = errors.New("go264/decoder: corrupt macroblock data")
-	ErrNoParameters = errors.New("go264/decoder: slice references absent parameter sets")
-	ErrOverLimit    = errors.New("go264/decoder: bitstream asks for more than the decoder allows")
+	ErrUnsupported = errors.New("go264/decoder: unsupported bitstream feature")
+	ErrCorrupt     = errors.New("go264/decoder: corrupt macroblock data")
+	ErrOverLimit   = errors.New("go264/decoder: bitstream asks for more than the decoder allows")
 )
 
 type mbState struct {

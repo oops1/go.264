@@ -344,9 +344,6 @@ func (d *Decoder) decodeSlice(u nal.Unit) ([]*frame.Picture, error) {
 		d.grid = d.freshGrid(sps.PicWidthInMbs(), sps.FrameHeightInMbs())
 		d.sliceCount = 0
 	}
-	if d.cur == nil {
-		return out, ErrNoParameters
-	}
 	d.sliceCount++
 	d.lastHdr = hdr
 
