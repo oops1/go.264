@@ -467,6 +467,24 @@ func TestApplyMMCOOp3ConvertsToLongTerm(t *testing.T) {
 	}
 }
 
+func TestApplyMMCOOp3TakesTheIndexFromTheFrameThatHeldIt(t *testing.T) {
+	r := newRef(0, false, 0)
+	r.picNum = 9
+	holder := newRef(0, true, 8)
+	other := newRef(0, true, 2)
+	b := &dpb{refs: []*refFrame{holder, other, r}}
+
+	hdr := &syntax.SliceHeader{FrameNum: 10, MMCOs: []syntax.MMCO{
+		{Op: 3, DifferenceOfPicNumsMinus1: 0, LongTermFrameIdx: 8},
+	}}
+	b.applyMMCO(hdr, newCurrent())
+
+	assertRefOrder(t, b.refs, []*refFrame{other, r})
+	if got := b.longTermByPicNum(8); got != r {
+		t.Fatalf("long-term index 8 resolves to %p, want the converted frame %p", got, r)
+	}
+}
+
 func TestApplyMMCOOp3AbsentPictureIsNoop(t *testing.T) {
 	r := newRef(0, false, 0)
 	r.picNum = 9

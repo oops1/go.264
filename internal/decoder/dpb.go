@@ -464,6 +464,9 @@ func (b *dpb) applyMMCO(hdr *syntax.SliceHeader, current *refFrame) {
 		case 3:
 			pn := int(hdr.FrameNum) - int(m.DifferenceOfPicNumsMinus1) - 1
 			if r := b.shortTermByPicNum(pn); r != nil {
+				if old := b.longTermByPicNum(int(m.LongTermFrameIdx)); old != nil {
+					b.remove(old)
+				}
 				r.longTerm = true
 				r.longTermIdx = int(m.LongTermFrameIdx)
 				if !r.nonExisting {
