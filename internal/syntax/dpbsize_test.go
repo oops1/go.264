@@ -69,6 +69,34 @@ func TestMaxNumReorderPrefersTheBitstreamRestriction(t *testing.T) {
 	}
 }
 
+func TestMaxNumReorderWithoutARestriction(t *testing.T) {
+	base := SPS{LevelIDC: 51, PicWidthInMbsMinus1: 10, PicHeightInMapUnitsMinus1: 8, FrameMbsOnly: true}
+	cases := []struct {
+		name string
+		edit func(*SPS)
+		want int
+	}{
+		{"order count type 0", func(s *SPS) {}, 16},
+		{"order count type 1", func(s *SPS) { s.PicOrderCntType = 1 }, 16},
+		{"order count type 2 outputs in decoding order", func(s *SPS) { s.PicOrderCntType = 2 }, 0},
+		{"High Intra", func(s *SPS) { s.ProfileIDC, s.ConstraintSet = 100, 0x10 }, 0},
+		{"CAVLC 4:4:4 Intra", func(s *SPS) { s.ProfileIDC, s.ConstraintSet = 44, 0x10 }, 0},
+		{"High without constraint_set3", func(s *SPS) { s.ProfileIDC = 100 }, 16},
+		{"Main with constraint_set3 is not intra", func(s *SPS) { s.ProfileIDC, s.ConstraintSet = 77, 0x10 }, 16},
+		{"a stated reordering still wins", func(s *SPS) {
+			s.PicOrderCntType = 2
+			s.VUIPresent, s.VUI.BitstreamRestriction, s.VUI.MaxNumReorderFrames = true, true, 1
+		}, 1},
+	}
+	for _, c := range cases {
+		s := base
+		c.edit(&s)
+		if got := s.MaxNumReorder(); got != c.want {
+			t.Errorf("%s: MaxNumReorder() = %d, want %d", c.name, got, c.want)
+		}
+	}
+}
+
 func TestRestrictBitstreamDeclaresTheReordering(t *testing.T) {
 	cases := []struct {
 		refs, reorder int

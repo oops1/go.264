@@ -596,5 +596,19 @@ func (s *SPS) MaxNumReorder() int {
 		}
 		return n
 	}
+	if s.PicOrderCntType == 2 || s.intraProfile() {
+		return 0
+	}
 	return s.MaxDpbFrames()
+}
+
+func (s *SPS) intraProfile() bool {
+	if s.ConstraintSet&0x10 == 0 {
+		return false
+	}
+	switch s.ProfileIDC {
+	case 44, 86, 100, 110, 122, 244:
+		return true
+	}
+	return false
 }

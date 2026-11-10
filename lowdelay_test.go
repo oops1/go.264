@@ -202,9 +202,15 @@ func TestAFrameLeavesTheDecoderWithoutWaitingForTheBuffer(t *testing.T) {
 	for i, p := range packets {
 		old[i] = withSPS(t, p, unrestricted(t, 2))
 	}
+	if s := spsIn(t, old[0]); s.MaxDpbFrames() < 2 {
+		t.Fatalf("without the restriction a decoder that infers reordering from the level, as Chromium's hardware decoder does, would hold %d frames: the test does not show the delay it guards against",
+			s.MaxDpbFrames())
+	}
 	held := framesOutAfterEachPacket(t, old)
-	if held[len(held)-1] >= counts[len(counts)-1] {
-		t.Fatalf("without the restriction the decoder gave back %d frames, with it %d: the test does not show the delay it guards against",
-			held[len(held)-1], counts[len(counts)-1])
+	for i := range held {
+		if held[i] != counts[i] {
+			t.Fatalf("after %d packets our decoder gave back %d frames of a stream without the restriction and %d with it, although order count type 2 already means no reordering",
+				i+1, held[i], counts[i])
+		}
 	}
 }
