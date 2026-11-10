@@ -407,6 +407,7 @@ type Decoder struct {
 	closed  bool
 	settled bool
 	cfg     DecoderConfig
+	open    func(hwaccel.DecoderParams) (hwaccel.Decoder, string, bool)
 }
 
 type DecoderLimits = decoder.Limits
@@ -423,43 +424,87 @@ type DecoderConfig struct {
 func NewDecoder() *Decoder { return NewDecoderWithConfig(DecoderConfig{}) }
 
 func NewDecoderWithConfig(cfg DecoderConfig) *Decoder {
-	d := &Decoder{backend: "cpu", cfg: cfg, cpu: decoder.New()}
+	d := &Decoder{backend: "cpu", cfg: cfg, cpu: decoder.New(), open: hwaccel.OpenDecoder}
 	d.cpu.SetLimits(cfg.Limits)
 	if cfg.ForceSoftware {
 		d.settled = true
 		return d
 	}
-	d.settle(cfg.Width, cfg.Height)
+	if cfg.Width > 0 && cfg.Height > 0 && d.openHardware(cfg.Width, cfg.Height) {
+		d.cpu = nil
+	}
 	return d
 }
 
-func (d *Decoder) settle(width, height int) {
-	if d.settled || width <= 0 || height <= 0 {
-		return
-	}
+func (d *Decoder) openHardware(width, height int) bool {
 	d.settled = true
-	hw, name, ok := hwaccel.OpenDecoder(hwaccel.DecoderParams{Width: width, Height: height})
+	hw, name, ok := d.open(hwaccel.DecoderParams{Width: width, Height: height})
 	if !ok {
-		return
+		return false
 	}
 	d.hw = hw
 	d.backend = name
-	d.cpu = nil
+	return true
 }
 
-func streamPictureSize(annexB []byte) (int, int) {
+func admissible(sps *syntax.SPS, limits DecoderLimits) bool {
+	if level.CheckCeiling(sps) != nil {
+		return false
+	}
+	if limits.EnforceLevel && level.CheckSPS(sps) != nil {
+		return false
+	}
+	return limits.MaxFrameMBs <= 0 || sps.PicWidthInMbs()*sps.FrameHeightInMbs() <= limits.MaxFrameMBs
+}
+
+func sequenceStart(annexB []byte, limits DecoderLimits) (at, width, height int, idr bool) {
+	at = -1
 	for _, ebsp := range nal.SplitAnnexB(annexB) {
+		typ := nal.Type(ebsp[0] & 0x1f)
+		if at >= 0 {
+			if typ == nal.TypeSliceIDR {
+				return at, width, height, true
+			}
+			continue
+		}
+		if typ != nal.TypeSPS {
+			continue
+		}
 		u, err := nal.Parse(ebsp)
-		if err != nil || u.Header.Type != nal.TypeSPS {
+		if err != nil {
 			continue
 		}
 		sps, err := syntax.ParseSPS(u.RBSP)
-		if err != nil || level.CheckCeiling(sps) != nil {
+		if err != nil || !admissible(sps, limits) {
 			continue
 		}
-		return sps.CroppedWidth(), sps.CroppedHeight()
+		at = cap(annexB) - cap(ebsp) - 3
+		width, height = sps.CroppedWidth(), sps.CroppedHeight()
 	}
-	return 0, 0
+	return at, width, height, false
+}
+
+func (d *Decoder) handOver(annexB []byte, at, width, height int) ([]*Frame, error) {
+	started := d.cpu.Started()
+	if !d.openHardware(width, height) {
+		pics, err := d.cpu.Decode(annexB)
+		return d.convert(pics), err
+	}
+	var out []*Frame
+	var errs []error
+	if started {
+		pics, err := d.cpu.Decode(annexB[:at])
+		out = append(out, d.convert(pics)...)
+		errs = append(errs, err)
+		pics, err = d.cpu.Flush()
+		out = append(out, d.convert(pics)...)
+		errs = append(errs, err)
+		annexB = annexB[at:]
+	}
+	d.cpu = nil
+	pics, err := d.hw.Decode(annexB)
+	out = append(out, fromHardware(pics)...)
+	return out, errors.Join(append(errs, err)...)
 }
 
 func (d *Decoder) Backend() string { return d.backend }
@@ -469,8 +514,9 @@ func (d *Decoder) Decode(annexB []byte) ([]*Frame, error) {
 		return nil, ErrClosed
 	}
 	if !d.settled {
-		w, h := streamPictureSize(annexB)
-		d.settle(w, h)
+		if at, w, h, idr := sequenceStart(annexB, d.cfg.Limits); at >= 0 && (idr || !d.cpu.Started()) {
+			return d.handOver(annexB, at, w, h)
+		}
 	}
 	if d.hw != nil {
 		pics, err := d.hw.Decode(annexB)

@@ -50,6 +50,8 @@ func New() *Decoder {
 
 func (d *Decoder) SetLimits(l Limits) { d.limits = l }
 
+func (d *Decoder) Started() bool { return d.buffer != nil || d.cur != nil || len(d.pending) > 0 }
+
 func (d *Decoder) Limits() Limits { return d.limits }
 
 func (d *Decoder) SPS(id uint32) *syntax.SPS { return d.spsMap[id] }

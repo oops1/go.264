@@ -33,7 +33,7 @@ func hostileSPS(widthMBs, heightMBs uint32) *syntax.SPS {
 
 func TestAPictureNoLevelCanCarryNeverSizesTheHardware(t *testing.T) {
 	unit := spsUnit(t, hostileSPS(1024, 1024))
-	if w, h := streamPictureSize(unit); w != 0 || h != 0 {
+	if at, w, h, _ := sequenceStart(unit, DecoderLimits{}); at >= 0 {
 		t.Fatalf("a %d byte stream offered the hardware a %d by %d decoder", len(unit), w, h)
 	}
 	d := NewDecoder()
@@ -48,9 +48,9 @@ func TestAPictureNoLevelCanCarryNeverSizesTheHardware(t *testing.T) {
 
 func TestAPictureAnyLevelCanCarryStillSizesTheDecoder(t *testing.T) {
 	unit := spsUnit(t, hostileSPS(120, 68))
-	w, h := streamPictureSize(unit)
-	if w != 1920 || h != 1088 {
-		t.Fatalf("streamPictureSize = %d by %d, want 1920 by 1088", w, h)
+	at, w, h, _ := sequenceStart(unit, DecoderLimits{})
+	if at < 0 || w != 1920 || h != 1088 {
+		t.Fatalf("sequenceStart = %d by %d at %d, want 1920 by 1088", w, h, at)
 	}
 }
 

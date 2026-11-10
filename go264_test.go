@@ -624,21 +624,24 @@ func TestLongTermReferencesAreOffUnlessAsked(t *testing.T) {
 	}
 }
 
-func TestStreamPictureSizeReadsTheSequenceParameterSet(t *testing.T) {
+func TestSequenceStartReadsTheSequenceParameterSet(t *testing.T) {
 	stream, _ := encodeThroughPublicAPI(t, EncoderConfig{Width: 176, Height: 144, FPSNum: 25, FPSDen: 1,
 		GOPSize: 30, QP: 28}, 2)
-	w, h := streamPictureSize(stream)
-	if w != 176 || h != 144 {
-		t.Fatalf("the stream reported %dx%d, want 176x144", w, h)
+	at, w, h, idr := sequenceStart(stream, DecoderLimits{})
+	if at < 0 || string(stream[at:at+3]) != "\x00\x00\x01" || w != 176 || h != 144 || !idr {
+		t.Fatalf("the stream reported a sequence at %d, %dx%d, IDR %v; want its start code, 176x144 and an IDR", at, w, h, idr)
+	}
+	if at, _, _, _ := sequenceStart(stream, DecoderLimits{MaxFrameMBs: 98}); at >= 0 {
+		t.Fatalf("a sequence of 99 macroblocks was offered to a backend under a limit of 98, at %d", at)
 	}
 }
 
-func TestStreamPictureSizeIsZeroWithoutASequenceParameterSet(t *testing.T) {
-	if w, h := streamPictureSize(nil); w != 0 || h != 0 {
-		t.Fatalf("an empty stream reported %dx%d", w, h)
+func TestSequenceStartFindsNothingWithoutASequenceParameterSet(t *testing.T) {
+	if at, w, h, _ := sequenceStart(nil, DecoderLimits{}); at >= 0 || w != 0 || h != 0 {
+		t.Fatalf("an empty stream reported a sequence at %d, %dx%d", at, w, h)
 	}
-	if w, h := streamPictureSize([]byte{0, 0, 0, 1, 0x41, 0x80}); w != 0 || h != 0 {
-		t.Fatalf("a stream of one slice reported %dx%d", w, h)
+	if at, w, h, _ := sequenceStart([]byte{0, 0, 0, 1, 0x41, 0x80}, DecoderLimits{}); at >= 0 || w != 0 || h != 0 {
+		t.Fatalf("a stream of one slice reported a sequence at %d, %dx%d", at, w, h)
 	}
 }
 
