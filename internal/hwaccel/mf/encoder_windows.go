@@ -383,21 +383,26 @@ func (e *Encoder) closeHere() error {
 	if e.transform == nil {
 		return nil
 	}
+	if e.gen != nil && e.gen.abandoned {
+		e.gen, e.ready, e.transform = nil, nil, nil
+		return nil
+	}
 	_, drainErr := e.drainHere()
+	if e.gen != nil && e.gen.abandoned {
+		e.gen, e.ready, e.transform = nil, nil, nil
+		return drainErr
+	}
 	e.transform.ProcessMessage(MFTMessageCommandFlush, 0)
 	e.discardPendingEvents()
 	e.transform.ProcessMessage(MFTMessageNotifyEndOfStream, 0)
 	e.transform.ProcessMessage(MFTMessageNotifyEndStreaming, 0)
-	abandoned := e.gen != nil && e.gen.abandoned
-	if e.gen != nil && !abandoned {
+	if e.gen != nil {
 		e.gen.shutdownTransform()
 	}
 	e.gen.release()
 	e.gen = nil
 	e.ready = nil
-	if !abandoned {
-		e.transform.Release()
-	}
+	e.transform.Release()
 	e.transform = nil
 	if err := Shutdown(); err != nil {
 		return err

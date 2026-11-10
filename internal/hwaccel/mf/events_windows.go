@@ -2,7 +2,6 @@ package mf
 
 import (
 	"strconv"
-	"sync/atomic"
 	"time"
 	"unsafe"
 )
@@ -90,15 +89,13 @@ func timedOut(timeout time.Duration) error {
 }
 
 func waitWithWatchdog(wait func() (transformEvent, bool, error), stop func(), timeout time.Duration) (transformEvent, bool, error, bool) {
-	var fired atomic.Bool
 	stopped := make(chan struct{})
 	timer := time.AfterFunc(timeout, func() {
-		fired.Store(true)
 		stop()
 		close(stopped)
 	})
 	ev, ok, err := wait()
-	if timer.Stop() || !fired.Load() {
+	if timer.Stop() {
 		return ev, ok, err, true
 	}
 	select {
