@@ -43,17 +43,25 @@ func (f *Frame) AppendI420(dst []byte) []byte {
 	return dst
 }
 
-func frameFromPicture(p *frame.Picture, width, height int) *Frame {
-	if width <= 0 || width > p.Width {
-		width = p.Width
+func frameFromPicture(p *frame.Picture) *Frame {
+	x, y := p.CropX, p.CropY
+	if x < 0 || x >= p.Width {
+		x = 0
 	}
-	if height <= 0 || height > p.Height {
-		height = p.Height
+	if y < 0 || y >= p.Height {
+		y = 0
+	}
+	width, height := p.CropWidth, p.CropHeight
+	if width <= 0 || x+width > p.Width {
+		width = p.Width - x
+	}
+	if height <= 0 || y+height > p.Height {
+		height = p.Height - y
 	}
 	return &Frame{
-		Y:       p.Y[p.LumaOffset(0, 0):],
-		Cb:      p.Cb[p.ChromaOffset(0, 0):],
-		Cr:      p.Cr[p.ChromaOffset(0, 0):],
+		Y:       p.Y[p.LumaOffset(x, y):],
+		Cb:      p.Cb[p.ChromaOffset(x/2, y/2):],
+		Cr:      p.Cr[p.ChromaOffset(x/2, y/2):],
 		StrideY: p.StrideY,
 		StrideC: p.StrideC,
 		Width:   width,
@@ -490,7 +498,7 @@ func (d *Decoder) convert(pics []*frame.Picture) []*Frame {
 	}
 	out := make([]*Frame, 0, len(pics))
 	for _, p := range pics {
-		out = append(out, frameFromPicture(p, p.CropWidth, p.CropHeight))
+		out = append(out, frameFromPicture(p))
 	}
 	return out
 }

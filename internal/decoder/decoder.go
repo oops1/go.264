@@ -245,6 +245,8 @@ func (d *Decoder) decodeSlice(u nal.Unit) ([]*frame.Picture, error) {
 		d.cur = frame.NewPicture(sps.PicWidthInMbs(), sps.FrameHeightInMbs())
 		d.cur.FrameNum = hdr.FrameNum
 		d.cur.IDR = hdr.IDR
+		d.cur.CropX = sps.CropLeft()
+		d.cur.CropY = sps.CropTop()
 		d.cur.CropWidth = sps.CroppedWidth()
 		d.cur.CropHeight = sps.CroppedHeight()
 		d.cur.POC = d.buffer.computePOC(sps, hdr)

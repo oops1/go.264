@@ -193,6 +193,22 @@ func (s *SPS) CroppedHeight() int {
 	return s.Height() - cy*int(s.FrameCropTopOffset+s.FrameCropBottomOffset)
 }
 
+func (s *SPS) CropLeft() int {
+	if !s.FrameCropping {
+		return 0
+	}
+	cx, _ := s.cropUnits()
+	return cx * int(s.FrameCropLeftOffset)
+}
+
+func (s *SPS) CropTop() int {
+	if !s.FrameCropping {
+		return 0
+	}
+	_, cy := s.cropUnits()
+	return cy * int(s.FrameCropTopOffset)
+}
+
 func (s *SPS) MaxFrameNum() uint32 { return 1 << (s.Log2MaxFrameNumMinus4 + 4) }
 
 func (s *SPS) MaxPicOrderCntLsb() uint32 { return 1 << (s.Log2MaxPicOrderCntLsbMinus4 + 4) }

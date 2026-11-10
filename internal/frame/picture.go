@@ -13,6 +13,8 @@ type Picture struct {
 	Width   int
 	Height  int
 
+	CropX      int
+	CropY      int
 	CropWidth  int
 	CropHeight int
 
