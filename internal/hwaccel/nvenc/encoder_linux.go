@@ -71,6 +71,7 @@ type Config struct {
 	FPSNum               int
 	FPSDen               int
 	BitrateBitsPerSecond int
+	QP                   int
 	GOPLength            int
 	Profile              Profile
 	DeviceOrdinal        int
@@ -308,10 +309,15 @@ func (e *Encoder) applyRateControl(c *NvEncConfig, cfg Config) {
 	}
 	c.FrameIntervalP = 1
 	c.RCParams.Version = NvEncRCParamsVersion
-	if cfg.BitrateBitsPerSecond > 0 {
+	switch {
+	case cfg.BitrateBitsPerSecond > 0:
 		c.RCParams.RateControlMode = NvEncParamsRCVBR
 		c.RCParams.AverageBitRate = uint32(cfg.BitrateBitsPerSecond)
 		c.RCParams.MaxBitRate = uint32(cfg.BitrateBitsPerSecond) * 2
+	case cfg.QP > 0:
+		qp := uint32(min(cfg.QP, 51))
+		c.RCParams.RateControlMode = NvEncParamsRCConstQP
+		c.RCParams.ConstQP = NvEncQP{QPInterP: qp, QPInterB: qp, QPIntra: qp}
 	}
 	h264 := c.EncodeCodecConfig.H264Config()
 	h264.IDRPeriod = c.GopLength

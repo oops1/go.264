@@ -42,14 +42,18 @@ func openMediaFoundationEncoder(p hwaccel.EncoderParams) (hwaccel.Encoder, bool)
 	if num <= 0 || den <= 0 {
 		num, den = 30, 1
 	}
-	enc, err := mf.OpenEncoder(mf.EncoderFormat{
+	format := mf.EncoderFormat{
 		Width:                p.Width,
 		Height:               p.Height,
 		FPSNum:               num,
 		FPSDen:               den,
 		BitrateBitsPerSecond: defaultBitrateBitsPerSecond(p),
 		Profile:              mf.AVEncH264VProfileMain,
-	}, true)
+	}
+	if p.BitrateKbps <= 0 {
+		format.QP = hwaccel.ConstantQP(p.QP)
+	}
+	enc, err := mf.OpenEncoder(format, true)
 	if err != nil {
 		return nil, false
 	}

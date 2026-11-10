@@ -127,6 +127,7 @@ type EncoderFormat struct {
 	FPSNum, FPSDen       int
 	BitrateBitsPerSecond int
 	Profile              uint32
+	QP                   int
 }
 
 func (f EncoderFormat) baseType(subtype GUID) (*MediaType, error) {

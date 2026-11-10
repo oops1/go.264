@@ -10,6 +10,7 @@ import (
 
 	"github.com/oops1/go.264/internal/decoder"
 	"github.com/oops1/go.264/internal/frame"
+	"github.com/oops1/go.264/internal/testutil/sliceqp"
 )
 
 const (
@@ -355,5 +356,57 @@ func TestOpeningAtASizeTheHardwareRefusesFailsCleanly(t *testing.T) {
 	if err == nil {
 		enc.Close()
 		t.Skip("this machine's hardware encoder accepts a sixty four square picture")
+	}
+}
+
+func TestHardwareEncoderHoldsAConstantQuantiser(t *testing.T) {
+	if !Loaded() {
+		t.Skip("Media Foundation is not present on this machine")
+	}
+	sizes := map[int]int{}
+	for _, qp := range []int{16, 22, 38, 46} {
+		f := probeFormat()
+		f.QP = qp
+		enc, err := OpenEncoder(f, true)
+		if err != nil {
+			t.Skipf("no hardware encoder accepted a constant quantiser: %v", err)
+		}
+		var stream []byte
+		for i := 0; i < probeFrames; i++ {
+			out, err := enc.Encode(movingPattern(i))
+			if err != nil {
+				enc.Close()
+				t.Fatalf("%s: Encode frame %d: %v", enc.Name(), i, err)
+			}
+			for _, p := range out {
+				stream = append(stream, p...)
+			}
+		}
+		rest, err := enc.Drain()
+		name := enc.Name()
+		enc.Close()
+		if err != nil {
+			t.Fatalf("%s: Drain: %v", name, err)
+		}
+		for _, p := range rest {
+			stream = append(stream, p...)
+		}
+		slices, err := sliceqp.Read(stream)
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		if len(slices) == 0 {
+			t.Fatalf("%s wrote no slices at QP %d", name, qp)
+		}
+		for i, s := range slices {
+			if s.QP != qp {
+				t.Fatalf("%s: slice %d (IDR %v) is coded at QP %d, asked for %d", name, i, s.IDR, s.QP, qp)
+			}
+		}
+		sizes[qp] = len(stream)
+		t.Logf("%s: QP %d, %d slices, %d bytes", name, qp, len(slices), len(stream))
+	}
+	if sizes[16] <= sizes[22] || sizes[22] <= sizes[38] || sizes[38] <= sizes[46] {
+		t.Fatalf("stream sizes by quantiser %v do not fall as the quantiser rises", sizes)
 	}
 }

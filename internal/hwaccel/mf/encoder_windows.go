@@ -95,6 +95,12 @@ func (e *Encoder) configure(f EncoderFormat) error {
 	}
 	e.inStream, e.outStream = in, out
 
+	if f.QP > 0 {
+		if err := e.transform.setConstantQuantiser(f.QP); err != nil {
+			return err
+		}
+	}
+
 	outType, err := f.OutputType()
 	if err != nil {
 		return err

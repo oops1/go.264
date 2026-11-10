@@ -764,6 +764,29 @@ func TestRateControlOptionsReachTheSoftwareEncoder(t *testing.T) {
 	}
 }
 
+func TestPictureStructureTheHardwareCannotWriteKeepsTheProcessor(t *testing.T) {
+	plain := EncoderConfig{Width: 176, Height: 144, FPSNum: 25, FPSDen: 1, GOPSize: 12, QP: 26}
+	for name, edit := range map[string]func(c *EncoderConfig){
+		"B pictures":       func(c *EncoderConfig) { c.BFrames = 2 },
+		"the JVT matrices": func(c *EncoderConfig) { c.ScalingMatrix = ScalingMatrixJVT },
+	} {
+		cfg := plain
+		edit(&cfg)
+		if !cfg.needsSoftware() {
+			t.Errorf("%s do not force the software encoder, although no hardware backend writes them", name)
+		}
+	}
+}
+
+func TestCodingToolsAndSpeedSettingsLeaveTheHardwareAvailable(t *testing.T) {
+	cfg := EncoderConfig{Width: 176, Height: 144, FPSNum: 25, FPSDen: 1, GOPSize: 12, QP: 26,
+		CABAC: true, Transform8x8: true, Slices: 4, RefFrames: 3,
+		MotionSearch: MotionSearchHalf, ModeDecision: ModeDecisionExhaustive}
+	if cfg.needsSoftware() {
+		t.Fatal("entropy coding, the 8x8 transform, slices, references and search speed kept the encoder on the processor; a hardware encoder chooses these for itself")
+	}
+}
+
 func TestConstantQualityThroughThePublicAPI(t *testing.T) {
 	cfg := EncoderConfig{Width: 176, Height: 144, FPSNum: 25, FPSDen: 1,
 		GOPSize: 12, RateFactor: 26, CABAC: true}

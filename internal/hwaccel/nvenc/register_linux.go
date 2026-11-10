@@ -14,19 +14,11 @@ type registeredEncoder struct {
 	enc *Encoder
 }
 
-func defaultBitrate(p hwaccel.EncoderParams) int {
+func rateControl(p hwaccel.EncoderParams) (bitrate, qp int) {
 	if p.BitrateKbps > 0 {
-		return p.BitrateKbps * 1000
+		return p.BitrateKbps * 1000, 0
 	}
-	num, den := p.FPSNum, p.FPSDen
-	if num <= 0 || den <= 0 {
-		num, den = 30, 1
-	}
-	rate := p.Width * p.Height * num / den / 10
-	if rate < 100000 {
-		rate = 100000
-	}
-	return rate
+	return 0, hwaccel.ConstantQP(p.QP)
 }
 
 func probeEncode(p hwaccel.EncoderParams) (hwaccel.Encoder, bool) {
@@ -37,12 +29,14 @@ func probeEncode(p hwaccel.EncoderParams) (hwaccel.Encoder, bool) {
 	if num <= 0 || den <= 0 {
 		num, den = 30, 1
 	}
+	bitrate, qp := rateControl(p)
 	enc, err := Open(Config{
 		Width:                p.Width,
 		Height:               p.Height,
 		FPSNum:               num,
 		FPSDen:               den,
-		BitrateBitsPerSecond: defaultBitrate(p),
+		BitrateBitsPerSecond: bitrate,
+		QP:                   qp,
 		GOPLength:            p.GOPSize,
 		Profile:              ProfileMain,
 	})

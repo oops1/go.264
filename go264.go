@@ -117,6 +117,7 @@ type EncoderConfig struct {
 
 func (c EncoderConfig) needsSoftware() bool {
 	return c.Trellis || c.LongTermReferences > 0 ||
+		c.BFrames > 0 || c.ScalingMatrix != ScalingMatrixFlat ||
 		c.WeightedPrediction != WeightedPredictionOff ||
 		c.DirectMode != DirectSpatial ||
 		c.IntraRefresh > 0 || c.Deblocking != DeblockingOn ||

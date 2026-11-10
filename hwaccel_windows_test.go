@@ -5,6 +5,7 @@ import (
 
 	"github.com/oops1/go.264/internal/hwaccel"
 	"github.com/oops1/go.264/internal/hwaccel/mf"
+	"github.com/oops1/go.264/internal/testutil/sliceqp"
 )
 
 func TestMediaFoundationIsRegistered(t *testing.T) {
@@ -127,5 +128,52 @@ func TestFlushOnAClosedEncoderReports(t *testing.T) {
 	}
 	if _, err := enc.Flush(); err != ErrClosed {
 		t.Fatalf("Flush on a closed encoder returned %v, want ErrClosed", err)
+	}
+}
+
+func TestTheHardwareEncoderTakesTheQuantiserItIsGiven(t *testing.T) {
+	if !mf.Loaded() {
+		t.Skip("Media Foundation is not present on this machine")
+	}
+	for _, qp := range []int{20, 40} {
+		enc, err := NewEncoder(EncoderConfig{Width: 176, Height: 144, FPSNum: 10, FPSDen: 1, GOPSize: 10, QP: qp})
+		if err != nil {
+			t.Fatalf("NewEncoder: %v", err)
+		}
+		if enc.Backend() == "cpu" {
+			enc.Close()
+			t.Skip("no hardware encoder held a constant quantiser on this machine")
+		}
+		var stream []byte
+		frame := make([]byte, 176*144*3/2)
+		for i := 0; i < 8; i++ {
+			for j := range frame {
+				frame[j] = byte(j + i*13)
+			}
+			out, err := enc.Encode(frame)
+			if err != nil {
+				enc.Close()
+				t.Fatalf("Encode %d: %v", i, err)
+			}
+			stream = append(stream, out...)
+		}
+		tail, err := enc.Flush()
+		backend := enc.Backend()
+		enc.Close()
+		if err != nil {
+			t.Fatalf("Flush: %v", err)
+		}
+		slices, err := sliceqp.Read(append(stream, tail...))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(slices) == 0 {
+			t.Fatalf("%s wrote no slices", backend)
+		}
+		for i, s := range slices {
+			if s.QP != qp {
+				t.Fatalf("%s: slice %d is coded at QP %d, the configuration asked for %d", backend, i, s.QP, qp)
+			}
+		}
 	}
 }

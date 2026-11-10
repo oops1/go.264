@@ -13,6 +13,15 @@ type EncoderParams struct {
 	BitrateKbps int
 }
 
+const DefaultQP = 26
+
+func ConstantQP(qp int) int {
+	if qp <= 0 {
+		return DefaultQP
+	}
+	return min(qp, 51)
+}
+
 type Encoder interface {
 	Encode(i420 []byte) ([]byte, error)
 	Drain() ([]byte, error)
