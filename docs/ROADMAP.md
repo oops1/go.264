@@ -1038,16 +1038,33 @@ test that fails without its fix.
   cent of throughput with 20 microsecond pauses and twice the processor
   time with none.
 
-Two findings stand. A Media Foundation test run occasionally ends in an
-access violation with no Go trace, always in
-`TestEncodersClosedWithoutDrainingSurviveBeingCycled`, which opens and
-closes the NVIDIA encoder twelve times without draining it, and only under
-load; the code from before this work fails the same way. Shutting the
-transform down through `IMFShutdown` before releasing it made it rarer -
-4 of 40 runs of the test against 17 of 40 without, alternated under the
-same load - but did not end it. Keeping the platform started between
-encoders did not help (5 of 60). Where it happens is not known; the crash
-leaves no trace to read. And a macroblock of noise at a quantiser of 12 or below costs
+**The access violation in the Media Foundation tests was NVIDIA's transform
+outliving itself.** About one run in ten of
+`TestEncodersClosedWithoutDrainingSurviveBeingCycled` under load ended with
+exit status 0xc0000005 and no Go trace, in this work and in the code before
+it. A vectored exception handler in the test binary gave what the runtime
+could not: every crash was a write to address 0x24 inside ntdll, on a Media
+Foundation work queue thread, in a callback of `nvEncMFTH264x.dll`, with no
+Go frame on the stack and the transform's last reference already released.
+The transform leaves a work item behind after a drain, and the item runs
+into state its own destruction has freed.
+
+What was measured on the way, each alternated against another variant
+under the same load: shutting the transform down through `IMFShutdown`
+before releasing it made the crash rarer (4 of 40 runs against 17 of 40)
+and stays; keeping the platform started instead of calling `MFShutdown`
+did not help (3 of 60, and the crash then came after Close had returned);
+keeping COM initialised did not help (5 of 50 against 8 of 50); sending
+nothing after the drain did not help (5 of 60); waiting 100 ms between the
+release and `MFShutdown` did not help, the crash came during the wait (2 of
+60). The transform reports its shutdown complete at once and sends no
+event after the drain completes, so there is nothing to wait on. Waiting
+50 ms before the shutdown and the release, while the transform is still
+alive, ended it: 0 of 60 where the variant beside it crashed 5 times. Close
+on an asynchronous transform now waits 100 ms there, and the finished code
+ran the test 80 times under load, 2880 closes, without a crash.
+
+One finding stands. A macroblock of noise at a quantiser of 12 or below costs
 more than 3200 bits, more than its samples sent as I_PCM would. Whether that
 breaks a level limit has not been checked against the standard, x264 does
 not guard against it either, and the encoder writes no I_PCM, so it is left

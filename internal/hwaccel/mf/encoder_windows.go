@@ -1,6 +1,10 @@
 package mf
 
+import "time"
+
 const hundredNanosecondsPerSecond = 10000000
+
+const asyncSettle = 100 * time.Millisecond
 
 type Encoder struct {
 	name     string
@@ -397,6 +401,7 @@ func (e *Encoder) closeHere() error {
 	e.transform.ProcessMessage(MFTMessageNotifyEndOfStream, 0)
 	e.transform.ProcessMessage(MFTMessageNotifyEndStreaming, 0)
 	if e.gen != nil {
+		time.Sleep(asyncSettle)
 		e.gen.shutdownTransform()
 	}
 	e.gen.release()
